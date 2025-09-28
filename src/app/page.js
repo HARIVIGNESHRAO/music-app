@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
+import axios from 'axios'; // Added for API calls
 import './page.css';
 import {
     Play,
@@ -38,62 +39,21 @@ export default function Page() {
     const [showCreatePlaylist, setShowCreatePlaylist] = useState(false);
     const [newPlaylistName, setNewPlaylistName] = useState('');
     const [isAdmin, setIsAdmin] = useState(false);
+    const [songs, setSongs] = useState([]); // Changed to dynamic state
+    const [filteredSongs, setFilteredSongs] = useState([]); // For search results
+    const [accessToken, setAccessToken] = useState(null); // For Spotify API
+    const [loading, setLoading] = useState(false); // For API states
+    const [error, setError] = useState(null); // For errors
     const audioRef = useRef(null);
 
-    // Sample music data
-    const [songs] = useState([
-        {
-            id: 1,
-            title: "Midnight Dreams",
-            artist: "Luna Martinez",
-            album: "Nocturnal Vibes",
-            duration: "3:24",
-            cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center",
-            genre: "Pop",
-            plays: 1234567
-        },
-        {
-            id: 2,
-            title: "Electric Pulse",
-            artist: "Neon Collective",
-            album: "Digital Horizons",
-            duration: "4:12",
-            cover: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&h=300&fit=crop&crop=center",
-            genre: "Electronic",
-            plays: 987654
-        },
-        {
-            id: 3,
-            title: "Acoustic Soul",
-            artist: "River Stone",
-            album: "Unplugged Sessions",
-            duration: "2:58",
-            cover: "https://images.unsplash.com/photo-1493612276216-ee3925520721?w=300&h=300&fit=crop&crop=center",
-            genre: "Acoustic",
-            plays: 756432
-        },
-        {
-            id: 4,
-            title: "Urban Rhythm",
-            artist: "City Beats",
-            album: "Street Anthology",
-            duration: "3:45",
-            cover: "https://images.unsplash.com/photo-1571974599782-87613f249808?w=300&h=300&fit=crop&crop=center",
-            genre: "Hip-Hop",
-            plays: 2143567
-        },
-        {
-            id: 5,
-            title: "Sunset Boulevard",
-            artist: "Golden Hour",
-            album: "California Dreams",
-            duration: "4:33",
-            cover: "https://images.unsplash.com/photo-1514320291840-2e0a9bf2a9ae?w=300&h=300&fit=crop&crop=center",
-            genre: "Rock",
-            plays: 654321
-        }
-    ]);
+    // Spotify config
+    const CLIENT_ID = process.env.REACT_APP_SPOTIFY_CLIENT_ID;
+    const REDIRECT_URI = process.env.REACT_APP_SPOTIFY_REDIRECT_URI || 'http://localhost:3000/callback';
+    const AUTH_ENDPOINT = 'https://accounts.spotify.com/authorize';
+    const RESPONSE_TYPE = 'token'; // Implicit Grant for simplicity
+    const SCOPES = 'user-read-private user-read-email user-top-read playlist-read-private playlist-modify-public';
 
+    // Keep static users for admin panel (or fetch via custom backend later)
     const [users] = useState([
         { id: 1, name: "Alex Johnson", email: "alex@music.com", role: "user", joinDate: "2024-01-15" },
         { id: 2, name: "Sarah Chen", email: "sarah@music.com", role: "user", joinDate: "2024-02-20" },
@@ -101,50 +61,141 @@ export default function Page() {
     ]);
 
     useEffect(() => {
-        // Initialize with a sample user
-        setCurrentUser({
-            id: 1,
-            name: "Alex Johnson",
-            email: "alex@music.com",
-            avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center"
-        });
-
-        // Initialize playlists
-        setPlaylists([
-            {
-                id: 1,
-                name: "My Favorites",
-                songs: [songs[0], songs[2]],
-                cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center"
-            },
-            {
-                id: 2,
-                name: "Workout Mix",
-                songs: [songs[1], songs[3]],
-                cover: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&h=300&fit=crop&crop=center"
-            }
-        ]);
+        // Handle Spotify token from URL
+        const hash = window.location.hash;
+        if (hash) {
+            const token = hash.substring(1).split('&').find(elem => elem.startsWith('access_token'))?.split('=')[1];
+            setAccessToken(token);
+            window.location.hash = ''; // Clear hash
+            if (token) fetchUserProfile(token);
+        }
     }, []);
 
-    // Authentication functions
-    const handleLogin = (email, password, role = 'user') => {
-        const user = {
-            id: 1,
-            name: role === 'admin' ? "Admin User" : "Demo User",
-            email: email,
-            avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center"
-        };
-        setCurrentUser(user);
-        setIsAdmin(role === 'admin');
-        setActiveTab('home');
+    useEffect(() => {
+        // Update audio volume
+        if (audioRef.current) {
+            audioRef.current.volume = volume / 100;
+        }
+    }, [volume]);
+
+    useEffect(() => {
+        // Update playback state
+        if (audioRef.current && currentSong?.preview_url) {
+            audioRef.current.src = currentSong.preview_url;
+            if (isPlaying) {
+                audioRef.current.play().catch(() => setError('Playback failed'));
+            } else {
+                audioRef.current.pause();
+            }
+        }
+    }, [isPlaying, currentSong]);
+
+    // Fetch user profile
+    const fetchUserProfile = async (token) => {
+        try {
+            setLoading(true);
+            const { data } = await axios.get('https://api.spotify.com/v1/me', {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            setCurrentUser({
+                id: data.id,
+                name: data.display_name,
+                email: data.email,
+                avatar: data.images?.[0]?.url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center'
+            });
+            setIsAdmin(data.email === 'admin@music.com'); // Custom admin logic
+            await Promise.all([fetchTopTracks(token), fetchUserPlaylists(token)]);
+        } catch (err) {
+            setError('Failed to fetch user profile');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Fetch top tracks for home/recently played
+    const fetchTopTracks = async (token) => {
+        try {
+            const { data } = await axios.get('https://api.spotify.com/v1/me/top/tracks?time_range=short_term&limit=5', {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            const mappedSongs = data.items.map(track => ({
+                id: track.id,
+                title: track.name,
+                artist: track.artists.map(a => a.name).join(', '),
+                album: track.album.name,
+                duration: new Date(track.duration_ms).toISOString().substr(14, 5),
+                cover: track.album.images[0]?.url || 'default-cover',
+                genre: 'Unknown', // Genres require artist endpoint
+                plays: 0, // Not directly available
+                preview_url: track.preview_url || null, // For playback
+            }));
+            setSongs(mappedSongs);
+        } catch (err) {
+            setError('Failed to fetch tracks');
+        }
+    };
+
+    // Fetch user playlists
+    const fetchUserPlaylists = async (token) => {
+        try {
+            const { data } = await axios.get('https://api.spotify.com/v1/me/playlists?limit=10', {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            const mappedPlaylists = data.items.map(playlist => ({
+                id: playlist.id,
+                name: playlist.name,
+                songs: [], // Fetch separately if needed
+                cover: playlist.images[0]?.url || 'default-cover',
+            }));
+            setPlaylists(mappedPlaylists);
+        } catch (err) {
+            setError('Failed to fetch playlists');
+        }
+    };
+
+    // Search songs
+    const searchSongs = async (query) => {
+        if (!accessToken || !query) return;
+        try {
+            setLoading(true);
+            const { data } = await axios.get(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
+                headers: { Authorization: `Bearer ${accessToken}` },
+            });
+            const mappedSongs = data.tracks.items.map(track => ({
+                id: track.id,
+                title: track.name,
+                artist: track.artists.map(a => a.name).join(', '),
+                album: track.album.name,
+                duration: new Date(track.duration_ms).toISOString().substr(14, 5),
+                cover: track.album.images[0]?.url || 'default-cover',
+                genre: 'Unknown',
+                plays: 0,
+                preview_url: track.preview_url || null,
+            }));
+            setFilteredSongs(mappedSongs);
+        } catch (err) {
+            setError('Search failed');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Authentication
+    const handleSpotifyLogin = () => {
+        const authUrl = `${AUTH_ENDPOINT}?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}&response_type=${RESPONSE_TYPE}&show_dialog=true`;
+        window.location.href = authUrl;
     };
 
     const handleLogout = () => {
+        setAccessToken(null);
         setCurrentUser(null);
         setIsAdmin(false);
         setCurrentSong(null);
         setIsPlaying(false);
         setActiveTab('home');
+        setSongs([]);
+        setFilteredSongs([]);
+        setPlaylists([]);
     };
 
     // Music player functions
@@ -164,28 +215,36 @@ export default function Page() {
     };
 
     // Playlist functions
-    const createPlaylist = () => {
-        if (newPlaylistName.trim()) {
-            const newPlaylist = {
-                id: playlists.length + 1,
-                name: newPlaylistName,
+    const createPlaylist = async () => {
+        if (!newPlaylistName.trim() || !accessToken) return;
+        try {
+            const { data } = await axios.post(
+                `https://api.spotify.com/v1/users/${currentUser.id}/playlists`,
+                { name: newPlaylistName, public: true },
+                { headers: { Authorization: `Bearer ${accessToken}` } }
+            );
+            setPlaylists(prev => [...prev, {
+                id: data.id,
+                name: data.name,
                 songs: [],
-                cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center"
-            };
-            setPlaylists([...playlists, newPlaylist]);
+                cover: data.images[0]?.url || 'default-cover',
+            }]);
             setNewPlaylistName('');
             setShowCreatePlaylist(false);
+        } catch (err) {
+            setError('Failed to create playlist');
         }
     };
 
-    const filteredSongs = songs.filter(song =>
-        song.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        song.artist.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        song.album.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+    // Update search handler
+    const handleSearch = (e) => {
+        const query = e.target.value;
+        setSearchQuery(query);
+        if (query) searchSongs(query);
+    };
 
     // Login Component
-    if (!currentUser) {
+    if (!currentUser || !accessToken) {
         return (
             <div className="login-container">
                 <div className="login-card">
@@ -196,21 +255,20 @@ export default function Page() {
                         <h1 className="app-title">MusicStream</h1>
                         <p className="app-subtitle">Your personal music companion</p>
                     </div>
-
                     <div className="login-buttons">
-                        <button
-                            onClick={() => handleLogin("demo@music.com", "password", "user")}
-                            className="login-btn user-btn"
-                        >
-                            Login as User
+                        <button onClick={handleSpotifyLogin} className="login-btn user-btn">
+                            Login with Spotify
                         </button>
+                        {/* Keep admin login for testing */}
                         <button
                             onClick={() => handleLogin("admin@music.com", "password", "admin")}
                             className="login-btn admin-btn"
                         >
-                            Login as Admin
+                            Login as Admin (Local)
                         </button>
                     </div>
+                    {loading && <p>Loading...</p>}
+                    {error && <p className="error-text">Error: {error}</p>}
                 </div>
             </div>
         );
@@ -219,6 +277,13 @@ export default function Page() {
     // Main App Component
     return (
         <div className="app-container">
+            {/* Hidden audio element for playback */}
+            <audio
+                ref={audioRef}
+                onTimeUpdate={() => setCurrentTime(audioRef.current?.currentTime || 0)}
+                onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)}
+            />
+
             {/* Header */}
             <header className="header">
                 <div className="header-content">
@@ -226,7 +291,6 @@ export default function Page() {
                         <Music className="header-logo" />
                         <h1 className="header-title">MusicStream</h1>
                     </div>
-
                     <div className="header-center">
                         <div className="search-container">
                             <Search className="search-icon" />
@@ -234,22 +298,15 @@ export default function Page() {
                                 type="text"
                                 placeholder="Search songs, artists, albums..."
                                 value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
+                                onChange={handleSearch}
                                 className="search-input"
                             />
                         </div>
                     </div>
-
                     <div className="header-right">
-                        <img
-                            src={currentUser.avatar}
-                            alt={currentUser.name}
-                            className="user-avatar"
-                        />
+                        <img src={currentUser.avatar} alt={currentUser.name} className="user-avatar" />
                         <span className="user-name">{currentUser.name}</span>
-                        <button onClick={handleLogout} className="logout-btn">
-                            Logout
-                        </button>
+                        <button onClick={handleLogout} className="logout-btn">Logout</button>
                     </div>
                 </div>
             </header>
@@ -265,7 +322,6 @@ export default function Page() {
                             <Home className="nav-icon" />
                             <span>Home</span>
                         </button>
-
                         <button
                             onClick={() => setActiveTab('search')}
                             className={`nav-item ${activeTab === 'search' ? 'active' : ''}`}
@@ -273,7 +329,6 @@ export default function Page() {
                             <Search className="nav-icon" />
                             <span>Search</span>
                         </button>
-
                         <button
                             onClick={() => setActiveTab('playlists')}
                             className={`nav-item ${activeTab === 'playlists' ? 'active' : ''}`}
@@ -281,7 +336,6 @@ export default function Page() {
                             <Music className="nav-icon" />
                             <span>My Playlists</span>
                         </button>
-
                         {isAdmin && (
                             <button
                                 onClick={() => setActiveTab('admin')}
@@ -292,7 +346,6 @@ export default function Page() {
                             </button>
                         )}
                     </nav>
-
                     <div className="quick-playlists">
                         <h3 className="quick-title">Quick Playlists</h3>
                         <div className="playlist-list">
@@ -315,48 +368,54 @@ export default function Page() {
                         <div className="home-content">
                             <div className="welcome-section">
                                 <h2 className="welcome-title">Welcome back, {currentUser.name}!</h2>
-
-                                <div className="featured-songs">
-                                    {songs.slice(0, 5).map((song) => (
-                                        <div
-                                            key={song.id}
-                                            className="song-card"
-                                            onClick={() => selectSong(song)}
-                                        >
-                                            <div className="song-cover-container">
-                                                <img src={song.cover} alt={song.title} className="song-cover" />
-                                                <button className="play-overlay">
-                                                    <Play className="play-icon" />
-                                                </button>
-                                            </div>
-                                            <h3 className="song-title">{song.title}</h3>
-                                            <p className="song-artist">{song.artist}</p>
-                                        </div>
-                                    ))}
-                                </div>
-
-                                <div className="recent-section">
-                                    <h3 className="section-title">Recently Played</h3>
-                                    <div className="recent-list">
-                                        {songs.slice(0, 3).map((song) => (
-                                            <div
-                                                key={song.id}
-                                                className="recent-item"
-                                                onClick={() => selectSong(song)}
-                                            >
-                                                <img src={song.cover} alt={song.title} className="recent-cover" />
-                                                <div className="recent-info">
-                                                    <h4 className="recent-title">{song.title}</h4>
-                                                    <p className="recent-artist">{song.artist} • {song.album}</p>
+                                {loading ? (
+                                    <p>Loading...</p>
+                                ) : error ? (
+                                    <p className="error-text">{error}</p>
+                                ) : (
+                                    <>
+                                        <div className="featured-songs">
+                                            {songs.map((song) => (
+                                                <div
+                                                    key={song.id}
+                                                    className="song-card"
+                                                    onClick={() => selectSong(song)}
+                                                >
+                                                    <div className="song-cover-container">
+                                                        <img src={song.cover} alt={song.title} className="song-cover" />
+                                                        <button className="play-overlay">
+                                                            <Play className="play-icon" />
+                                                        </button>
+                                                    </div>
+                                                    <h3 className="song-title">{song.title}</h3>
+                                                    <p className="song-artist">{song.artist}</p>
                                                 </div>
-                                                <span className="recent-duration">{song.duration}</span>
-                                                <button className="recent-play">
-                                                    <Play className="recent-play-icon" />
-                                                </button>
+                                            ))}
+                                        </div>
+                                        <div className="recent-section">
+                                            <h3 className="section-title">Recently Played</h3>
+                                            <div className="recent-list">
+                                                {songs.slice(0, 3).map((song) => (
+                                                    <div
+                                                        key={song.id}
+                                                        className="recent-item"
+                                                        onClick={() => selectSong(song)}
+                                                    >
+                                                        <img src={song.cover} alt={song.title} className="recent-cover" />
+                                                        <div className="recent-info">
+                                                            <h4 className="recent-title">{song.title}</h4>
+                                                            <p className="recent-artist">{song.artist} • {song.album}</p>
+                                                        </div>
+                                                        <span className="recent-duration">{song.duration}</span>
+                                                        <button className="recent-play">
+                                                            <Play className="recent-play-icon" />
+                                                        </button>
+                                                    </div>
+                                                ))}
                                             </div>
-                                        ))}
-                                    </div>
-                                </div>
+                                        </div>
+                                    </>
+                                )}
                             </div>
                         </div>
                     )}
@@ -364,7 +423,11 @@ export default function Page() {
                     {activeTab === 'search' && (
                         <div className="search-content">
                             <h2 className="page-title">Search Results</h2>
-                            {searchQuery ? (
+                            {loading ? (
+                                <p>Loading...</p>
+                            ) : error ? (
+                                <p className="error-text">{error}</p>
+                            ) : searchQuery ? (
                                 <div className="search-results">
                                     {filteredSongs.map((song) => (
                                         <div
@@ -409,7 +472,6 @@ export default function Page() {
                                     <span>Create Playlist</span>
                                 </button>
                             </div>
-
                             {showCreatePlaylist && (
                                 <div className="create-playlist-form">
                                     <h3 className="form-title">Create New Playlist</h3>
@@ -433,24 +495,27 @@ export default function Page() {
                                     </div>
                                 </div>
                             )}
-
-                            <div className="playlists-grid">
-                                {playlists.map((playlist) => (
-                                    <div key={playlist.id} className="playlist-card">
-                                        <img src={playlist.cover} alt={playlist.name} className="playlist-card-cover" />
-                                        <h3 className="playlist-card-name">{playlist.name}</h3>
-                                        <p className="playlist-card-count">{playlist.songs.length} songs</p>
-                                    </div>
-                                ))}
-                            </div>
+                            {loading ? (
+                                <p>Loading...</p>
+                            ) : error ? (
+                                <p className="error-text">{error}</p>
+                            ) : (
+                                <div className="playlists-grid">
+                                    {playlists.map((playlist) => (
+                                        <div key={playlist.id} className="playlist-card">
+                                            <img src={playlist.cover} alt={playlist.name} className="playlist-card-cover" />
+                                            <h3 className="playlist-card-name">{playlist.name}</h3>
+                                            <p className="playlist-card-count">{playlist.songs.length} songs</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     )}
 
                     {activeTab === 'admin' && isAdmin && (
                         <div className="admin-content">
                             <h2 className="page-title">Admin Dashboard</h2>
-
-                            {/* Stats Cards */}
                             <div className="stats-grid">
                                 <div className="stat-card blue-gradient">
                                     <div className="stat-content">
@@ -489,8 +554,6 @@ export default function Page() {
                                     </div>
                                 </div>
                             </div>
-
-                            {/* User Management */}
                             <div className="admin-panel">
                                 <h3 className="panel-title">User Management</h3>
                                 <div className="user-list">
@@ -506,9 +569,9 @@ export default function Page() {
                                                 </div>
                                             </div>
                                             <div className="user-right">
-                        <span className={`role-badge ${user.role}`}>
-                          {user.role}
-                        </span>
+                                                <span className={`role-badge ${user.role}`}>
+                                                    {user.role}
+                                                </span>
                                                 <span className="join-date">{user.joinDate}</span>
                                                 <button className="user-menu">
                                                     <MoreVertical className="menu-icon" />
@@ -518,8 +581,6 @@ export default function Page() {
                                     ))}
                                 </div>
                             </div>
-
-                            {/* Songs Management */}
                             <div className="admin-panel">
                                 <h3 className="panel-title">Songs Management</h3>
                                 <div className="songs-list">
@@ -554,7 +615,6 @@ export default function Page() {
                                 <p className="player-artist">{currentSong.artist}</p>
                             </div>
                         </div>
-
                         <div className="player-controls">
                             <button className="control-btn">
                                 <Shuffle className="control-icon" />
@@ -572,7 +632,6 @@ export default function Page() {
                                 <Repeat className="control-icon" />
                             </button>
                         </div>
-
                         <div className="player-right">
                             <Heart className="heart-btn" />
                             <div className="volume-controls">
@@ -588,14 +647,16 @@ export default function Page() {
                             </div>
                         </div>
                     </div>
-
                     <div className="progress-section">
                         <div className="progress-time">
-                            <span>0:00</span>
+                            <span>{formatTime(currentTime)}</span>
                             <span>{currentSong.duration}</span>
                         </div>
                         <div className="progress-bar">
-                            <div className="progress-fill" style={{ width: '30%' }}></div>
+                            <div
+                                className="progress-fill"
+                                style={{ width: `${(currentTime / duration) * 100}%` }}
+                            ></div>
                         </div>
                     </div>
                 </div>
