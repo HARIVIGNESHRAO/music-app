@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import axios from 'axios'; // Added for API calls
+import axios from 'axios';
 import './page.css';
 import {
     Play,
@@ -39,21 +39,21 @@ export default function Page() {
     const [showCreatePlaylist, setShowCreatePlaylist] = useState(false);
     const [newPlaylistName, setNewPlaylistName] = useState('');
     const [isAdmin, setIsAdmin] = useState(false);
-    const [songs, setSongs] = useState([]); // Changed to dynamic state
-    const [filteredSongs, setFilteredSongs] = useState([]); // For search results
-    const [accessToken, setAccessToken] = useState(null); // For Spotify API
-    const [loading, setLoading] = useState(false); // For API states
-    const [error, setError] = useState(null); // For errors
+    const [songs, setSongs] = useState([]);
+    const [filteredSongs, setFilteredSongs] = useState([]);
+    const [accessToken, setAccessToken] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
     const audioRef = useRef(null);
 
-    // Spotify config
-    const CLIENT_ID = '24d1da23844348baa0d6fb0fc1d41c1c'
-    const REDIRECT_URI = 'https://music-app-tan-sigma.vercel.app/callback';
+    // Spotify config using environment variables
+    const CLIENT_ID = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID;
+    const REDIRECT_URI = process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI;
     const AUTH_ENDPOINT = 'https://accounts.spotify.com/authorize';
-    const RESPONSE_TYPE = 'token'; // Implicit Grant for simplicity
+    const RESPONSE_TYPE = 'token';
     const SCOPES = 'user-read-private user-read-email user-top-read playlist-read-private playlist-modify-public';
 
-    // Keep static users for admin panel (or fetch via custom backend later)
+    // Static users for admin panel
     const [users] = useState([
         { id: 1, name: "Alex Johnson", email: "alex@music.com", role: "user", joinDate: "2024-01-15" },
         { id: 2, name: "Sarah Chen", email: "sarah@music.com", role: "user", joinDate: "2024-02-20" },
@@ -61,25 +61,32 @@ export default function Page() {
     ]);
 
     useEffect(() => {
-        // Handle Spotify token from URL
-        const hash = window.location.hash;
-        if (hash) {
-            const token = hash.substring(1).split('&').find(elem => elem.startsWith('access_token'))?.split('=')[1];
-            setAccessToken(token);
-            window.location.hash = ''; // Clear hash
-            if (token) fetchUserProfile(token);
+        // Check localStorage for stored token or initial hash from Spotify redirect
+        const storedToken = window.localStorage.getItem('spotify_token');
+        if (storedToken) {
+            setAccessToken(storedToken);
+            fetchUserProfile(storedToken);
+        } else {
+            const hash = window.location.hash;
+            if (hash) {
+                const token = hash.substring(1).split('&').find(elem => elem.startsWith('access_token'))?.split('=')[1];
+                if (token) {
+                    setAccessToken(token);
+                    window.localStorage.setItem('spotify_token', token);
+                    window.location.hash = ''; // Clear hash
+                    fetchUserProfile(token);
+                }
+            }
         }
     }, []);
 
     useEffect(() => {
-        // Update audio volume
         if (audioRef.current) {
             audioRef.current.volume = volume / 100;
         }
     }, [volume]);
 
     useEffect(() => {
-        // Update playback state
         if (audioRef.current && currentSong?.preview_url) {
             audioRef.current.src = currentSong.preview_url;
             if (isPlaying) {
@@ -90,7 +97,6 @@ export default function Page() {
         }
     }, [isPlaying, currentSong]);
 
-    // Fetch user profile
     const fetchUserProfile = async (token) => {
         try {
             setLoading(true);
@@ -103,16 +109,16 @@ export default function Page() {
                 email: data.email,
                 avatar: data.images?.[0]?.url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center'
             });
-            setIsAdmin(data.email === 'admin@music.com'); // Custom admin logic
+            setIsAdmin(data.email === 'admin@music.com');
             await Promise.all([fetchTopTracks(token), fetchUserPlaylists(token)]);
         } catch (err) {
-            setError('Failed to fetch user profile');
+            console.error('Fetch user profile error:', err.response?.data || err.message);
+            setError('Failed to fetch user profile: ' + (err.response?.data?.error?.message || err.message));
         } finally {
             setLoading(false);
         }
     };
 
-    // Fetch top tracks for home/recently played
     const fetchTopTracks = async (token) => {
         try {
             const { data } = await axios.get('https://api.spotify.com/v1/me/top/tracks?time_range=short_term&limit=5', {
@@ -125,9 +131,9 @@ export default function Page() {
                 album: track.album.name,
                 duration: new Date(track.duration_ms).toISOString().substr(14, 5),
                 cover: track.album.images[0]?.url || 'default-cover',
-                genre: 'Unknown', // Genres require artist endpoint
-                plays: 0, // Not directly available
-                preview_url: track.preview_url || null, // For playback
+                genre: 'Unknown',
+                plays: 0,
+                preview_url: track.preview_url || null,
             }));
             setSongs(mappedSongs);
         } catch (err) {
@@ -135,7 +141,6 @@ export default function Page() {
         }
     };
 
-    // Fetch user playlists
     const fetchUserPlaylists = async (token) => {
         try {
             const { data } = await axios.get('https://api.spotify.com/v1/me/playlists?limit=10', {
@@ -144,7 +149,7 @@ export default function Page() {
             const mappedPlaylists = data.items.map(playlist => ({
                 id: playlist.id,
                 name: playlist.name,
-                songs: [], // Fetch separately if needed
+                songs: [],
                 cover: playlist.images[0]?.url || 'default-cover',
             }));
             setPlaylists(mappedPlaylists);
@@ -153,7 +158,6 @@ export default function Page() {
         }
     };
 
-    // Search songs
     const searchSongs = async (query) => {
         if (!accessToken || !query) return;
         try {
@@ -180,7 +184,6 @@ export default function Page() {
         }
     };
 
-    // Authentication
     const handleSpotifyLogin = () => {
         const authUrl = `${AUTH_ENDPOINT}?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}&response_type=${RESPONSE_TYPE}&show_dialog=true`;
         window.location.href = authUrl;
@@ -196,9 +199,9 @@ export default function Page() {
         setSongs([]);
         setFilteredSongs([]);
         setPlaylists([]);
+        window.localStorage.removeItem('spotify_token');
     };
 
-    // Music player functions
     const togglePlay = () => {
         setIsPlaying(!isPlaying);
     };
@@ -214,7 +217,6 @@ export default function Page() {
         return `${mins}:${secs.toString().padStart(2, '0')}`;
     };
 
-    // Playlist functions
     const createPlaylist = async () => {
         if (!newPlaylistName.trim() || !accessToken) return;
         try {
@@ -236,14 +238,12 @@ export default function Page() {
         }
     };
 
-    // Update search handler
     const handleSearch = (e) => {
         const query = e.target.value;
         setSearchQuery(query);
         if (query) searchSongs(query);
     };
 
-    // Login Component
     if (!currentUser || !accessToken) {
         return (
             <div className="login-container">
@@ -259,7 +259,6 @@ export default function Page() {
                         <button onClick={handleSpotifyLogin} className="login-btn user-btn">
                             Login with Spotify
                         </button>
-                        {/* Keep admin login for testing */}
                         <button
                             onClick={() => handleLogin("admin@music.com", "password", "admin")}
                             className="login-btn admin-btn"
@@ -274,17 +273,13 @@ export default function Page() {
         );
     }
 
-    // Main App Component
     return (
         <div className="app-container">
-            {/* Hidden audio element for playback */}
             <audio
                 ref={audioRef}
                 onTimeUpdate={() => setCurrentTime(audioRef.current?.currentTime || 0)}
                 onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)}
             />
-
-            {/* Header */}
             <header className="header">
                 <div className="header-content">
                     <div className="header-left">
@@ -310,39 +305,21 @@ export default function Page() {
                     </div>
                 </div>
             </header>
-
             <div className="main-layout">
-                {/* Sidebar */}
                 <aside className="sidebar">
                     <nav className="nav-menu">
-                        <button
-                            onClick={() => setActiveTab('home')}
-                            className={`nav-item ${activeTab === 'home' ? 'active' : ''}`}
-                        >
-                            <Home className="nav-icon" />
-                            <span>Home</span>
+                        <button onClick={() => setActiveTab('home')} className={`nav-item ${activeTab === 'home' ? 'active' : ''}`}>
+                            <Home className="nav-icon" /><span>Home</span>
                         </button>
-                        <button
-                            onClick={() => setActiveTab('search')}
-                            className={`nav-item ${activeTab === 'search' ? 'active' : ''}`}
-                        >
-                            <Search className="nav-icon" />
-                            <span>Search</span>
+                        <button onClick={() => setActiveTab('search')} className={`nav-item ${activeTab === 'search' ? 'active' : ''}`}>
+                            <Search className="nav-icon" /><span>Search</span>
                         </button>
-                        <button
-                            onClick={() => setActiveTab('playlists')}
-                            className={`nav-item ${activeTab === 'playlists' ? 'active' : ''}`}
-                        >
-                            <Music className="nav-icon" />
-                            <span>My Playlists</span>
+                        <button onClick={() => setActiveTab('playlists')} className={`nav-item ${activeTab === 'playlists' ? 'active' : ''}`}>
+                            <Music className="nav-icon" /><span>My Playlists</span>
                         </button>
                         {isAdmin && (
-                            <button
-                                onClick={() => setActiveTab('admin')}
-                                className={`nav-item ${activeTab === 'admin' ? 'active admin' : ''}`}
-                            >
-                                <Shield className="nav-icon" />
-                                <span>Admin Panel</span>
+                            <button onClick={() => setActiveTab('admin')} className={`nav-item ${activeTab === 'admin' ? 'active admin' : ''}`}>
+                                <Shield className="nav-icon" /><span>Admin Panel</span>
                             </button>
                         )}
                     </nav>
@@ -361,8 +338,6 @@ export default function Page() {
                         </div>
                     </div>
                 </aside>
-
-                {/* Main Content */}
                 <main className="main-content">
                     {activeTab === 'home' && (
                         <div className="home-content">
@@ -376,16 +351,10 @@ export default function Page() {
                                     <>
                                         <div className="featured-songs">
                                             {songs.map((song) => (
-                                                <div
-                                                    key={song.id}
-                                                    className="song-card"
-                                                    onClick={() => selectSong(song)}
-                                                >
+                                                <div key={song.id} className="song-card" onClick={() => selectSong(song)}>
                                                     <div className="song-cover-container">
                                                         <img src={song.cover} alt={song.title} className="song-cover" />
-                                                        <button className="play-overlay">
-                                                            <Play className="play-icon" />
-                                                        </button>
+                                                        <button className="play-overlay"><Play className="play-icon" /></button>
                                                     </div>
                                                     <h3 className="song-title">{song.title}</h3>
                                                     <p className="song-artist">{song.artist}</p>
@@ -396,20 +365,14 @@ export default function Page() {
                                             <h3 className="section-title">Recently Played</h3>
                                             <div className="recent-list">
                                                 {songs.slice(0, 3).map((song) => (
-                                                    <div
-                                                        key={song.id}
-                                                        className="recent-item"
-                                                        onClick={() => selectSong(song)}
-                                                    >
+                                                    <div key={song.id} className="recent-item" onClick={() => selectSong(song)}>
                                                         <img src={song.cover} alt={song.title} className="recent-cover" />
                                                         <div className="recent-info">
                                                             <h4 className="recent-title">{song.title}</h4>
                                                             <p className="recent-artist">{song.artist} • {song.album}</p>
                                                         </div>
                                                         <span className="recent-duration">{song.duration}</span>
-                                                        <button className="recent-play">
-                                                            <Play className="recent-play-icon" />
-                                                        </button>
+                                                        <button className="recent-play"><Play className="recent-play-icon" /></button>
                                                     </div>
                                                 ))}
                                             </div>
@@ -419,7 +382,6 @@ export default function Page() {
                             </div>
                         </div>
                     )}
-
                     {activeTab === 'search' && (
                         <div className="search-content">
                             <h2 className="page-title">Search Results</h2>
@@ -430,11 +392,7 @@ export default function Page() {
                             ) : searchQuery ? (
                                 <div className="search-results">
                                     {filteredSongs.map((song) => (
-                                        <div
-                                            key={song.id}
-                                            className="search-item"
-                                            onClick={() => selectSong(song)}
-                                        >
+                                        <div key={song.id} className="search-item" onClick={() => selectSong(song)}>
                                             <img src={song.cover} alt={song.title} className="search-cover" />
                                             <div className="search-info">
                                                 <h4 className="search-title">{song.title}</h4>
@@ -444,9 +402,7 @@ export default function Page() {
                                             <div className="search-actions">
                                                 <span className="search-duration">{song.duration}</span>
                                                 <Heart className="heart-icon" />
-                                                <button className="search-play">
-                                                    <Play className="search-play-icon" />
-                                                </button>
+                                                <button className="search-play"><Play className="search-play-icon" /></button>
                                             </div>
                                         </div>
                                     ))}
@@ -459,17 +415,12 @@ export default function Page() {
                             )}
                         </div>
                     )}
-
                     {activeTab === 'playlists' && (
                         <div className="playlists-content">
                             <div className="playlists-header">
                                 <h2 className="page-title">My Playlists</h2>
-                                <button
-                                    onClick={() => setShowCreatePlaylist(true)}
-                                    className="create-playlist-btn"
-                                >
-                                    <Plus className="plus-icon" />
-                                    <span>Create Playlist</span>
+                                <button onClick={() => setShowCreatePlaylist(true)} className="create-playlist-btn">
+                                    <Plus className="plus-icon" /><span>Create Playlist</span>
                                 </button>
                             </div>
                             {showCreatePlaylist && (
@@ -483,15 +434,8 @@ export default function Page() {
                                             onChange={(e) => setNewPlaylistName(e.target.value)}
                                             className="playlist-input"
                                         />
-                                        <button onClick={createPlaylist} className="create-btn">
-                                            Create
-                                        </button>
-                                        <button
-                                            onClick={() => setShowCreatePlaylist(false)}
-                                            className="cancel-btn"
-                                        >
-                                            Cancel
-                                        </button>
+                                        <button onClick={createPlaylist} className="create-btn">Create</button>
+                                        <button onClick={() => setShowCreatePlaylist(false)} className="cancel-btn">Cancel</button>
                                     </div>
                                 </div>
                             )}
@@ -512,7 +456,6 @@ export default function Page() {
                             )}
                         </div>
                     )}
-
                     {activeTab === 'admin' && isAdmin && (
                         <div className="admin-content">
                             <h2 className="page-title">Admin Dashboard</h2>
@@ -560,22 +503,16 @@ export default function Page() {
                                     {users.map((user) => (
                                         <div key={user.id} className="user-item">
                                             <div className="user-left">
-                                                <div className="user-icon">
-                                                    <User className="user-icon-svg" />
-                                                </div>
+                                                <div className="user-icon"><User className="user-icon-svg" /></div>
                                                 <div className="user-details">
                                                     <p className="user-item-name">{user.name}</p>
                                                     <p className="user-email">{user.email}</p>
                                                 </div>
                                             </div>
                                             <div className="user-right">
-                                                <span className={`role-badge ${user.role}`}>
-                                                    {user.role}
-                                                </span>
+                                                <span className={`role-badge ${user.role}`}>{user.role}</span>
                                                 <span className="join-date">{user.joinDate}</span>
-                                                <button className="user-menu">
-                                                    <MoreVertical className="menu-icon" />
-                                                </button>
+                                                <button className="user-menu"><MoreVertical className="menu-icon" /></button>
                                             </div>
                                         </div>
                                     ))}
@@ -603,8 +540,6 @@ export default function Page() {
                     )}
                 </main>
             </div>
-
-            {/* Music Player */}
             {currentSong && (
                 <div className="music-player">
                     <div className="player-content">
@@ -616,21 +551,13 @@ export default function Page() {
                             </div>
                         </div>
                         <div className="player-controls">
-                            <button className="control-btn">
-                                <Shuffle className="control-icon" />
-                            </button>
-                            <button className="control-btn">
-                                <SkipBack className="control-icon" />
-                            </button>
+                            <button className="control-btn"><Shuffle className="control-icon" /></button>
+                            <button className="control-btn"><SkipBack className="control-icon" /></button>
                             <button onClick={togglePlay} className="play-btn">
                                 {isPlaying ? <Pause className="play-icon" /> : <Play className="play-icon" />}
                             </button>
-                            <button className="control-btn">
-                                <SkipForward className="control-icon" />
-                            </button>
-                            <button className="control-btn">
-                                <Repeat className="control-icon" />
-                            </button>
+                            <button className="control-btn"><SkipForward className="control-icon" /></button>
+                            <button className="control-btn"><Repeat className="control-icon" /></button>
                         </div>
                         <div className="player-right">
                             <Heart className="heart-btn" />
@@ -653,10 +580,7 @@ export default function Page() {
                             <span>{currentSong.duration}</span>
                         </div>
                         <div className="progress-bar">
-                            <div
-                                className="progress-fill"
-                                style={{ width: `${(currentTime / duration) * 100}%` }}
-                            ></div>
+                            <div className="progress-fill" style={{ width: `${(currentTime / duration) * 100}%` }}></div>
                         </div>
                     </div>
                 </div>
