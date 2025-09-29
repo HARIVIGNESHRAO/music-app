@@ -7,7 +7,7 @@ import {
     Play, Pause, SkipBack, SkipForward, Volume2, Heart, Search, Home, Music, User,
     Plus, Shuffle, Repeat, MoreVertical, TrendingUp, Users, BarChart3, Shield
 } from 'lucide-react';
-import crypto from 'crypto-js'; // Install: npm install crypto-js
+import crypto from 'crypto-js';
 
 export default function Page() {
     const [currentUser, setCurrentUser] = useState(null);
@@ -33,7 +33,7 @@ export default function Page() {
     const CLIENT_ID = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID;
     const REDIRECT_URI = process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI;
     const AUTH_ENDPOINT = 'https://accounts.spotify.com/authorize';
-    const RESPONSE_TYPE = 'code'; // Changed to 'code' for PKCE
+    const RESPONSE_TYPE = 'code';
     const SCOPES = 'user-read-private user-read-email user-top-read playlist-read-private playlist-modify-public';
     const CODE_CHALLENGE_METHOD = 'S256';
 
@@ -46,7 +46,7 @@ export default function Page() {
 
     // Generate PKCE code verifier and challenge
     const generateCodeVerifier = () => {
-        return crypto.lib.WordArray.random(32).toString(crypto.enc.Base64url); // 43 chars
+        return crypto.lib.WordArray.random(32).toString(crypto.enc.Base64url);
     };
 
     const generateCodeChallenge = (verifier) => {
@@ -70,10 +70,23 @@ export default function Page() {
         if (audioRef.current && currentSong?.preview_url) {
             audioRef.current.src = currentSong.preview_url;
             if (isPlaying) {
-                audioRef.current.play().catch(() => setError('Playback failed'));
+                audioRef.current.play().catch((err) => {
+                    console.error('Playback error:', err);
+                    if (err.name === 'NotAllowedError') {
+                        setError('Playback blocked by browser. Please interact with the page first.');
+                    } else if (err.name === 'NotSupportedError') {
+                        setError('Audio format not supported by your browser.');
+                    } else {
+                        setError('Failed to play preview: ' + err.message);
+                    }
+                    setIsPlaying(false);
+                });
             } else {
                 audioRef.current.pause();
             }
+        } else if (currentSong && !currentSong.preview_url) {
+            setError('No preview available for this song');
+            setIsPlaying(false);
         }
     }, [isPlaying, currentSong]);
 
@@ -170,7 +183,6 @@ export default function Page() {
         const codeChallenge = generateCodeChallenge(codeVerifier);
 
         const authUrl = `${AUTH_ENDPOINT}?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}&response_type=${RESPONSE_TYPE}&code_challenge=${codeChallenge}&code_challenge_method=${CODE_CHALLENGE_METHOD}`;
-        console.log('Auth URL:', authUrl); // Add this for debugging
         window.location.href = authUrl;
     };
 
@@ -193,8 +205,27 @@ export default function Page() {
     };
 
     const selectSong = (song) => {
+        if (!song.preview_url) {
+            setError('No preview available for this song');
+            setCurrentSong(song);
+            setIsPlaying(false);
+            return;
+        }
         setCurrentSong(song);
         setIsPlaying(true);
+        setError(null);
+    };
+
+    const handleSeek = (e) => {
+        if (audioRef.current && duration) {
+            const progressBar = e.currentTarget;
+            const rect = progressBar.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const width = rect.width;
+            const seekTime = (clickX / width) * duration;
+            audioRef.current.currentTime = seekTime;
+            setCurrentTime(seekTime);
+        }
     };
 
     const formatTime = (seconds) => {
@@ -264,7 +295,18 @@ export default function Page() {
             <audio
                 ref={audioRef}
                 onTimeUpdate={() => setCurrentTime(audioRef.current?.currentTime || 0)}
-                onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)}
+                onLoadedMetadata={() => {
+                    if (audioRef.current) {
+                        setDuration(audioRef.current.duration || 30);
+                    } else {
+                        setError('Failed to load audio metadata');
+                    }
+                }}
+                onEnded={() => {
+                    setIsPlaying(false);
+                    setCurrentTime(0);
+                }}
+                onError={() => setError('Error loading audio file')}
             />
 
             <header className="header">
@@ -541,6 +583,9 @@ export default function Page() {
                             <div className="player-info">
                                 <h4 className="player-title">{currentSong.title}</h4>
                                 <p className="player-artist">{currentSong.artist}</p>
+                                {currentSong.preview_url && (
+                                    <p className="player-note">30-second preview</p>
+                                )}
                             </div>
                         </div>
                         <div className="player-controls">
@@ -568,11 +613,12 @@ export default function Page() {
                         </div>
                     </div>
                     <div className="progress-section">
+                        {error && <p className="player-error">{error}</p>}
                         <div className="progress-time">
                             <span>{formatTime(currentTime)}</span>
                             <span>{currentSong.duration}</span>
                         </div>
-                        <div className="progress-bar">
+                        <div className="progress-bar" onClick={handleSeek}>
                             <div className="progress-fill" style={{ width: `${(currentTime / duration) * 100}%` }}></div>
                         </div>
                     </div>
