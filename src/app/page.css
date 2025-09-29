@@ -1199,3 +1199,48 @@ body {
         grid-template-columns: 1fr;
     }
 }
+/* Music Player Enhancements */
+.player-error {
+    color: #ef4444;
+    font-size: 0.875rem;
+    text-align: center;
+    margin-bottom: 0.5rem;
+    opacity: 0.9;
+}
+
+.progress-bar {
+    cursor: pointer;
+    position: relative;
+}
+
+.progress-bar:hover .progress-fill {
+    background: #9333ea;
+}
+
+.player-note {
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.5);
+    margin-top: 0.25rem;
+}
+
+/* Responsive Design for Music Player Enhancements */
+@media (max-width: 768px) {
+    .player-error {
+        font-size: 0.75rem;
+    }
+
+    .player-note {
+        font-size: 0.675rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .player-error {
+        font-size: 0.675rem;
+        margin-bottom: 0.25rem;
+    }
+
+    .player-note {
+        font-size: 0.625rem;
+    }
+}
