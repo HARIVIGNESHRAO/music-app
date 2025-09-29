@@ -170,6 +170,7 @@ export default function Page() {
         const codeChallenge = generateCodeChallenge(codeVerifier);
 
         const authUrl = `${AUTH_ENDPOINT}?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}&response_type=${RESPONSE_TYPE}&code_challenge=${codeChallenge}&code_challenge_method=${CODE_CHALLENGE_METHOD}`;
+        console.log('Auth URL:', authUrl); // Add this for debugging
         window.location.href = authUrl;
     };
 
