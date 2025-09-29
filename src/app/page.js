@@ -37,8 +37,15 @@ export default function Page() {
     const SCOPES = 'user-read-private user-read-email user-top-read playlist-read-private playlist-modify-public';
     const CODE_CHALLENGE_METHOD = 'S256';
 
-    // Static users for admin
-    const [users] = useState([
+    // Static data for local login
+    const [staticSongs] = useState([
+        { id: 1, title: "Midnight Dreams", artist: "Luna Martinez", album: "Nocturnal Vibes", duration: "3:24", cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center", genre: "Pop", plays: 1234567 },
+        { id: 2, title: "Electric Pulse", artist: "Neon Collective", album: "Digital Horizons", duration: "4:12", cover: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&h=300&fit=crop&crop=center", genre: "Electronic", plays: 987654 },
+        { id: 3, title: "Acoustic Soul", artist: "River Stone", album: "Unplugged Sessions", duration: "2:58", cover: "https://images.unsplash.com/photo-1493612276216-ee3925520721?w=300&h=300&fit=crop&crop=center", genre: "Acoustic", plays: 756432 },
+        { id: 4, title: "Urban Rhythm", artist: "City Beats", album: "Street Anthology", duration: "3:45", cover: "https://images.unsplash.com/photo-1571974599782-87613f249808?w=300&h=300&fit=crop&crop=center", genre: "Hip-Hop", plays: 2143567 },
+        { id: 5, title: "Sunset Boulevard", artist: "Golden Hour", album: "California Dreams", duration: "4:33", cover: "https://images.unsplash.com/photo-1514320291840-2e0a9bf2a9ae?w=300&h=300&fit=crop&crop=center", genre: "Rock", plays: 654321 },
+    ]);
+    const [staticUsers] = useState([
         { id: 1, name: "Alex Johnson", email: "alex@music.com", role: "user", joinDate: "2024-01-15" },
         { id: 2, name: "Sarah Chen", email: "sarah@music.com", role: "user", joinDate: "2024-02-20" },
         { id: 3, name: "Mike Wilson", email: "mike@music.com", role: "admin", joinDate: "2023-12-01" }
@@ -59,6 +66,14 @@ export default function Page() {
         if (storedToken) {
             setAccessToken(storedToken);
             fetchUserProfile(storedToken);
+        } else {
+            // Fallback to local user if no token
+            setCurrentUser({ id: 1, name: "Alex Johnson", email: "alex@music.com", avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center" });
+            setPlaylists([
+                { id: 1, name: "My Favorites", songs: [staticSongs[0], staticSongs[2]], cover: staticSongs[0].cover },
+                { id: 2, name: "Workout Mix", songs: [staticSongs[1], staticSongs[3]], cover: staticSongs[1].cover },
+            ]);
+            setSongs(staticSongs);
         }
     }, []);
 
@@ -68,12 +83,20 @@ export default function Page() {
 
     useEffect(() => {
         if (audioRef.current && currentSong?.preview_url) {
+            console.log('Setting audio src to:', currentSong.preview_url); // Debug
             audioRef.current.src = currentSong.preview_url;
             if (isPlaying) {
-                audioRef.current.play().catch(() => setError('Playback failed'));
+                audioRef.current.play().then(() => console.log('Playback started'))
+                    .catch(err => {
+                        console.error('Playback failed:', err);
+                        setError('Playback blocked: ' + err.message);
+                    });
             } else {
                 audioRef.current.pause();
+                console.log('Audio paused');
             }
+        } else if (currentSong && !currentSong.preview_url) {
+            setError('This song has no preview available');
         }
     }, [isPlaying, currentSong]);
 
@@ -94,6 +117,13 @@ export default function Page() {
         } catch (err) {
             console.error('Profile error:', err);
             setError('Failed to fetch profile: ' + (err.response?.data?.error?.message || err.message));
+            // Fallback to local user on failure
+            setCurrentUser({ id: 1, name: "Alex Johnson", email: "alex@music.com", avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center" });
+            setSongs(staticSongs);
+            setPlaylists([
+                { id: 1, name: "My Favorites", songs: [staticSongs[0], staticSongs[2]], cover: staticSongs[0].cover },
+                { id: 2, name: "Workout Mix", songs: [staticSongs[1], staticSongs[3]], cover: staticSongs[1].cover },
+            ]);
         } finally {
             setLoading(false);
         }
@@ -118,6 +148,7 @@ export default function Page() {
             setSongs(mappedSongs);
         } catch (err) {
             setError('Failed to fetch tracks');
+            setSongs(staticSongs); // Fallback
         }
     };
 
@@ -135,6 +166,10 @@ export default function Page() {
             setPlaylists(mappedPlaylists);
         } catch (err) {
             setError('Failed to fetch playlists');
+            setPlaylists([
+                { id: 1, name: "My Favorites", songs: [staticSongs[0], staticSongs[2]], cover: staticSongs[0].cover },
+                { id: 2, name: "Workout Mix", songs: [staticSongs[1], staticSongs[3]], cover: staticSongs[1].cover },
+            ]); // Fallback
         }
     };
 
@@ -170,8 +205,25 @@ export default function Page() {
         const codeChallenge = generateCodeChallenge(codeVerifier);
 
         const authUrl = `${AUTH_ENDPOINT}?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}&response_type=${RESPONSE_TYPE}&code_challenge=${codeChallenge}&code_challenge_method=${CODE_CHALLENGE_METHOD}`;
-        console.log('Auth URL:', authUrl); // Add this for debugging
+        console.log('Auth URL:', authUrl); // Debug
         window.location.href = authUrl;
+    };
+
+    const handleLogin = (email, password, role = 'user') => {
+        const user = {
+            id: 1,
+            name: role === 'admin' ? "Admin User" : "Demo User",
+            email: email,
+            avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center"
+        };
+        setCurrentUser(user);
+        setIsAdmin(role === 'admin');
+        setSongs(staticSongs);
+        setPlaylists([
+            { id: 1, name: "My Favorites", songs: [staticSongs[0], staticSongs[2]], cover: staticSongs[0].cover },
+            { id: 2, name: "Workout Mix", songs: [staticSongs[1], staticSongs[3]], cover: staticSongs[1].cover },
+        ]);
+        setActiveTab('home');
     };
 
     const handleLogout = () => {
@@ -189,12 +241,36 @@ export default function Page() {
     };
 
     const togglePlay = () => {
-        setIsPlaying(!isPlaying);
+        if (audioRef.current && currentSong?.preview_url) {
+            if (isPlaying) {
+                audioRef.current.pause();
+            } else {
+                audioRef.current.play().catch(err => {
+                    console.error('Playback failed:', err);
+                    setError('Playback blocked: ' + err.message);
+                });
+            }
+            setIsPlaying(!isPlaying);
+        } else if (currentSong && !currentSong.preview_url) {
+            setError('This song has no preview available');
+        }
     };
 
     const selectSong = (song) => {
-        setCurrentSong(song);
-        setIsPlaying(true);
+        if (song.preview_url) {
+            setCurrentSong(song);
+            setIsPlaying(true);
+            if (audioRef.current) {
+                audioRef.current.src = song.preview_url;
+                audioRef.current.play().catch(err => {
+                    console.error('Playback failed:', err);
+                    setError('Playback blocked: ' + err.message);
+                });
+            }
+        } else {
+            setError('This song has no preview available');
+            setCurrentSong(song); // Still set for UI, but won’t play
+        }
     };
 
     const formatTime = (seconds) => {
@@ -204,19 +280,29 @@ export default function Page() {
     };
 
     const createPlaylist = async () => {
-        if (!newPlaylistName.trim() || !accessToken) return;
+        if (!newPlaylistName.trim() || !accessToken && !currentUser) return;
         try {
-            const { data } = await axios.post(
-                `https://api.spotify.com/v1/users/${currentUser.id}/playlists`,
-                { name: newPlaylistName, public: true },
-                { headers: { Authorization: `Bearer ${accessToken}` } }
-            );
-            setPlaylists(prev => [...prev, {
-                id: data.id,
-                name: data.name,
-                songs: [],
-                cover: data.images[0]?.url || 'default-cover',
-            }]);
+            if (accessToken) {
+                const { data } = await axios.post(
+                    `https://api.spotify.com/v1/users/${currentUser.id}/playlists`,
+                    { name: newPlaylistName, public: true },
+                    { headers: { Authorization: `Bearer ${accessToken}` } }
+                );
+                setPlaylists(prev => [...prev, {
+                    id: data.id,
+                    name: data.name,
+                    songs: [],
+                    cover: data.images[0]?.url || 'default-cover',
+                }]);
+            } else {
+                const newPlaylist = {
+                    id: playlists.length + 1,
+                    name: newPlaylistName,
+                    songs: [],
+                    cover: staticSongs[0].cover,
+                };
+                setPlaylists([...playlists, newPlaylist]);
+            }
             setNewPlaylistName('');
             setShowCreatePlaylist(false);
         } catch (err) {
@@ -227,7 +313,12 @@ export default function Page() {
     const handleSearch = (e) => {
         const query = e.target.value;
         setSearchQuery(query);
-        if (query) searchSongs(query);
+        if (query && accessToken) searchSongs(query);
+        else setFilteredSongs(staticSongs.filter(song =>
+            song.title.toLowerCase().includes(query.toLowerCase()) ||
+            song.artist.toLowerCase().includes(query.toLowerCase()) ||
+            song.album.toLowerCase().includes(query.toLowerCase())
+        ));
     };
 
     if (!currentUser || !accessToken) {
@@ -246,10 +337,16 @@ export default function Page() {
                             Login with Spotify
                         </button>
                         <button
+                            onClick={() => handleLogin("demo@music.com", "password", "user")}
+                            className="login-btn user-btn"
+                        >
+                            Login as User
+                        </button>
+                        <button
                             onClick={() => handleLogin("admin@music.com", "password", "admin")}
                             className="login-btn admin-btn"
                         >
-                            Login as Admin (Local)
+                            Login as Admin
                         </button>
                     </div>
                     {loading && <p>Loading...</p>}
@@ -465,7 +562,7 @@ export default function Page() {
                                     <div className="stat-content">
                                         <div className="stat-info">
                                             <p className="stat-label">Active Users</p>
-                                            <p className="stat-value">{users.length}</p>
+                                            <p className="stat-value">{staticUsers.length}</p>
                                         </div>
                                         <Users className="stat-icon" />
                                     </div>
@@ -492,7 +589,7 @@ export default function Page() {
                             <div className="admin-panel">
                                 <h3 className="panel-title">User Management</h3>
                                 <div className="user-list">
-                                    {users.map((user) => (
+                                    {staticUsers.map((user) => (
                                         <div key={user.id} className="user-item">
                                             <div className="user-left">
                                                 <div className="user-icon"><User className="user-icon-svg" /></div>
