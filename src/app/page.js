@@ -4,27 +4,10 @@ import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import './page.css';
 import {
-    Play,
-    Pause,
-    SkipBack,
-    SkipForward,
-    Volume2,
-    Heart,
-    Search,
-    Home,
-    Music,
-    User,
-    Settings,
-    Plus,
-    Shuffle,
-    Repeat,
-    MoreVertical,
-    Clock,
-    TrendingUp,
-    Users,
-    BarChart3,
-    Shield
+    Play, Pause, SkipBack, SkipForward, Volume2, Heart, Search, Home, Music, User,
+    Plus, Shuffle, Repeat, MoreVertical, TrendingUp, Users, BarChart3, Shield
 } from 'lucide-react';
+import crypto from 'crypto-js'; // Install: npm install crypto-js
 
 export default function Page() {
     const [currentUser, setCurrentUser] = useState(null);
@@ -46,44 +29,41 @@ export default function Page() {
     const [error, setError] = useState(null);
     const audioRef = useRef(null);
 
-    // Spotify config using environment variables
+    // Spotify config
     const CLIENT_ID = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID;
     const REDIRECT_URI = process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI;
     const AUTH_ENDPOINT = 'https://accounts.spotify.com/authorize';
-    const RESPONSE_TYPE = 'token';
+    const RESPONSE_TYPE = 'code'; // Changed to 'code' for PKCE
     const SCOPES = 'user-read-private user-read-email user-top-read playlist-read-private playlist-modify-public';
+    const CODE_CHALLENGE_METHOD = 'S256';
 
-    // Static users for admin panel
+    // Static users for admin
     const [users] = useState([
         { id: 1, name: "Alex Johnson", email: "alex@music.com", role: "user", joinDate: "2024-01-15" },
         { id: 2, name: "Sarah Chen", email: "sarah@music.com", role: "user", joinDate: "2024-02-20" },
         { id: 3, name: "Mike Wilson", email: "mike@music.com", role: "admin", joinDate: "2023-12-01" }
     ]);
 
+    // Generate PKCE code verifier and challenge
+    const generateCodeVerifier = () => {
+        return crypto.lib.WordArray.random(32).toString(crypto.enc.Base64url); // 43 chars
+    };
+
+    const generateCodeChallenge = (verifier) => {
+        const hashed = crypto.SHA256(verifier).toString(crypto.enc.Base64url);
+        return hashed;
+    };
+
     useEffect(() => {
-        // Check localStorage for stored token or initial hash from Spotify redirect
         const storedToken = window.localStorage.getItem('spotify_token');
         if (storedToken) {
             setAccessToken(storedToken);
             fetchUserProfile(storedToken);
-        } else {
-            const hash = window.location.hash;
-            if (hash) {
-                const token = hash.substring(1).split('&').find(elem => elem.startsWith('access_token'))?.split('=')[1];
-                if (token) {
-                    setAccessToken(token);
-                    window.localStorage.setItem('spotify_token', token);
-                    window.location.hash = ''; // Clear hash
-                    fetchUserProfile(token);
-                }
-            }
         }
     }, []);
 
     useEffect(() => {
-        if (audioRef.current) {
-            audioRef.current.volume = volume / 100;
-        }
+        if (audioRef.current) audioRef.current.volume = volume / 100;
     }, [volume]);
 
     useEffect(() => {
@@ -112,8 +92,8 @@ export default function Page() {
             setIsAdmin(data.email === 'admin@music.com');
             await Promise.all([fetchTopTracks(token), fetchUserPlaylists(token)]);
         } catch (err) {
-            console.error('Fetch user profile error:', err.response?.data || err.message);
-            setError('Failed to fetch user profile: ' + (err.response?.data?.error?.message || err.message));
+            console.error('Profile error:', err);
+            setError('Failed to fetch profile: ' + (err.response?.data?.error?.message || err.message));
         } finally {
             setLoading(false);
         }
@@ -185,7 +165,11 @@ export default function Page() {
     };
 
     const handleSpotifyLogin = () => {
-        const authUrl = `${AUTH_ENDPOINT}?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}&response_type=${RESPONSE_TYPE}&show_dialog=true`;
+        const codeVerifier = generateCodeVerifier();
+        window.localStorage.setItem('spotify_code_verifier', codeVerifier);
+        const codeChallenge = generateCodeChallenge(codeVerifier);
+
+        const authUrl = `${AUTH_ENDPOINT}?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}&response_type=${RESPONSE_TYPE}&code_challenge=${codeChallenge}&code_challenge_method=${CODE_CHALLENGE_METHOD}`;
         window.location.href = authUrl;
     };
 
@@ -200,6 +184,7 @@ export default function Page() {
         setFilteredSongs([]);
         setPlaylists([]);
         window.localStorage.removeItem('spotify_token');
+        window.localStorage.removeItem('spotify_code_verifier');
     };
 
     const togglePlay = () => {
@@ -280,6 +265,7 @@ export default function Page() {
                 onTimeUpdate={() => setCurrentTime(audioRef.current?.currentTime || 0)}
                 onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)}
             />
+
             <header className="header">
                 <div className="header-content">
                     <div className="header-left">
@@ -305,6 +291,7 @@ export default function Page() {
                     </div>
                 </div>
             </header>
+
             <div className="main-layout">
                 <aside className="sidebar">
                     <nav className="nav-menu">
@@ -338,6 +325,7 @@ export default function Page() {
                         </div>
                     </div>
                 </aside>
+
                 <main className="main-content">
                     {activeTab === 'home' && (
                         <div className="home-content">
@@ -382,6 +370,7 @@ export default function Page() {
                             </div>
                         </div>
                     )}
+
                     {activeTab === 'search' && (
                         <div className="search-content">
                             <h2 className="page-title">Search Results</h2>
@@ -415,6 +404,7 @@ export default function Page() {
                             )}
                         </div>
                     )}
+
                     {activeTab === 'playlists' && (
                         <div className="playlists-content">
                             <div className="playlists-header">
@@ -456,6 +446,7 @@ export default function Page() {
                             )}
                         </div>
                     )}
+
                     {activeTab === 'admin' && isAdmin && (
                         <div className="admin-content">
                             <h2 className="page-title">Admin Dashboard</h2>
@@ -540,6 +531,7 @@ export default function Page() {
                     )}
                 </main>
             </div>
+
             {currentSong && (
                 <div className="music-player">
                     <div className="player-content">

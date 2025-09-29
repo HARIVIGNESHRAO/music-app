@@ -1,25 +1,44 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import axios from 'axios';
 
 export default function Callback() {
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
     const router = useRouter();
 
     useEffect(() => {
-        const hash = window.location.hash;
-        if (hash) {
-            const token = hash.substring(1).split('&').find(elem => elem.startsWith('access_token'))?.split('=')[1];
-            if (token) {
-                window.localStorage.setItem('spotify_token', token);
-                router.push('/');
-            } else {
-                console.error('No access token found in hash:', hash);
-            }
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get('code');
+        const codeVerifier = window.localStorage.getItem('spotify_code_verifier');
+
+        if (code && codeVerifier) {
+            // Exchange code for token via API route
+            axios.post('/api/auth/token', { code, codeVerifier })
+                .then(response => {
+                    const { access_token } = response.data;
+                    if (access_token) {
+                        window.localStorage.setItem('spotify_token', access_token);
+                        router.push('/');
+                    } else {
+                        setError('No access token received');
+                    }
+                })
+                .catch(err => {
+                    console.error('Token exchange error:', err);
+                    setError('Failed to exchange code for token');
+                })
+                .finally(() => setLoading(false));
         } else {
-            console.error('No hash parameter in URL');
+            setError('No authorization code found');
+            setLoading(false);
         }
     }, [router]);
 
-    return <div>Loading...</div>;
+    if (loading) return <div>Processing login...</div>;
+    if (error) return <div>Error: {error}. <button onClick={() => router.push('/')}>Go Home</button></div>;
+
+    return <div>Success! Redirecting...</div>;
 }
