@@ -47,8 +47,8 @@ export default function Page() {
     const audioRef = useRef(null);
 
     // Spotify config
-    const CLIENT_ID = process.env.REACT_APP_SPOTIFY_CLIENT_ID;
-    const REDIRECT_URI = process.env.REACT_APP_SPOTIFY_REDIRECT_URI || 'http://localhost:3000/callback';
+    const CLIENT_ID = '24d1da23844348baa0d6fb0fc1d41c1c'
+    const REDIRECT_URI = 'https://music-app-tan-sigma.vercel.app/callback';
     const AUTH_ENDPOINT = 'https://accounts.spotify.com/authorize';
     const RESPONSE_TYPE = 'token'; // Implicit Grant for simplicity
     const SCOPES = 'user-read-private user-read-email user-top-read playlist-read-private playlist-modify-public';
