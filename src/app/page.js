@@ -44,6 +44,65 @@ export default function Page() {
         { id: 3, name: "Mike Wilson", email: "mike@music.com", role: "admin", joinDate: "2023-12-01" }
     ]);
 
+    // Static song data
+    const staticSongs = [
+        {
+            id: 1,
+            title: "Midnight Dreams",
+            artist: "Luna Martinez",
+            album: "Nocturnal Vibes",
+            duration: "3:24",
+            cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center",
+            genre: "Pop",
+            plays: 1234567,
+            preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
+        },
+        {
+            id: 2,
+            title: "Electric Pulse",
+            artist: "Neon Collective",
+            album: "Digital Horizons",
+            duration: "4:12",
+            cover: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&h=300&fit=crop&crop=center",
+            genre: "Electronic",
+            plays: 987654,
+            preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3"
+        },
+        {
+            id: 3,
+            title: "Acoustic Soul",
+            artist: "River Stone",
+            album: "Unplugged Sessions",
+            duration: "2:58",
+            cover: "https://images.unsplash.com/photo-1493612276216-ee3925520721?w=300&h=300&fit=crop&crop=center",
+            genre: "Acoustic",
+            plays: 756432,
+            preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3"
+        },
+        {
+            id: 4,
+            title: "Urban Rhythm",
+            artist: "City Beats",
+            album: "Street Anthology",
+            duration: "3:45",
+            cover: "https://images.unsplash.com/photo-1571974599782-87613f249808?w=300&h=300&fit=crop&crop=center",
+            genre: "Hip-Hop",
+            plays: 2143567,
+            preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3"
+        },
+        {
+            id: 5,
+            title: "Sunset Boulevard",
+            artist: "Golden Hour",
+            album: "California Dreams",
+            duration: "4:33",
+            cover: "https://images.unsplash.com/photo-1514320291840-2e0a9bf2a9ae?w=300&h=300&fit=crop&crop=center",
+            genre: "Rock",
+            plays: 654321,
+            preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3"
+        }
+    ];
+
     // Generate PKCE code verifier and challenge
     const generateCodeVerifier = () => {
         return crypto.lib.WordArray.random(32).toString(crypto.enc.Base64url);
@@ -52,6 +111,35 @@ export default function Page() {
     const generateCodeChallenge = (verifier) => {
         const hashed = crypto.SHA256(verifier).toString(crypto.enc.Base64url);
         return hashed;
+    };
+
+    // Authentication functions
+    const handleLogin = (email, password, role = 'user') => {
+        const user = {
+            id: 1,
+            name: role === 'admin' ? "Admin User" : "Demo User",
+            email: email,
+            avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center"
+        };
+        setCurrentUser(user);
+        setIsAdmin(role === 'admin');
+        setActiveTab('home');
+        setSongs(staticSongs);
+        setFilteredSongs(staticSongs);
+        setPlaylists([
+            {
+                id: 1,
+                name: "My Favorites",
+                songs: [staticSongs[0], staticSongs[2]],
+                cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center"
+            },
+            {
+                id: 2,
+                name: "Workout Mix",
+                songs: [staticSongs[1], staticSongs[3]],
+                cover: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&h=300&fit=crop&crop=center"
+            }
+        ]);
     };
 
     useEffect(() => {
@@ -152,7 +240,16 @@ export default function Page() {
     };
 
     const searchSongs = async (query) => {
-        if (!accessToken || !query) return;
+        if (!accessToken || !query) {
+            // Local search for static songs
+            const filtered = staticSongs.filter(song =>
+                song.title.toLowerCase().includes(query.toLowerCase()) ||
+                song.artist.toLowerCase().includes(query.toLowerCase()) ||
+                song.album.toLowerCase().includes(query.toLowerCase())
+            );
+            setFilteredSongs(filtered);
+            return;
+        }
         try {
             setLoading(true);
             const { data } = await axios.get(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
@@ -235,23 +332,36 @@ export default function Page() {
     };
 
     const createPlaylist = async () => {
-        if (!newPlaylistName.trim() || !accessToken) return;
-        try {
-            const { data } = await axios.post(
-                `https://api.spotify.com/v1/users/${currentUser.id}/playlists`,
-                { name: newPlaylistName, public: true },
-                { headers: { Authorization: `Bearer ${accessToken}` } }
-            );
-            setPlaylists(prev => [...prev, {
-                id: data.id,
-                name: data.name,
+        if (!newPlaylistName.trim()) return;
+        if (accessToken) {
+            try {
+                const { data } = await axios.post(
+                    `https://api.spotify.com/v1/users/${currentUser.id}/playlists`,
+                    { name: newPlaylistName, public: true },
+                    { headers: { Authorization: `Bearer ${accessToken}` } }
+                );
+                setPlaylists(prev => [...prev, {
+                    id: data.id,
+                    name: data.name,
+                    songs: [],
+                    cover: data.images[0]?.url || 'default-cover',
+                }]);
+                setNewPlaylistName('');
+                setShowCreatePlaylist(false);
+            } catch (err) {
+                setError('Failed to create playlist');
+            }
+        } else {
+            // Local playlist creation
+            const newPlaylist = {
+                id: playlists.length + 1,
+                name: newPlaylistName,
                 songs: [],
-                cover: data.images[0]?.url || 'default-cover',
-            }]);
+                cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center"
+            };
+            setPlaylists([...playlists, newPlaylist]);
             setNewPlaylistName('');
             setShowCreatePlaylist(false);
-        } catch (err) {
-            setError('Failed to create playlist');
         }
     };
 
@@ -261,7 +371,7 @@ export default function Page() {
         if (query) searchSongs(query);
     };
 
-    if (!currentUser || !accessToken) {
+    if (!currentUser) {
         return (
             <div className="login-container">
                 <div className="login-card">
@@ -273,14 +383,20 @@ export default function Page() {
                         <p className="app-subtitle">Your personal music companion</p>
                     </div>
                     <div className="login-buttons">
-                        <button onClick={handleSpotifyLogin} className="login-btn user-btn">
+                        <button onClick={handleSpotifyLogin} className="login-btn spotify-btn">
                             Login with Spotify
+                        </button>
+                        <button
+                            onClick={() => handleLogin("demo@music.com", "password", "user")}
+                            className="login-btn user-btn"
+                        >
+                            Login as User
                         </button>
                         <button
                             onClick={() => handleLogin("admin@music.com", "password", "admin")}
                             className="login-btn admin-btn"
                         >
-                            Login as Admin (Local)
+                            Login as Admin
                         </button>
                     </div>
                     {loading && <p>Loading...</p>}
