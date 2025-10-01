@@ -8,8 +8,10 @@ import {
     Plus, Shuffle, Repeat, MoreVertical, TrendingUp, Users, BarChart3, Shield
 } from 'lucide-react';
 import crypto from 'crypto-js';
+import { useRouter } from 'next/navigation';
 
 export default function Page() {
+    const router = useRouter();
     const [currentUser, setCurrentUser] = useState(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [currentSong, setCurrentSong] = useState(null);
@@ -37,7 +39,7 @@ export default function Page() {
     const SCOPES = 'user-read-private user-read-email user-top-read playlist-read-private playlist-modify-public';
     const CODE_CHALLENGE_METHOD = 'S256';
 
-    // Static users for admin
+    // Static users for admin (retained for admin panel display)
     const [users] = useState([
         { id: 1, name: "Alex Johnson", email: "alex@music.com", role: "user", joinDate: "2024-01-15" },
         { id: 2, name: "Sarah Chen", email: "sarah@music.com", role: "user", joinDate: "2024-02-20" },
@@ -113,36 +115,32 @@ export default function Page() {
         return hashed;
     };
 
-    // Authentication functions
-    const handleLogin = (email, password, role = 'user') => {
-        const user = {
-            id: 1,
-            name: role === 'admin' ? "Admin User" : "Demo User",
-            email: email,
-            avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center"
-        };
-        setCurrentUser(user);
-        setIsAdmin(role === 'admin');
-        setActiveTab('home');
-        setSongs(staticSongs);
-        setFilteredSongs(staticSongs);
-        setPlaylists([
-            {
-                id: 1,
-                name: "My Favorites",
-                songs: [staticSongs[0], staticSongs[2]],
-                cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center"
-            },
-            {
-                id: 2,
-                name: "Workout Mix",
-                songs: [staticSongs[1], staticSongs[3]],
-                cover: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&h=300&fit=crop&crop=center"
-            }
-        ]);
-    };
-
+    // Check for existing user in localStorage
     useEffect(() => {
+        const storedUser = window.localStorage.getItem('user');
+        if (storedUser) {
+            const user = JSON.parse(storedUser);
+            setCurrentUser(user);
+            setIsAdmin(user.role === 'admin');
+            setSongs(staticSongs);
+            setFilteredSongs(staticSongs);
+            setPlaylists([
+                {
+                    id: 1,
+                    name: "My Favorites",
+                    songs: [staticSongs[0], staticSongs[2]],
+                    cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center"
+                },
+                {
+                    id: 2,
+                    name: "Workout Mix",
+                    songs: [staticSongs[1], staticSongs[3]],
+                    cover: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&h=300&fit=crop&crop=center"
+                }
+            ]);
+            setActiveTab('home');
+        }
+
         const storedToken = window.localStorage.getItem('spotify_token');
         if (storedToken) {
             setAccessToken(storedToken);
@@ -184,13 +182,16 @@ export default function Page() {
             const { data } = await axios.get('https://api.spotify.com/v1/me', {
                 headers: { Authorization: `Bearer ${token}` },
             });
-            setCurrentUser({
+            const user = {
                 id: data.id,
                 name: data.display_name,
                 email: data.email,
-                avatar: data.images?.[0]?.url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center'
-            });
-            setIsAdmin(data.email === 'admin@music.com');
+                avatar: data.images?.[0]?.url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center',
+                role: data.email === 'admin@music.com' ? 'admin' : 'user'
+            };
+            setCurrentUser(user);
+            setIsAdmin(user.role === 'admin');
+            window.localStorage.setItem('user', JSON.stringify(user));
             await Promise.all([fetchTopTracks(token), fetchUserPlaylists(token)]);
         } catch (err) {
             console.error('Profile error:', err);
@@ -241,7 +242,6 @@ export default function Page() {
 
     const searchSongs = async (query) => {
         if (!accessToken || !query) {
-            // Local search for static songs
             const filtered = staticSongs.filter(song =>
                 song.title.toLowerCase().includes(query.toLowerCase()) ||
                 song.artist.toLowerCase().includes(query.toLowerCase()) ||
@@ -295,6 +295,8 @@ export default function Page() {
         setPlaylists([]);
         window.localStorage.removeItem('spotify_token');
         window.localStorage.removeItem('spotify_code_verifier');
+        window.localStorage.removeItem('user');
+        router.push('/login');
     };
 
     const togglePlay = () => {
@@ -352,7 +354,6 @@ export default function Page() {
                 setError('Failed to create playlist');
             }
         } else {
-            // Local playlist creation
             const newPlaylist = {
                 id: playlists.length + 1,
                 name: newPlaylistName,
@@ -387,13 +388,13 @@ export default function Page() {
                             Login with Spotify
                         </button>
                         <button
-                            onClick={() => handleLogin("demo@music.com", "password", "user")}
+                            onClick={() => router.push('/login')}
                             className="login-btn user-btn"
                         >
                             Login as User
                         </button>
                         <button
-                            onClick={() => handleLogin("admin@music.com", "password", "admin")}
+                            onClick={() => router.push('/login')}
                             className="login-btn admin-btn"
                         >
                             Login as Admin
@@ -444,8 +445,8 @@ export default function Page() {
                         </div>
                     </div>
                     <div className="header-right">
-                        <img src={currentUser.avatar} alt={currentUser.name} className="user-avatar" />
-                        <span className="user-name">{currentUser.name}</span>
+                        <img src={currentUser.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center'} alt={currentUser.username || currentUser.name} className="user-avatar" />
+                        <span className="user-name">{currentUser.username || currentUser.name}</span>
                         <button onClick={handleLogout} className="logout-btn">Logout</button>
                     </div>
                 </div>
@@ -489,7 +490,7 @@ export default function Page() {
                     {activeTab === 'home' && (
                         <div className="home-content">
                             <div className="welcome-section">
-                                <h2 className="welcome-title">Welcome back, {currentUser.name}!</h2>
+                                <h2 className="welcome-title">Welcome back, {currentUser.username || currentUser.name}!</h2>
                                 {loading ? (
                                     <p>Loading...</p>
                                 ) : error ? (

@@ -1,177 +1,298 @@
 'use client';
 
-import { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Volume2, VolumeX } from 'lucide-react';
+import axios from 'axios';
+import { useRouter } from 'next/navigation';
 import './page.css';
 
-export default function LoginPage() {
-    const [loginData, setLoginData] = useState({
-        email: '',
-        password: ''
-    });
+const time_to_show_login = 400;
+const time_to_hidden_login = 200;
+const time_to_show_sign_up = 100;
+const time_to_hidden_sign_up = 400;
+const time_to_hidden_all = 500;
 
-    const [signupData, setSignupData] = useState({
-        fullName: '',
-        email: '',
-        password: ''
-    });
+export default function Home() {
+    const router = useRouter();
+    const [activeForm, setActiveForm] = useState('none');
+    const [loginDisplay, setLoginDisplay] = useState('none');
+    const [loginOpacity, setLoginOpacity] = useState(0);
+    const [signUpDisplay, setSignUpDisplay] = useState('none');
+    const [signUpOpacity, setSignUpOpacity] = useState(0);
+    const [isMuted, setIsMuted] = useState(false);
+    const [loginEmail, setLoginEmail] = useState('');
+    const [loginPassword, setLoginPassword] = useState('');
+    const [signupEmail, setSignupEmail] = useState('');
+    const [signupUsername, setSignupUsername] = useState('');
+    const [signupPassword, setSignupPassword] = useState('');
+    const [signupConfirmPassword, setSignupConfirmPassword] = useState('');
+    const [error, setError] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const audioRef = useRef(null);
+    const videoRef = useRef(null);
+    const fullPageVideoRef = useRef(null);
 
-    const [animationState, setAnimationState] = useState('');
-    const [cardStates, setCardStates] = useState({
-        loginCard: { position: 'below', turned: true },
-        signupCard: { position: 'above', turned: false }
-    });
+    useEffect(() => {
+        if (audioRef.current) {
+            audioRef.current.volume = 0.3;
+            audioRef.current.play().catch(() => {
+                console.log('Audio autoplay prevented');
+            });
+        }
+        if (videoRef.current) {
+            videoRef.current.play().catch(() => {
+                console.log('Video autoplay prevented (form background)');
+            });
+        }
+        if (fullPageVideoRef.current) {
+            fullPageVideoRef.current.play().catch(() => {
+                console.log('Video autoplay prevented (full page background)');
+            });
+        }
+    }, []);
 
-    const handleCardFlip = () => {
-        setAnimationState('animation-state-1');
+    const toggleMute = () => {
+        if (audioRef.current) {
+            audioRef.current.muted = !isMuted;
+            setIsMuted(!isMuted);
+        }
+    };
 
+    const changeToLogin = () => {
+        setActiveForm('login');
+        setLoginDisplay('block');
+        setSignUpOpacity(0);
+        setError(null);
         setTimeout(() => {
-            // Switch the card positions (this is the key part that was missing)
-            setCardStates(prev => ({
-                loginCard: {
-                    position: prev.loginCard.position === 'below' ? 'above' : 'below',
-                    turned: prev.loginCard.turned
-                },
-                signupCard: {
-                    position: prev.signupCard.position === 'above' ? 'below' : 'above',
-                    turned: prev.signupCard.turned
-                }
-            }));
-
-            setTimeout(() => {
-                setAnimationState('animation-state-finish');
-
-                setTimeout(() => {
-                    // Switch the turned states
-                    setCardStates(prev => ({
-                        loginCard: { ...prev.loginCard, turned: !prev.loginCard.turned },
-                        signupCard: { ...prev.signupCard, turned: !prev.signupCard.turned }
-                    }));
-                    setAnimationState('');
-                }, 300);
-            }, 10);
-        }, 300);
+            setLoginOpacity(1);
+        }, time_to_show_login);
+        setTimeout(() => {
+            setSignUpDisplay('none');
+        }, time_to_hidden_login);
     };
 
-    const handleLoginChange = (e) => {
-        setLoginData({
-            ...loginData,
-            [e.target.name]: e.target.value
-        });
+    const changeToSignUp = () => {
+        setActiveForm('signup');
+        setSignUpDisplay('block');
+        setLoginOpacity(0);
+        setError(null);
+        setTimeout(() => {
+            setSignUpOpacity(1);
+        }, time_to_show_sign_up);
+        setTimeout(() => {
+            setLoginDisplay('none');
+        }, time_to_hidden_sign_up);
     };
 
-    const handleSignupChange = (e) => {
-        setSignupData({
-            ...signupData,
-            [e.target.name]: e.target.value
-        });
+    const hiddenLoginAndSignUp = () => {
+        setActiveForm('none');
+        setLoginOpacity(0);
+        setSignUpOpacity(0);
+        setError(null);
+        setTimeout(() => {
+            setLoginDisplay('none');
+            setSignUpDisplay('none');
+        }, time_to_hidden_all);
     };
 
-    const handleLoginSubmit = (e) => {
+    const handleLogin = async (e) => {
         e.preventDefault();
-        console.log('Login data:', loginData);
-        // Add your login logic here
+        setLoading(true);
+        setError(null);
+
+        try {
+            const response = await axios.post('http://localhost:5000/api/login', {
+                username: loginEmail,
+                password: loginPassword
+            });
+            const user = response.data.user;
+            window.localStorage.setItem('user', JSON.stringify(user));
+            setLoading(false);
+            router.push('/');
+        } catch (err) {
+            setLoading(false);
+            setError(err.response?.data?.message || 'Login failed');
+        }
     };
 
-    const handleSignupSubmit = (e) => {
+    const handleSignup = async (e) => {
         e.preventDefault();
-        console.log('Signup data:', signupData);
-        // Add your signup logic here
+        setLoading(true);
+        setError(null);
+
+        if (signupPassword !== signupConfirmPassword) {
+            setError('Passwords do not match');
+            setLoading(false);
+            return;
+        }
+
+        try {
+            const response = await axios.post('http://localhost:5000/api/signup', {
+                username: signupUsername,
+                email: signupEmail,
+                password: signupPassword
+            });
+            const user = response.data.user;
+            window.localStorage.setItem('user', JSON.stringify(user));
+            setLoading(false);
+            router.push('/');
+        } catch (err) {
+            setLoading(false);
+            setError(err.response?.data?.message || 'Signup failed');
+        }
     };
+
+    let contFormsClass = 'cont_forms';
+    if (activeForm === 'login') {
+        contFormsClass += ' cont_forms_active_login';
+    } else if (activeForm === 'signup') {
+        contFormsClass += ' cont_forms_active_sign_up';
+    }
+
+    const formBackgroundVideo = '/25001-347024098_small.mp4';
+    const fullPageBackgroundVideo = '/25001-347024098_small.mp4';
 
     return (
-        <div className="login-container">
-            {/* Background Video */}
+        <>
             <video
-                className="background-video"
+                ref={fullPageVideoRef}
+                className="full-page-video"
                 autoPlay
                 loop
                 muted
                 playsInline
             >
-                <source src="/13192-246454317_small.mp4" type="video/mp4" />
-
-                Your browser does not support the video tag.
+                <source src={fullPageBackgroundVideo} type="video/mp4" />
             </video>
 
-            {/* Optional overlay for better text readability */}
-            <div className="video-overlay"></div>
+            <audio ref={audioRef} loop>
+                <source src="https://assets.mixkit.co/music/preview/mixkit-tech-house-vibes-130.mp3" type="audio/mpeg" />
+            </audio>
 
-            <div className={`form-collection ${animationState}`}>
-                <div className={`card elevation-3 limit-width log-in-card ${cardStates.loginCard.position} ${cardStates.loginCard.turned ? 'turned' : ''}`}>
-                    <form onSubmit={handleLoginSubmit}>
-                        <div className="card-body">
-                            <div className="input-group email">
-                                <input
-                                    type="email"
-                                    name="email"
-                                    placeholder="Email"
-                                    value={loginData.email}
-                                    onChange={handleLoginChange}
-                                    required
-                                />
-                            </div>
-                            <div className="input-group password">
-                                <input
-                                    type="password"
-                                    name="password"
-                                    placeholder="Password"
-                                    value={loginData.password}
-                                    onChange={handleLoginChange}
-                                    required
-                                />
-                            </div>
-                            <a href="#" className="box-btn">Forgot Password?</a>
-                        </div>
-                        <div className="card-footer">
-                            <button type="button" className="login-btn" onClick={handleCardFlip}>
-                                Log in
-                            </button>
-                        </div>
-                    </form>
-                </div>
+            <button
+                onClick={toggleMute}
+                className="music-toggle"
+                aria-label={isMuted ? 'Unmute' : 'Mute'}
+            >
+                {isMuted ? <VolumeX size={24} /> : <Volume2 size={24} />}
+            </button>
 
-                <div className={`card elevation-2 limit-width sign-up-card ${cardStates.signupCard.position} ${cardStates.signupCard.turned ? 'turned' : ''}`}>
-                    <form onSubmit={handleSignupSubmit}>
-                        <div className="card-body">
-                            <div className="input-group fullname">
+            <div className="towers-background">
+                <div className="tower tower-1"></div>
+                <div className="tower tower-2"></div>
+                <div className="tower tower-3"></div>
+                <div className="tower tower-4"></div>
+                <div className="tower tower-5"></div>
+            </div>
+
+            <div className="cotn_principal">
+                <div className="cont_centrar">
+                    <div className="cont_login">
+                        <div className="cont_info_log_sign_up">
+                            <div className="col_md_login">
+                                <div className="cont_ba_opcitiy">
+                                    <h2>LOGIN</h2>
+                                    <p>Access your account to continue your journey with us.</p>
+                                    <button className="btn_login" onClick={changeToLogin}>
+                                        LOGIN
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="col_md_sign_up">
+                                <div className="cont_ba_opcitiy">
+                                    <h2>SIGN UP</h2>
+                                    <p>Create a new account and join our community today.</p>
+                                    <button className="btn_sign_up" onClick={changeToSignUp}>
+                                        SIGN UP
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="cont_back_info">
+                            <div className="cont_img_back_grey">
+                                <video ref={videoRef} autoPlay loop muted playsInline>
+                                    <source src={formBackgroundVideo} type="video/mp4" />
+                                </video>
+                            </div>
+                        </div>
+
+                        <div className={contFormsClass}>
+                            <div className="cont_img_back_">
+                                <video autoPlay loop muted playsInline>
+                                    <source src={formBackgroundVideo} type="video/mp4" />
+                                </video>
+                            </div>
+
+                            <div
+                                className="cont_form_login"
+                                style={{ display: loginDisplay, opacity: loginOpacity }}
+                            >
+                                <a href="#" onClick={(e) => { e.preventDefault(); hiddenLoginAndSignUp(); }} className="close-btn">
+                                    ✕
+                                </a>
+                                <h2>LOGIN</h2>
+                                {error && <p className="error-text">{error}</p>}
+                                {loading && <p>Loading...</p>}
                                 <input
                                     type="text"
-                                    name="fullName"
-                                    placeholder="Full Name"
-                                    value={signupData.fullName}
-                                    onChange={handleSignupChange}
-                                    required
+                                    placeholder="Username"
+                                    value={loginEmail}
+                                    onChange={(e) => setLoginEmail(e.target.value)}
                                 />
-                            </div>
-                            <div className="input-group email">
-                                <input
-                                    type="email"
-                                    name="email"
-                                    placeholder="Email"
-                                    value={signupData.email}
-                                    onChange={handleSignupChange}
-                                    required
-                                />
-                            </div>
-                            <div className="input-group password">
                                 <input
                                     type="password"
-                                    name="password"
                                     placeholder="Password"
-                                    value={signupData.password}
-                                    onChange={handleSignupChange}
-                                    required
+                                    value={loginPassword}
+                                    onChange={(e) => setLoginPassword(e.target.value)}
                                 />
+                                <button className="btn_login" onClick={handleLogin}>
+                                    LOGIN
+                                </button>
+                            </div>
+
+                            <div
+                                className="cont_form_sign_up"
+                                style={{ display: signUpDisplay, opacity: signUpOpacity }}
+                            >
+                                <a href="#" onClick={(e) => { e.preventDefault(); hiddenLoginAndSignUp(); }} className="close-btn">
+                                    ✕
+                                </a>
+                                <h2>SIGN UP</h2>
+                                {error && <p className="error-text">{error}</p>}
+                                {loading && <p>Loading...</p>}
+                                <input
+                                    type="text"
+                                    placeholder="Email"
+                                    value={signupEmail}
+                                    onChange={(e) => setSignupEmail(e.target.value)}
+                                />
+                                <input
+                                    type="text"
+                                    placeholder="Username"
+                                    value={signupUsername}
+                                    onChange={(e) => setSignupUsername(e.target.value)}
+                                />
+                                <input
+                                    type="password"
+                                    placeholder="Password"
+                                    value={signupPassword}
+                                    onChange={(e) => setSignupPassword(e.target.value)}
+                                />
+                                <input
+                                    type="password"
+                                    placeholder="Confirm Password"
+                                    value={signupConfirmPassword}
+                                    onChange={(e) => setSignupConfirmPassword(e.target.value)}
+                                />
+                                <button className="btn_sign_up" onClick={handleSignup}>
+                                    SIGN UP
+                                </button>
                             </div>
                         </div>
-                        <div className="card-footer">
-                            <button type="button" className="signup-btn" onClick={handleCardFlip}>
-                                Sign Up
-                            </button>
-                        </div>
-                    </form>
+                    </div>
                 </div>
             </div>
-        </div>
+        </>
     );
 }

@@ -1,298 +1,539 @@
-/* Import Google Fonts */
-@import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;500;600;700&family=Roboto:wght@300;400;500;700&display=swap');
-
-/* Reset and General Styles */
 * {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
-
-html {
-    margin: 0;
-    height: 100%;
-}
-
-body {
-    margin: 0;
-    height: 100%;
+    margin: 0px auto;
+    padding: 0px;
+    text-align: center;
     font-family: "Open Sans", sans-serif;
 }
 
-.login-container {
-    height: 100vh;
-    width: 100vw;
+.music-toggle {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 1000;
+    background: rgba(255, 255, 255, 0.15);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    width: 50px;
+    height: 50px;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #2196F3; /* Fallback color */
-    overflow: hidden;
-    position: relative; /* Container for absolute positioning */
-}
-
-.form-collection {
-    width: 350px;
-    height: 350px;
-    position: relative;
-    z-index: 3; /* Above video and overlay */
-}
-
-.limit-width {
-    width: 300px;
-}
-
-/* Video Background Styling */
-.background-video {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: cover; /* Fullscreen without distortion */
-    z-index: 1; /* Behind overlay and forms */
-    filter: brightness(0.7) contrast(1.1); /* Moderate dimming, keeps video visible */
-}
-
-/* Lighter overlay for video visibility */
-.video-overlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(135deg, rgba(0, 0, 0, 0.3) 0%, rgba(33, 150, 243, 0.2) 100%); /* Lighter gradient */
-    z-index: 2; /* Above video, below forms */
-    pointer-events: none; /* Allows clicks to pass through */
-}
-
-/* Card Styling */
-.card {
-    font-family: "Open Sans", sans-serif;
-    background: rgba(255, 255, 255, 0.95); /* Semi-transparent for frosted glass effect */
-    position: absolute;
-    transition: 0.3s ease all;
-    border-radius: 8px;
-    overflow: hidden;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4); /* Strong shadow for depth */
-    backdrop-filter: blur(8px); /* Subtle blur for modern look, ignored if unsupported */
-    -webkit-backdrop-filter: blur(8px); /* Safari support */
-}
-
-.card-body {
-    padding: 20px;
-}
-
-.box-btn {
-    text-decoration: none;
-    text-align: center;
-    text-transform: uppercase;
-    display: block;
-    padding: 15px;
-    font-size: 16px;
-    font-weight: 500;
-    color: #444;
-    background: rgba(0, 0, 0, 0);
-    transition: 0.2s ease all;
-    border-radius: 3px;
-}
-
-.box-btn:hover {
-    background: rgba(0, 0, 0, 0.06);
-}
-
-.box-btn:active {
-    background: rgba(0, 0, 0, 0.1);
-}
-
-.input-group {
-    border: 2px solid #eee;
-    position: relative;
-    background: #eee;
-    margin: 25px 0;
-    border-radius: 2px;
-    overflow: hidden;
-    padding: 10px;
-}
-
-.input-group input {
-    border: none;
-    background: transparent;
-    width: 100%;
-    outline: none;
-    font-weight: 500;
-    font-family: "Open Sans", sans-serif;
-    font-size: 16px;
-    padding: 5px 0;
-}
-
-.input-group input::placeholder {
-    color: #aaa;
-    font-weight: 500;
-}
-
-.card-footer button {
-    width: 100%;
-    padding: 20px 25px;
-    font-size: 1.5rem;
-    text-transform: uppercase;
-    font-weight: 600;
-    background: #4CAF50;
-    border: none;
-    color: #fff;
-    box-shadow: none;
-    outline: none;
     cursor: pointer;
-    transition: background-color 0.2s ease;
+    color: white;
+    transition: all 0.3s ease;
 }
 
-.card-footer button:hover {
-    background: #45a049;
+.music-toggle:hover {
+    background: rgba(255, 255, 255, 0.25);
+    transform: scale(1.1);
 }
 
-.card-footer button:active {
-    background: #3d8b40;
+.towers-background {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    z-index: 0;
+    pointer-events: none;
 }
 
-/* Animation Classes And Prerequisites */
-.above {
-    z-index: 3;
+.tower {
+    position: absolute;
+    bottom: 0;
+    width: 60px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.05) 100%);
+    border-radius: 4px 4px 0 0;
+    animation: tower-grow 3s ease-in-out infinite;
 }
 
-.below {
+.tower-1 {
+    left: 10%;
+    height: 200px;
+    animation-delay: 0s;
+}
+
+.tower-2 {
+    left: 25%;
+    height: 300px;
+    animation-delay: 0.5s;
+}
+
+.tower-3 {
+    left: 50%;
+    height: 250px;
+    animation-delay: 1s;
+}
+
+.tower-4 {
+    left: 70%;
+    height: 350px;
+    animation-delay: 1.5s;
+}
+
+.tower-5 {
+    left: 85%;
+    height: 180px;
+    animation-delay: 2s;
+}
+
+@keyframes tower-grow {
+    0%, 100% {
+        transform: scaleY(1);
+        opacity: 0.3;
+    }
+    50% {
+        transform: scaleY(1.3);
+        opacity: 0.6;
+    }
+}
+
+.cotn_principal {
+    position: absolute;
+    width: 100%;
+    display: flex;
+    height: 100%;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    z-index: 1;
+}
+
+.cont_centrar {
+    display: flex;
+    align-self: center;
+    width: 100%;
+}
+
+.cont_login {
+    position: relative;
+    width: 640px;
+}
+
+.cont_back_info {
+    position: relative;
+    float: left;
+    width: 640px;
+    height: 280px;
+    overflow: hidden;
+    background-color: #fff;
+    box-shadow: 1px 10px 30px -10px rgba(0, 0, 0, 0.5);
+}
+
+.cont_forms {
+    position: absolute;
+    overflow: hidden;
+    top: 0px;
+    left: 0px;
+    width: 320px;
+    height: 280px;
+    background-color: #eee;
+    -webkit-transition: all 0.5s;
+    -moz-transition: all 0.5s;
+    -ms-transition: all 0.5s;
+    -o-transition: all 0.5s;
+    transition: all 0.5s;
+}
+
+.cont_forms_active_login {
+    box-shadow: 1px 10px 30px -10px rgba(0, 0, 0, 0.5);
+    height: 420px;
+    top: -60px;
+    left: 0px;
+    -webkit-transition: all 0.5s;
+    -moz-transition: all 0.5s;
+    -ms-transition: all 0.5s;
+    -o-transition: all 0.5s;
+    transition: all 0.5s;
+}
+
+.cont_forms_active_sign_up {
+    box-shadow: 1px 10px 30px -10px rgba(0, 0, 0, 0.5);
+    height: 490px;
+    top: -60px;
+    left: 320px;
+    -webkit-transition: all 0.5s;
+    -moz-transition: all 0.5s;
+    -ms-transition: all 0.5s;
+    -o-transition: all 0.5s;
+    transition: all 0.5s;
+}
+
+.cont_img_back_grey {
+    position: absolute;
+    width: 950px;
+    top: -80px;
+    left: -116px;
+}
+
+.cont_img_back_grey > img {
+    width: 100%;
+    -webkit-filter: grayscale(100%);
+    filter: grayscale(100%);
+    opacity: 0.2;
+    animation-name: animar_fondo;
+    animation-duration: 20s;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+    animation-direction: alternate;
+}
+
+.cont_img_back_ {
+    position: absolute;
+    width: 950px;
+    top: -80px;
+    left: -116px;
+}
+
+.cont_img_back_ > img {
+    width: 100%;
+    opacity: 0.3;
+    animation-name: animar_fondo;
+    animation-duration: 20s;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+    animation-direction: alternate;
+}
+
+.cont_forms_active_login > .cont_img_back_ {
+    top: -20px;
+    -webkit-transition: all 0.5s;
+    -moz-transition: all 0.5s;
+    -ms-transition: all 0.5s;
+    -o-transition: all 0.5s;
+    transition: all 0.5s;
+}
+
+.cont_forms_active_sign_up > .cont_img_back_ {
+    top: -20px;
+    left: -435px;
+    -webkit-transition: all 0.5s;
+    -moz-transition: all 0.5s;
+    -ms-transition: all 0.5s;
+    -o-transition: all 0.5s;
+    transition: all 0.5s;
+}
+
+.cont_info_log_sign_up {
+    position: absolute;
+    width: 640px;
+    height: 280px;
+    top: 0px;
+    z-index: 1;
+}
+
+.col_md_login {
+    position: relative;
+    float: left;
+    width: 50%;
+}
+
+.col_md_login > h2 {
+    font-weight: 400;
+    margin-top: 70px;
+    color: #757575;
+}
+
+.col_md_login > p {
+    font-weight: 400;
+    margin-top: 15px;
+    width: 80%;
+    color: #37474f;
+}
+
+.btn_login {
+    background-color: #26c6da;
+    border: none;
+    padding: 10px;
+    width: 200px;
+    border-radius: 3px;
+    box-shadow: 1px 5px 20px -5px rgba(0, 0, 0, 0.4);
+    color: #fff;
+    margin-top: 10px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn_login:hover {
+    background-color: #00acc1;
+    transform: translateY(-2px);
+    box-shadow: 1px 8px 25px -5px rgba(0, 0, 0, 0.5);
+}
+
+.col_md_sign_up {
+    position: relative;
+    float: left;
+    width: 50%;
+}
+
+.cont_ba_opcitiy > h2 {
+    font-weight: 400;
+    color: #fff;
+}
+
+.cont_ba_opcitiy > p {
+    font-weight: 400;
+    margin-top: 15px;
+    color: #fff;
+}
+
+.cont_ba_opcitiy {
+    position: relative;
+    background-color: rgba(120, 144, 156, 0.55);
+    width: 80%;
+    border-radius: 3px;
+    margin-top: 60px;
+    padding: 15px 0px;
+}
+
+.btn_sign_up {
+    background-color: #ef5350;
+    border: none;
+    padding: 10px;
+    width: 200px;
+    border-radius: 3px;
+    box-shadow: 1px 5px 20px -5px rgba(0, 0, 0, 0.4);
+    color: #fff;
+    margin-top: 10px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn_sign_up:hover {
+    background-color: #e53935;
+    transform: translateY(-2px);
+    box-shadow: 1px 8px 25px -5px rgba(0, 0, 0, 0.5);
+}
+
+.cont_forms_active_sign_up {
     z-index: 2;
 }
 
-.turned {
-    opacity: 0.8;
-}
-
-.sign-up-card,
-.log-in-card {
-    box-shadow: 0 19px 38px rgba(0, 0, 0, 0.3), 0 15px 12px rgba(0, 0, 0, 0.22);
-}
-
-.sign-up-card.turned {
-    filter: blur(0.8px);
-    transform: rotateZ(-90deg) translate3d(0, 100px, 0) scale(0.7);
-    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.16), 0 3px 6px rgba(0, 0, 0, 0.23);
-}
-
-.log-in-card.turned {
-    filter: blur(1px);
-    transform: rotateZ(-90deg) translateX(0px) translateY(100px) scale(0.7);
-    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.19), 0 6px 6px rgba(0, 0, 0, 0.23);
-}
-
-/* Animation State 1 */
-.animation-state-1 .sign-up-card.below {
-    transform: rotateZ(-7deg) translateY(150px) scale(0.78);
-    opacity: 1;
-    box-shadow: 0 14px 28px rgba(0, 0, 0, 0.25), 0 10px 10px rgba(0, 0, 0, 0.22);
-    filter: blur(0.4px);
-}
-
-.animation-state-1 .log-in-card.above {
-    transform: rotateZ(-83deg) translateY(-180px) translateX(100px) scale(0.78);
-    opacity: 1;
-    box-shadow: 0 14px 28px rgba(0, 0, 0, 0.25), 0 10px 10px rgba(0, 0, 0, 0.22);
-    filter: blur(0.5px);
-}
-
-.animation-state-1 .log-in-card.below {
-    transform: rotateZ(-10deg) translateY(180px) scale(0.78);
-    opacity: 1;
-    box-shadow: 0 14px 28px rgba(0, 0, 0, 0.25), 0 10px 10px rgba(0, 0, 0, 0.22);
-    filter: blur(0.5px);
-}
-
-.animation-state-1 .sign-up-card.above {
-    transform: rotateZ(-80deg) translateY(-170px) translateX(100px) scale(0.78);
-    opacity: 1;
-    box-shadow: 0 14px 28px rgba(0, 0, 0, 0.25), 0 10px 10px rgba(0, 0, 0, 0.22);
-    filter: blur(0.4px);
-}
-
-/* Animation State Finish */
-.animation-state-finish .sign-up-card.above {
-    transform-origin: left top;
-    transform: rotateZ(5deg) translateY(0px) scale(1);
-    opacity: 1;
-    box-shadow: 0 14px 28px rgba(0, 0, 0, 0.25), 0 10px 10px rgba(0, 0, 0, 0.22);
-    filter: blur(0);
-}
-
-.animation-state-finish .log-in-card.below {
-    transform: rotateZ(-90deg) translateX(0px) translateY(100px) scale(0.7);
-    opacity: 0.8;
-    filter: blur(1px);
-    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.19), 0 6px 6px rgba(0, 0, 0, 0.23);
-}
-
-.animation-state-finish .log-in-card.above {
-    transform-origin: left top;
-    transform: rotateZ(5deg) translateY(0px) scale(1);
-    opacity: 1;
-    box-shadow: 0 14px 28px rgba(0, 0, 0, 0.25), 0 10px 10px rgba(0, 0, 0, 0.22);
-    filter: blur(0);
-}
-
-.animation-state-finish .sign-up-card.below {
-    filter: blur(0.4px);
-    transform: rotateZ(-90deg) translate3d(0, 100px, 0) scale(0.7);
-    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.16), 0 3px 6px rgba(0, 0, 0, 0.23);
-    opacity: 0.7;
-}
-
-/* Responsive Design */
-@media (max-width: 480px) {
-    .form-collection {
-        width: 320px;
-        height: 320px;
+@-webkit-keyframes animar_fondo {
+    from {
+        -webkit-transform: scale(1) translate(0px);
+        -moz-transform: scale(1) translate(0px);
+        -ms-transform: scale(1) translate(0px);
+        -o-transform: scale(1) translate(0px);
+        transform: scale(1) translate(0px);
     }
-
-    .limit-width {
-        width: 280px;
-    }
-
-    .card-body {
-        padding: 15px;
-    }
-
-    .input-group {
-        margin: 20px 0;
-    }
-
-    .card-footer button {
-        font-size: 1.3rem;
-        padding: 18px 20px;
-    }
-
-    .card {
-        background: rgba(255, 255, 255, 0.98); /* More opaque on smaller screens */
-        backdrop-filter: blur(5px); /* Lighter blur for performance */
-        -webkit-backdrop-filter: blur(5px);
+    to {
+        -webkit-transform: scale(1.5) translate(50px);
+        -moz-transform: scale(1.5) translate(50px);
+        -ms-transform: scale(1.5) translate(50px);
+        -o-transform: scale(1.5) translate(50px);
+        transform: scale(1.5) translate(50px);
     }
 }
 
-/* Accessibility: Only hide video if user explicitly prefers reduced motion */
-@media (prefers-reduced-motion: reduce) {
-    .background-video {
-        display: none;
+@keyframes animar_fondo {
+    from {
+        -webkit-transform: scale(1);
+        -moz-transform: scale(1);
+        -ms-transform: scale(1);
+        -o-transform: scale(1);
+        transform: scale(1);
     }
-    .video-overlay {
-        display: none;
-    }
-    .login-container {
-        background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
+    to {
+        -webkit-transform: scale(1.5);
+        -moz-transform: scale(1.5);
+        -ms-transform: scale(1.5);
+        -o-transform: scale(1.5);
+        transform: scale(1.5);
     }
 }
 
-/* Mobile: Keep video unless bandwidth is a concern */
+.cont_form_login {
+    position: absolute;
+    opacity: 0;
+    width: 320px;
+    -webkit-transition: all 0.5s;
+    -moz-transition: all 0.5s;
+    -ms-transition: all 0.5s;
+    -o-transition: all 0.5s;
+    transition: all 0.5s;
+}
+
+.cont_forms_active_login {
+    z-index: 2;
+}
+
+.cont_form_sign_up {
+    position: absolute;
+    width: 320px;
+    float: left;
+    opacity: 0;
+    -webkit-transition: all 0.5s;
+    -moz-transition: all 0.5s;
+    -ms-transition: all 0.5s;
+    -o-transition: all 0.5s;
+    transition: all 0.5s;
+}
+
+.cont_form_sign_up > input {
+    text-align: left;
+    padding: 15px 5px;
+    margin-left: 10px;
+    margin-top: 20px;
+    width: 260px;
+    border: none;
+    color: #757575;
+    background-color: #ffffff;
+    border-radius: 3px;
+    transition: all 0.3s ease;
+}
+
+.cont_form_sign_up > input:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px #ef5350;
+}
+
+.cont_form_sign_up > h2 {
+    margin-top: 60px;
+    font-weight: 400;
+    color: #ffffff;
+}
+
+.cont_form_login > input {
+    padding: 15px 5px;
+    margin-left: 10px;
+    margin-top: 20px;
+    width: 260px;
+    border: none;
+    text-align: left;
+    color: #757575;
+    background-color: #ffffff;
+    border-radius: 3px;
+    transition: all 0.3s ease;
+}
+
+.cont_form_login > input:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px #26c6da;
+}
+
+.cont_form_login > h2 {
+    margin-top: 110px;
+    font-weight: 400;
+    color: #ffffff;
+}
+
+.close-btn {
+    color: #ffffff;
+    position: relative;
+    float: left;
+    margin: 10px;
+    margin-left: 30px;
+    font-size: 24px;
+    text-decoration: none;
+    transition: all 0.3s ease;
+}
+
+.close-btn:hover {
+    color: #ef5350;
+    transform: rotate(90deg);
+}
+
 @media (max-width: 768px) {
-    .background-video {
-        filter: brightness(0.6) contrast(1.1); /* Slightly darker for mobile */
+    .cont_login {
+        width: 100%;
+        max-width: 400px;
     }
-    .video-overlay {
-        background: linear-gradient(135deg, rgba(0, 0, 0, 0.4) 0%, rgba(33, 150, 243, 0.3) 100%); /* Slightly darker overlay */
+
+    .cont_back_info {
+        width: 100%;
+    }
+
+    .cont_forms {
+        width: 100%;
+    }
+
+    .cont_forms_active_login,
+    .cont_forms_active_sign_up {
+        left: 0;
+        width: 100%;
+    }
+
+    .towers-background {
+        opacity: 0.5;
     }
 }
+.cont_img_back_grey > video,
+.cont_img_back_ > video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover; /* Ensures video fills the container */
+    animation-name: animar_fondo;
+    animation-duration: 20s;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+    animation-direction: alternate;
+}
+
+.cont_img_back_ > video { /* Matches original image opacity for cont_img_back_ */
+    -webkit-filter: none; /* Remove grayscale for this video */
+    filter: none;
+}
+/* Full-page background video */
+.full-page-video {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover; /* Ensures video fills the viewport */
+    z-index: -1; /* Places video behind all other content */
+    animation-name: animar_fondo;
+    animation-duration: 20s;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+    animation-direction: alternate;
+}
+/* Ensure towers-background and cotn_principal are above the full-page video */
+.towers-background {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    z-index: 0; /* Above full-page video */
+    pointer-events: none;
+}
+
+.cotn_principal {
+    position: absolute;
+    width: 100%;
+    display: flex;
+    height: 100%;
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.6), rgba(118, 75, 162, 0.6)); /* Slightly transparent to show video */
+    z-index: 1; /* Above full-page video and towers */
+}
+
+/* Existing styles for form background videos */
+.cont_img_back_grey > video,
+.cont_img_back_ > video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    animation-name: animar_fondo;
+    animation-duration: 20s;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+    animation-direction: alternate;
+}
+
+.cont_img_back_ > video {
+    -webkit-filter: none;
+    filter: none;
+}
+
+/* Ensure existing styles for other elements remain intact */
+* {
+    margin: 0px auto;
+    padding: 0px;
+    text-align: center;
+    font-family: "Open Sans", sans-serif;
+}
+
+/* ... (rest of your original CSS remains unchanged) ... */
