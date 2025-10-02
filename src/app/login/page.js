@@ -28,9 +28,11 @@ export default function Home() {
     const [signupConfirmPassword, setSignupConfirmPassword] = useState('');
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(false);
+    const [turnstileToken, setTurnstileToken] = useState(null); // State for Turnstile token
     const audioRef = useRef(null);
     const videoRef = useRef(null);
     const fullPageVideoRef = useRef(null);
+    const turnstileRef = useRef(null); // Ref for Turnstile widget
 
     useEffect(() => {
         if (audioRef.current) {
@@ -49,6 +51,16 @@ export default function Home() {
                 console.log('Video autoplay prevented (full page background)');
             });
         }
+
+        // Load Cloudflare Turnstile script
+        const script = document.createElement('script');
+        script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
+        script.async = true;
+        document.body.appendChild(script);
+
+        return () => {
+            document.body.removeChild(script);
+        };
     }, []);
 
     const toggleMute = () => {
@@ -65,6 +77,15 @@ export default function Home() {
         setError(null);
         setTimeout(() => {
             setLoginOpacity(1);
+            // Render Turnstile widget when login form is shown
+            if (turnstileRef.current && window.turnstile) {
+                window.turnstile.render(turnstileRef.current, {
+                    sitekey: '0x4AAAAAAB4cfsr9SqqyyKm3',
+                    callback: (token) => {
+                        setTurnstileToken(token);
+                    },
+                });
+            }
         }, time_to_show_login);
         setTimeout(() => {
             setSignUpDisplay('none');
@@ -89,9 +110,14 @@ export default function Home() {
         setLoginOpacity(0);
         setSignUpOpacity(0);
         setError(null);
+        setTurnstileToken(null); // Reset Turnstile token
         setTimeout(() => {
             setLoginDisplay('none');
             setSignUpDisplay('none');
+            // Reset Turnstile widget
+            if (window.turnstile) {
+                window.turnstile.reset(turnstileRef.current);
+            }
         }, time_to_hidden_all);
     };
 
@@ -100,10 +126,17 @@ export default function Home() {
         setLoading(true);
         setError(null);
 
+        if (!turnstileToken) {
+            setError('Please complete the CAPTCHA verification');
+            setLoading(false);
+            return;
+        }
+
         try {
             const response = await axios.post('http://localhost:5000/api/login', {
                 username: loginEmail,
-                password: loginPassword
+                password: loginPassword,
+                turnstileToken, // Include Turnstile token
             });
             const user = response.data.user;
             window.localStorage.setItem('user', JSON.stringify(user));
@@ -112,6 +145,11 @@ export default function Home() {
         } catch (err) {
             setLoading(false);
             setError(err.response?.data?.message || 'Login failed');
+            // Reset Turnstile widget on error
+            if (window.turnstile) {
+                window.turnstile.reset(turnstileRef.current);
+            }
+            setTurnstileToken(null);
         }
     };
 
@@ -130,7 +168,7 @@ export default function Home() {
             const response = await axios.post('http://localhost:5000/api/signup', {
                 username: signupUsername,
                 email: signupEmail,
-                password: signupPassword
+                password: signupPassword,
             });
             const user = response.data.user;
             window.localStorage.setItem('user', JSON.stringify(user));
@@ -246,6 +284,13 @@ export default function Home() {
                                     value={loginPassword}
                                     onChange={(e) => setLoginPassword(e.target.value)}
                                 />
+                                {/* Cloudflare Turnstile Widget */}
+                                <div
+                                    ref={turnstileRef}
+                                    className="cf-turnstile"
+                                    data-sitekey="0x4AAAAAAB4cfsr9SqqyyKm3"
+                                    data-callback="onTurnstileSuccess"
+                                ></div>
                                 <button className="btn_login" onClick={handleLogin}>
                                     LOGIN
                                 </button>

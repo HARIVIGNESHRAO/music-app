@@ -3,9 +3,11 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+const axios = require('axios'); // Add axios for Turnstile verification
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const TURNSTILE_SECRET_KEY = '0x4AAAAAAB4cfnEQeR8gN6MDwHfgMITz77c'; // Your secret key
 
 // Middleware
 app.use(bodyParser.json());
@@ -30,7 +32,6 @@ const userSchema = new mongoose.Schema({
 const User = mongoose.model('User', userSchema);
 
 // Seed Admin User (Run this once manually if needed)
-// Uncomment and run server once to create admin, then comment out again
 /*
 (async () => {
   const adminExists = await User.findOne({ username: 'salaar' });
@@ -47,6 +48,20 @@ const User = mongoose.model('User', userSchema);
   }
 })();
 */
+
+// Verify Turnstile Token
+const verifyTurnstileToken = async (token) => {
+    try {
+        const response = await axios.post('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+            secret: TURNSTILE_SECRET_KEY,
+            response: token,
+        });
+        return response.data.success;
+    } catch (err) {
+        console.error('Turnstile verification error:', err);
+        return false;
+    }
+};
 
 // Signup Endpoint
 app.post('/api/signup', async (req, res) => {
@@ -70,8 +85,18 @@ app.post('/api/signup', async (req, res) => {
 
 // Login Endpoint
 app.post('/api/login', async (req, res) => {
-    const { username, password } = req.body;
+    const { username, password, turnstileToken } = req.body;
     try {
+        // Verify Turnstile token
+        if (!turnstileToken) {
+            return res.status(400).json({ message: 'CAPTCHA verification required' });
+        }
+        const isTurnstileValid = await verifyTurnstileToken(turnstileToken);
+        if (!isTurnstileValid) {
+            return res.status(400).json({ message: 'Invalid CAPTCHA verification' });
+        }
+
+        // Proceed with login
         if (!username || !password) {
             return res.status(400).json({ message: 'Username and password are required' });
         }
@@ -83,7 +108,6 @@ app.post('/api/login', async (req, res) => {
         if (!isMatch) {
             return res.status(400).json({ message: 'Invalid credentials' });
         }
-        // For admin, since we seeded with username 'salaar' and password 'salaar', it will be handled normally
         res.status(200).json({ message: 'Login successful', user: { id: user._id, username: user.username, email: user.email, role: user.role } });
     } catch (err) {
         res.status(500).json({ message: 'Server error', error: err });
