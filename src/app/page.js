@@ -356,8 +356,8 @@ export default function MusicLandingPage() {
                         {[
                             { value: "50M+", label: "Songs Available", color: "purple" },
                             { value: "10M+", label: "Active Users", color: "blue" },
-                            { value: "100K+", label: "Artists", color: "pink" },
-                            { value: "24/7", label: "Support", color: "cyan" }
+                            { value: "100K+", label: "Artists", color: "purple" },
+                            { value: "24/7", label: "Support", color: "blue" }
                         ].map((stat, i) => (
                             <div key={i} className="group relative">
                                 <div className={`absolute inset-0 bg-gradient-to-br from-${stat.color}-500/20 to-transparent rounded-3xl blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-500`} />
