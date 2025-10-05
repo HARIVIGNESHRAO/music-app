@@ -3,11 +3,15 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const bodyParser = require('body-parser');
 const cors = require('cors');
-const axios = require('axios'); // Add axios for Turnstile verification
+const axios = require('axios');
+const { OAuth2Client } = require('google-auth-library');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const TURNSTILE_SECRET_KEY = '0x4AAAAAAB4cfnEQeR8gN6MDwHfgMITz77c'; // Your secret key
+const TURNSTILE_SECRET_KEY = '0x4AAAAAAB4cfnEQeR8gN6MDwHfgMITz77c';
+const GOOGLE_CLIENT_ID = '423273358250-5sh66sd211creanihac75uaith2vhh1e.apps.googleusercontent.com'; // Replace with your Google Client ID
+
+const client = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 // Middleware
 app.use(bodyParser.json());
@@ -24,9 +28,10 @@ mongoose.connect(mongoURI)
 const userSchema = new mongoose.Schema({
     username: { type: String, required: true, unique: true },
     email: { type: String, required: true, unique: true },
-    password: { type: String, required: true },
+    password: { type: String }, // Optional for Google users
     role: { type: String, enum: ['user', 'admin'], default: 'user' },
-    joinDate: { type: Date, default: Date.now }
+    joinDate: { type: Date, default: Date.now },
+    googleId: { type: String, unique: true, sparse: true } // Add googleId field
 });
 
 const User = mongoose.model('User', userSchema);
@@ -62,6 +67,65 @@ const verifyTurnstileToken = async (token) => {
         return false;
     }
 };
+
+// Verify Google ID Token
+const verifyGoogleToken = async (token) => {
+    try {
+        const ticket = await client.verifyIdToken({
+            idToken: token,
+            audience: GOOGLE_CLIENT_ID,
+        });
+        const payload = ticket.getPayload();
+        return payload; // Contains user info like email, sub (googleId), etc.
+    } catch (err) {
+        console.error('Google token verification error:', err);
+        return null;
+    }
+};
+
+// Google Login Endpoint
+app.post('/api/google-login', async (req, res) => {
+    const { googleToken } = req.body;
+
+    if (!googleToken) {
+        return res.status(400).json({ message: 'Google token is required' });
+    }
+
+    try {
+        const payload = await verifyGoogleToken(googleToken);
+        if (!payload) {
+            return res.status(400).json({ message: 'Invalid Google token' });
+        }
+
+        const { sub: googleId, email, name } = payload;
+
+        // Check if user exists by googleId or email
+        let user = await User.findOne({ $or: [{ googleId }, { email }] });
+
+        if (!user) {
+            // Create a new user
+            const username = name.replace(/\s+/g, '').toLowerCase() + Math.floor(Math.random() * 1000); // Generate unique username
+            user = new User({
+                username,
+                email,
+                googleId,
+                role: 'user',
+            });
+            await user.save();
+        } else if (!user.googleId) {
+            // Link Google ID to existing user
+            user.googleId = googleId;
+            await user.save();
+        }
+
+        res.status(200).json({
+            message: 'Google login successful',
+            user: { id: user._id, username: user.username, email: user.email, role: user.role }
+        });
+    } catch (err) {
+        res.status(500).json({ message: 'Server error', error: err.message });
+    }
+});
 
 // Signup Endpoint
 app.post('/api/signup', async (req, res) => {

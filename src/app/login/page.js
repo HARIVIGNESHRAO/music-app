@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Volume2, VolumeX } from 'lucide-react';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
+import { GoogleOAuthProvider, GoogleLogin } from '@react-oauth/google';
 import './page.css';
 
 const time_to_show_login = 400;
@@ -11,6 +12,9 @@ const time_to_hidden_login = 200;
 const time_to_show_sign_up = 100;
 const time_to_hidden_sign_up = 400;
 const time_to_hidden_all = 500;
+
+// Replace with your Google Client ID
+const GOOGLE_CLIENT_ID = '423273358250-5sh66sd211creanihac75uaith2vhh1e.apps.googleusercontent.com';
 
 export default function Home() {
     const router = useRouter();
@@ -28,11 +32,11 @@ export default function Home() {
     const [signupConfirmPassword, setSignupConfirmPassword] = useState('');
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(false);
-    const [turnstileToken, setTurnstileToken] = useState(null); // State for Turnstile token
+    const [turnstileToken, setTurnstileToken] = useState(null);
     const audioRef = useRef(null);
     const videoRef = useRef(null);
     const fullPageVideoRef = useRef(null);
-    const turnstileRef = useRef(null); // Ref for Turnstile widget
+    const turnstileRef = useRef(null);
 
     useEffect(() => {
         if (audioRef.current) {
@@ -52,7 +56,6 @@ export default function Home() {
             });
         }
 
-        // Load Cloudflare Turnstile script
         const script = document.createElement('script');
         script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
         script.async = true;
@@ -77,7 +80,6 @@ export default function Home() {
         setError(null);
         setTimeout(() => {
             setLoginOpacity(1);
-            // Render Turnstile widget when login form is shown
             if (turnstileRef.current && window.turnstile) {
                 window.turnstile.render(turnstileRef.current, {
                     sitekey: '0x4AAAAAAB4cfsr9SqqyyKm3',
@@ -102,6 +104,9 @@ export default function Home() {
         }, time_to_show_sign_up);
         setTimeout(() => {
             setLoginDisplay('none');
+            if (window.turnstile && turnstileRef.current) {
+                window.turnstile.reset(turnstileRef.current);
+            }
         }, time_to_hidden_sign_up);
     };
 
@@ -110,12 +115,11 @@ export default function Home() {
         setLoginOpacity(0);
         setSignUpOpacity(0);
         setError(null);
-        setTurnstileToken(null); // Reset Turnstile token
+        setTurnstileToken(null);
         setTimeout(() => {
             setLoginDisplay('none');
             setSignUpDisplay('none');
-            // Reset Turnstile widget
-            if (window.turnstile) {
+            if (window.turnstile && turnstileRef.current) {
                 window.turnstile.reset(turnstileRef.current);
             }
         }, time_to_hidden_all);
@@ -136,21 +140,43 @@ export default function Home() {
             const response = await axios.post('http://localhost:5000/api/login', {
                 username: loginEmail,
                 password: loginPassword,
-                turnstileToken, // Include Turnstile token
+                turnstileToken,
             });
             const user = response.data.user;
             window.localStorage.setItem('user', JSON.stringify(user));
             setLoading(false);
-            router.push('/');
+            router.push('/dashboard');
         } catch (err) {
             setLoading(false);
             setError(err.response?.data?.message || 'Login failed');
-            // Reset Turnstile widget on error
-            if (window.turnstile) {
+            if (window.turnstile && turnstileRef.current) {
                 window.turnstile.reset(turnstileRef.current);
             }
             setTurnstileToken(null);
         }
+    };
+
+    const handleGoogleLoginSuccess = async (credentialResponse) => {
+        setLoading(true);
+        setError(null);
+
+        try {
+            const response = await axios.post('http://localhost:5000/api/google-login', {
+                googleToken: credentialResponse.credential,
+            });
+            const user = response.data.user;
+            window.localStorage.setItem('user', JSON.stringify(user));
+            setLoading(false);
+            router.push('/dashboard');
+        } catch (err) {
+            setLoading(false);
+            setError(err.response?.data?.message || 'Google login failed');
+        }
+    };
+
+    const handleGoogleLoginFailure = () => {
+        setError('Google login failed. Please try again.');
+        setLoading(false);
     };
 
     const handleSignup = async (e) => {
@@ -165,18 +191,28 @@ export default function Home() {
         }
 
         try {
-            const response = await axios.post('http://localhost:5000/api/signup', {
+            // Perform signup
+            const signupResponse = await axios.post('http://localhost:5000/api/signup', {
                 username: signupUsername,
                 email: signupEmail,
                 password: signupPassword,
             });
-            const user = response.data.user;
-            window.localStorage.setItem('user', JSON.stringify(user));
+            const user = signupResponse.data.user;
+
+            // Automatically log in after successful signup
+            const loginResponse = await axios.post('http://localhost:5000/api/login', {
+                username: signupUsername,
+                password: signupPassword,
+                turnstileToken: null, // Backend should allow null for post-signup login
+            });
+
+            // Store user data and redirect to dashboard
+            window.localStorage.setItem('user', JSON.stringify(loginResponse.data.user));
             setLoading(false);
-            router.push('/');
+            router.push('/dashboard');
         } catch (err) {
             setLoading(false);
-            setError(err.response?.data?.message || 'Signup failed');
+            setError(err.response?.data?.message || 'Signup or login failed');
         }
     };
 
@@ -191,7 +227,7 @@ export default function Home() {
     const fullPageBackgroundVideo = '/25001-347024098_small.mp4';
 
     return (
-        <>
+        <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
             <video
                 ref={fullPageVideoRef}
                 className="full-page-video"
@@ -204,7 +240,7 @@ export default function Home() {
             </video>
 
             <audio ref={audioRef} loop>
-                <source src="https://assets.mixkit.co/music/preview/mixkit-tech-house-vibes-130.mp3" type="audio/mpeg" />
+                <source src="/neon-lights-287828.mp3" />
             </audio>
 
             <button
@@ -269,6 +305,26 @@ export default function Home() {
                                 <a href="#" onClick={(e) => { e.preventDefault(); hiddenLoginAndSignUp(); }} className="close-btn">
                                     ✕
                                 </a>
+                                <div className="google-login">
+                                    <GoogleLogin
+                                        onSuccess={handleGoogleLoginSuccess}
+                                        onError={handleGoogleLoginFailure}
+                                        useOneTap
+                                        theme="filled_black"
+                                        size="large"
+                                        shape="rectangular"
+                                        text="signin_with"
+                                        render={(renderProps) => (
+                                            <button
+                                                className="btn_login google-btn"
+                                                onClick={renderProps.onClick}
+                                                disabled={renderProps.disabled}
+                                            >
+                                                Sign in with Google
+                                            </button>
+                                        )}
+                                    />
+                                </div>
                                 <h2>LOGIN</h2>
                                 {error && <p className="error-text">{error}</p>}
                                 {loading && <p>Loading...</p>}
@@ -284,7 +340,6 @@ export default function Home() {
                                     value={loginPassword}
                                     onChange={(e) => setLoginPassword(e.target.value)}
                                 />
-                                {/* Cloudflare Turnstile Widget */}
                                 <div
                                     ref={turnstileRef}
                                     className="cf-turnstile"
@@ -338,6 +393,6 @@ export default function Home() {
                     </div>
                 </div>
             </div>
-        </>
+        </GoogleOAuthProvider>
     );
 }
