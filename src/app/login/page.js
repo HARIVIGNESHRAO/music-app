@@ -203,7 +203,6 @@ export default function Home() {
             const loginResponse = await axios.post('http://localhost:5000/api/login', {
                 username: signupUsername,
                 password: signupPassword,
-                turnstileToken: null, // Backend should allow null for post-signup login
             });
 
             // Store user data and redirect to dashboard
