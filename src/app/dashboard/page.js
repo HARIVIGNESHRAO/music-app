@@ -62,7 +62,7 @@ export default function Page() {
     const generateCodeVerifier = () => crypto.lib.WordArray.random(32).toString(crypto.enc.Base64url);
     const generateCodeChallenge = (verifier) => crypto.SHA256(verifier).toString(crypto.enc.Base64url);
 
-    // Fetch users from MongoDB
+    // Fetch users from backend
     const fetchUsers = useCallback(async () => {
         if (!isAdmin || !currentUser) return;
         try {
@@ -78,21 +78,7 @@ export default function Page() {
         }
     }, [isAdmin, currentUser]);
 
-    // Delete user
-    const deleteUser = async (userId) => {
-        if (window.confirm('Are you sure you want to delete this user?')) {
-            try {
-                await axios.delete(`http://localhost:5000/api/users/${userId}`, {
-                    headers: { 'user-id': currentUser.id }
-                });
-                setUsers(prev => prev.filter(user => user._id !== userId));
-            } catch (err) {
-                setError('Failed to delete user: ' + (err.response?.data?.message || err.message));
-            }
-        }
-    };
-
-    // Fetch top tracks
+    // Define fetchTopTracks and fetchUserPlaylists before fetchUserProfile
     const fetchTopTracks = useCallback(async (token) => {
         try {
             const { data } = await axios.get('https://api.spotify.com/v1/me/top/tracks?time_range=short_term&limit=5', { headers: { Authorization: `Bearer ${token}` } });
@@ -111,7 +97,6 @@ export default function Page() {
         } catch (err) { setError('Failed to fetch tracks'); }
     }, []);
 
-    // Fetch user playlists
     const fetchUserPlaylists = useCallback(async (token) => {
         try {
             const { data } = await axios.get('https://api.spotify.com/v1/me/playlists?limit=10', { headers: { Authorization: `Bearer ${token}` } });
@@ -136,18 +121,11 @@ export default function Page() {
         } catch (err) { setError('Failed to fetch playlists'); }
     }, []);
 
-    // Fetch user profile
     const fetchUserProfile = useCallback(async (token) => {
         try {
             setLoading(true);
             const { data } = await axios.get('https://api.spotify.com/v1/me', { headers: { Authorization: `Bearer ${token}` } });
-            const user = {
-                id: data.id,
-                name: data.display_name,
-                email: data.email,
-                avatar: data.images?.[0]?.url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center',
-                role: data.email === 'admin@music.com' ? 'admin' : 'user'
-            };
+            const user = { id: data.id, name: data.display_name, email: data.email, avatar: data.images?.[0]?.url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center', role: data.email === 'admin@music.com' ? 'admin' : 'user' };
             setCurrentUser(user);
             setIsAdmin(user.role === 'admin');
             window.localStorage.setItem('user', JSON.stringify(user));
@@ -155,103 +133,9 @@ export default function Page() {
             if (user.role === 'admin') {
                 await fetchUsers();
             }
-        } catch (err) {
-            setError('Failed to fetch profile: ' + (err.response?.data?.error?.message || err.message));
-        } finally {
-            setLoading(false);
-        }
+        } catch (err) { setError('Failed to fetch profile: ' + (err.response?.data?.error?.message || err.message)); } finally { setLoading(false); }
     }, [fetchTopTracks, fetchUserPlaylists, fetchUsers]);
 
-    // Handle user login
-    const handleUserLogin = async (username, password, turnstileToken) => {
-        try {
-            setLoading(true);
-            const response = await axios.post('http://localhost:5000/api/login', { username, password, turnstileToken });
-            const user = response.data.user;
-            setCurrentUser(user);
-            setIsAdmin(user.role === 'admin');
-            window.localStorage.setItem('user', JSON.stringify(user));
-            if (user.role === 'admin') {
-                await fetchUsers();
-            }
-            setError(null);
-        } catch (err) {
-            setError(err.response?.data?.message || 'Login failed');
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    // Handle Google login
-    const handleGoogleLogin = async (googleToken) => {
-        try {
-            setLoading(true);
-            const response = await axios.post('http://localhost:5000/api/google-login', { googleToken });
-            const user = response.data.user;
-            setCurrentUser(user);
-            setIsAdmin(user.role === 'admin');
-            window.localStorage.setItem('user', JSON.stringify(user));
-            if (user.role === 'admin') {
-                await fetchUsers();
-            }
-            setError(null);
-        } catch (err) {
-            setError(err.response?.data?.message || 'Google login failed');
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    // Handle Spotify login
-    const handleSpotifyLogin = () => {
-        const codeVerifier = generateCodeVerifier();
-        window.localStorage.setItem('spotify_code_verifier', codeVerifier);
-        const codeChallenge = generateCodeChallenge(codeVerifier);
-        const authUrl = `${AUTH_ENDPOINT}?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}&response_type=${RESPONSE_TYPE}&code_challenge=${codeChallenge}&code_challenge_method=${CODE_CHALLENGE_METHOD}`;
-        window.location.href = authUrl;
-    };
-
-    // Handle logout
-    const handleLogout = () => {
-        setAccessToken(null);
-        setCurrentUser(null);
-        setIsAdmin(false);
-        setCurrentSong(null);
-        setIsPlaying(false);
-        setActiveTab('home');
-        setSongs([]);
-        setFilteredSongs([]);
-        setPlaylists([]);
-        setUsers([]);
-        window.localStorage.removeItem('spotify_token');
-        window.localStorage.removeItem('spotify_code_verifier');
-        window.localStorage.removeItem('user');
-        router.push('/login');
-    };
-
-    // Audio handling
-    useEffect(() => {
-        if (audioRef.current) audioRef.current.volume = volume / 100;
-    }, [volume]);
-
-    useEffect(() => {
-        if (audioRef.current && currentSong?.preview_url) {
-            audioRef.current.src = currentSong.preview_url;
-            if (isPlaying) {
-                audioRef.current.play().catch((err) => {
-                    if (err.name === 'NotAllowedError') setError('Playback blocked by browser. Please interact with the page first.');
-                    else if (err.name === 'NotSupportedError') setError('Audio format not supported by your browser.');
-                    else setError('Failed to play preview: ' + err.message);
-                    setIsPlaying(false);
-                });
-            } else audioRef.current.pause();
-        } else if (currentSong && !currentSong.preview_url) {
-            setError('No preview available for this song');
-            setIsPlaying(false);
-        }
-    }, [isPlaying, currentSong]);
-
-    // Initialize data
     useEffect(() => {
         const storedUser = window.localStorage.getItem('user');
         if (storedUser) {
@@ -261,12 +145,7 @@ export default function Page() {
             setSongs(staticSongs);
             setFilteredSongs(staticSongs);
             const uniqueArtists = [...new Set(staticSongs.map(song => song.artist))];
-            setArtists(uniqueArtists.map((name, idx) => ({
-                id: idx + 1,
-                name,
-                songs: staticSongs.filter(s => s.artist === name).length,
-                albums: new Set(staticSongs.filter(s => s.artist === name).map(s => s.album)).size
-            })));
+            setArtists(uniqueArtists.map((name, idx) => ({ id: idx + 1, name, songs: staticSongs.filter(s => s.artist === name).length, albums: new Set(staticSongs.filter(s => s.artist === name).map(s => s.album)).size })));
             setPlaylists([
                 { id: 1, name: "My Favorites", songs: [staticSongs[0], staticSongs[2]], cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center" },
                 { id: 2, name: "Workout Mix", songs: [staticSongs[1], staticSongs[3]], cover: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&h=300&fit=crop&crop=center" },
@@ -279,40 +158,57 @@ export default function Page() {
             }
         }
         const storedToken = window.localStorage.getItem('spotify_token');
-        if (storedToken) {
-            setAccessToken(storedToken);
-            fetchUserProfile(storedToken);
-        }
+        if (storedToken) { setAccessToken(storedToken); fetchUserProfile(storedToken); }
     }, [fetchUserProfile, fetchUsers]);
 
-    const togglePlay = () => setIsPlaying(!isPlaying);
-    const selectSong = (song) => {
-        if (!song.preview_url) {
-            setError('No preview available for this song');
-            setCurrentSong(song);
-            setIsPlaying(false);
+    useEffect(() => { if (audioRef.current) audioRef.current.volume = volume / 100; }, [volume]);
+
+    useEffect(() => {
+        if (audioRef.current && currentSong?.preview_url) {
+            audioRef.current.src = currentSong.preview_url;
+            if (isPlaying) {
+                audioRef.current.play().catch((err) => {
+                    if (err.name === 'NotAllowedError') setError('Playback blocked by browser. Please interact with the page first.');
+                    else if (err.name === 'NotSupportedError') setError('Audio format not supported by your browser.');
+                    else setError('Failed to play preview: ' + err.message);
+                    setIsPlaying(false);
+                });
+            } else audioRef.current.pause();
+        } else if (currentSong && !currentSong.preview_url) { setError('No preview available for this song'); setIsPlaying(false); }
+    }, [isPlaying, currentSong]);
+
+    const searchSongs = async (query) => {
+        if (!accessToken || !query) {
+            const filtered = staticSongs.filter(song => song.title.toLowerCase().includes(query.toLowerCase()) || song.artist.toLowerCase().includes(query.toLowerCase()) || song.album.toLowerCase().includes(query.toLowerCase()));
+            setFilteredSongs(filtered);
             return;
         }
-        setCurrentSong(song);
-        setIsPlaying(true);
-        setError(null);
+        try {
+            setLoading(true);
+            const { data } = await axios.get(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, { headers: { Authorization: `Bearer ${accessToken}` } });
+            const mappedSongs = data.tracks.items.map(track => ({ id: track.id, title: track.name, artist: track.artists.map(a => a.name).join(', '), album: track.album.name, duration: new Date(track.duration_ms).toISOString().substr(14, 5), cover: track.album.images[0]?.url || 'default-cover', genre: 'Unknown', plays: 0, preview_url: track.preview_url || null }));
+            setFilteredSongs(mappedSongs);
+        } catch (err) { setError('Search failed'); } finally { setLoading(false); }
     };
-    const handleSeek = (e) => {
-        if (audioRef.current && duration) {
-            const progressBar = e.currentTarget;
-            const rect = progressBar.getBoundingClientRect();
-            const clickX = e.clientX - rect.left;
-            const width = rect.width;
-            const seekTime = (clickX / width) * duration;
-            audioRef.current.currentTime = seekTime;
-            setCurrentTime(seekTime);
-        }
+
+    const handleSpotifyLogin = () => {
+        const codeVerifier = generateCodeVerifier();
+        window.localStorage.setItem('spotify_code_verifier', codeVerifier);
+        const codeChallenge = generateCodeChallenge(codeVerifier);
+        const authUrl = `${AUTH_ENDPOINT}?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}&response_type=${RESPONSE_TYPE}&code_challenge=${codeChallenge}&code_challenge_method=${CODE_CHALLENGE_METHOD}`;
+        window.location.href = authUrl;
     };
-    const formatTime = (seconds) => {
-        const mins = Math.floor(seconds / 60);
-        const secs = Math.floor(seconds % 60);
-        return `${mins}:${secs.toString().padStart(2, '0')}`;
+
+    const handleLogout = () => {
+        setAccessToken(null); setCurrentUser(null); setIsAdmin(false); setCurrentSong(null); setIsPlaying(false); setActiveTab('home'); setSongs([]); setFilteredSongs([]); setPlaylists([]); setUsers([]);
+        window.localStorage.removeItem('spotify_token'); window.localStorage.removeItem('spotify_code_verifier'); window.localStorage.removeItem('user');
+        router.push('/login');
     };
+
+    const togglePlay = () => setIsPlaying(!isPlaying);
+    const selectSong = (song) => { if (!song.preview_url) { setError('No preview available for this song'); setCurrentSong(song); setIsPlaying(false); return; } setCurrentSong(song); setIsPlaying(true); setError(null); };
+    const handleSeek = (e) => { if (audioRef.current && duration) { const progressBar = e.currentTarget; const rect = progressBar.getBoundingClientRect(); const clickX = e.clientX - rect.left; const width = rect.width; const seekTime = (clickX / width) * duration; audioRef.current.currentTime = seekTime; setCurrentTime(seekTime); } };
+    const formatTime = (seconds) => { const mins = Math.floor(seconds / 60); const secs = Math.floor(seconds % 60); return `${mins}:${secs.toString().padStart(2, '0')}`; };
 
     const createPlaylist = async () => {
         if (!newPlaylistName.trim()) return;
@@ -320,76 +216,22 @@ export default function Page() {
             try {
                 const { data } = await axios.post(`https://api.spotify.com/v1/users/${currentUser.id}/playlists`, { name: newPlaylistName, public: true }, { headers: { Authorization: `Bearer ${accessToken}` } });
                 setPlaylists(prev => [...prev, { id: data.id, name: data.name, songs: [], cover: data.images[0]?.url || 'default-cover' }]);
-                setNewPlaylistName('');
-                setShowCreatePlaylist(false);
-            } catch (err) {
-                setError('Failed to create playlist');
-            }
+                setNewPlaylistName(''); setShowCreatePlaylist(false);
+            } catch (err) { setError('Failed to create playlist'); }
         } else {
-            const newPlaylist = {
-                id: playlists.length + 1,
-                name: newPlaylistName,
-                songs: [],
-                cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center"
-            };
-            setPlaylists([...playlists, newPlaylist]);
-            setNewPlaylistName('');
-            setShowCreatePlaylist(false);
+            const newPlaylist = { id: playlists.length + 1, name: newPlaylistName, songs: [], cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center" };
+            setPlaylists([...playlists, newPlaylist]); setNewPlaylistName(''); setShowCreatePlaylist(false);
         }
     };
 
-    const handleSearch = (e) => {
-        const query = e.target.value;
-        setSearchQuery(query);
-        if (query) searchSongs(query);
-    };
-
-    const searchSongs = async (query) => {
-        if (!accessToken || !query) {
-            const filtered = staticSongs.filter(song =>
-                song.title.toLowerCase().includes(query.toLowerCase()) ||
-                song.artist.toLowerCase().includes(query.toLowerCase()) ||
-                song.album.toLowerCase().includes(query.toLowerCase())
-            );
-            setFilteredSongs(filtered);
-            return;
-        }
-        try {
-            setLoading(true);
-            const { data } = await axios.get(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, { headers: { Authorization: `Bearer ${accessToken}` } });
-            const mappedSongs = data.tracks.items.map(track => ({
-                id: track.id,
-                title: track.name,
-                artist: track.artists.map(a => a.name).join(', '),
-                album: track.album.name,
-                duration: new Date(track.duration_ms).toISOString().substr(14, 5),
-                cover: track.album.images[0]?.url || 'default-cover',
-                genre: 'Unknown',
-                plays: 0,
-                preview_url: track.preview_url || null
-            }));
-            setFilteredSongs(mappedSongs);
-        } catch (err) {
-            setError('Search failed');
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const generateRecommendations = (allSongs) => {
-        const shuffled = [...allSongs].sort(() => 0.5 - Math.random());
-        setRecommendations(shuffled.slice(0, 4));
-    };
+    const handleSearch = (e) => { const query = e.target.value; setSearchQuery(query); if (query) searchSongs(query); };
+    const generateRecommendations = (allSongs) => { const shuffled = [...allSongs].sort(() => 0.5 - Math.random()); setRecommendations(shuffled.slice(0, 4)); };
 
     const applyFilters = useCallback(() => {
         let filtered = [...songs];
         if (filterGenre !== 'all') filtered = filtered.filter(song => song.genre === filterGenre);
         if (filterArtist !== 'all') filtered = filtered.filter(song => song.artist === filterArtist);
-        if (searchQuery) filtered = filtered.filter(song =>
-            song.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            song.artist.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            song.album.toLowerCase().includes(searchQuery.toLowerCase())
-        );
+        if (searchQuery) filtered = filtered.filter(song => song.title.toLowerCase().includes(searchQuery.toLowerCase()) || song.artist.toLowerCase().includes(searchQuery.toLowerCase()) || song.album.toLowerCase().includes(searchQuery.toLowerCase()));
         setFilteredSongs(filtered);
     }, [songs, filterGenre, filterArtist, searchQuery]);
 
@@ -404,59 +246,14 @@ export default function Page() {
             }
             return playlist;
         }));
-        setShowAddToPlaylist(false);
-        setSelectedSongForPlaylist(null);
+        setShowAddToPlaylist(false); setSelectedSongForPlaylist(null);
     };
 
-    const openPlaylist = (playlist) => {
-        setSelectedPlaylist(playlist);
-        setActiveTab('playlist-detail');
-    };
-
-    const deleteSong = (songId) => {
-        if (window.confirm('Are you sure you want to delete this song?')) {
-            setSongs(prev => prev.filter(song => song.id !== songId));
-            setFilteredSongs(prev => prev.filter(song => song.id !== songId));
-        }
-    };
-
+    const openPlaylist = (playlist) => { setSelectedPlaylist(playlist); setActiveTab('playlist-detail'); };
+    const deleteSong = (songId) => { if (window.confirm('Are you sure you want to delete this song?')) { setSongs(prev => prev.filter(song => song.id !== songId)); setFilteredSongs(prev => prev.filter(song => song.id !== songId)); } };
     const startEditSong = (song) => setEditingSong({ ...song });
-
-    const saveEditSong = () => {
-        if (!editingSong) return;
-        setSongs(prev => prev.map(song => song.id === editingSong.id ? editingSong : song));
-        setFilteredSongs(prev => prev.map(song => song.id === editingSong.id ? editingSong : song));
-        setEditingSong(null);
-    };
-
-    const deleteArtist = (artistName) => {
-        if (window.confirm(`Are you sure you want to delete ${artistName} and all their songs?`)) {
-            setSongs(prev => prev.filter(song => song.artist !== artistName));
-            setArtists(prev => prev.filter(artist => artist.name !== artistName));
-        }
-    };
-
-    // Initialize Google Sign-In
-    useEffect(() => {
-        if (window.google) {
-            window.google.accounts.id.initialize({
-                client_id: '423273358250-5sh66sd211creanihac75uaith2vhh1e.apps.googleusercontent.com',
-                callback: (response) => {
-                    handleGoogleLogin(response.credential);
-                },
-            });
-        }
-    }, []);
-
-    // Initialize Turnstile
-    useEffect(() => {
-        if (window.turnstile) {
-            window.turnstile.render('#turnstile-widget', {
-                sitekey: 'YOUR_TURNSTILE_SITE_KEY', // Replace with your Turnstile site key
-                callback: () => {},
-            });
-        }
-    }, []);
+    const saveEditSong = () => { if (!editingSong) return; setSongs(prev => prev.map(song => song.id === editingSong.id ? editingSong : song)); setFilteredSongs(prev => prev.map(song => song.id === editingSong.id ? editingSong : song)); setEditingSong(null); };
+    const deleteArtist = (artistName) => { if (window.confirm(`Are you sure you want to delete ${artistName} and all their songs?`)) { setSongs(prev => prev.filter(song => song.artist !== artistName)); setArtists(prev => prev.filter(artist => artist.name !== artistName)); } };
 
     if (!currentUser) {
         return (
@@ -469,30 +266,10 @@ export default function Page() {
                         <h1 className="app-title">MusicStream</h1>
                         <p className="app-subtitle">Your personal music companion</p>
                     </div>
-                    <div className="login-form">
-                        <input type="text" placeholder="Username" id="username" className="login-input" />
-                        <input type="password" placeholder="Password" id="password" className="login-input" />
-                        <div id="turnstile-widget"></div>
-                        <button
-                            onClick={() => {
-                                const username = document.getElementById('username').value;
-                                const password = document.getElementById('password').value;
-                                const turnstileToken = window.turnstile?.getResponse();
-                                handleUserLogin(username, password, turnstileToken);
-                            }}
-                            className="login-btn user-btn"
-                        >
-                            Login
-                        </button>
-                        <button onClick={handleSpotifyLogin} className="login-btn spotify-btn">
-                            Login with Spotify
-                        </button>
-                        <button
-                            onClick={() => window.google.accounts.id.prompt()}
-                            className="login-btn google-btn"
-                        >
-                            Login with Google
-                        </button>
+                    <div className="login-buttons">
+                        <button onClick={handleSpotifyLogin} className="login-btn spotify-btn">Login with Spotify</button>
+                        <button onClick={() => router.push('/login')} className="login-btn user-btn">Login as User</button>
+                        <button onClick={() => router.push('/login')} className="login-btn admin-btn">Login as Admin</button>
                     </div>
                     {loading && <p>Loading...</p>}
                     {error && <p className="error-text">Error: {error}</p>}
@@ -503,19 +280,7 @@ export default function Page() {
 
     return (
         <div className="app-container">
-            <audio
-                ref={audioRef}
-                onTimeUpdate={() => setCurrentTime(audioRef.current?.currentTime || 0)}
-                onLoadedMetadata={() => {
-                    if (audioRef.current) setDuration(audioRef.current.duration || 30);
-                    else setError('Failed to load audio metadata');
-                }}
-                onEnded={() => {
-                    setIsPlaying(false);
-                    setCurrentTime(0);
-                }}
-                onError={() => setError('Error loading audio file')}
-            />
+            <audio ref={audioRef} onTimeUpdate={() => setCurrentTime(audioRef.current?.currentTime || 0)} onLoadedMetadata={() => { if (audioRef.current) setDuration(audioRef.current.duration || 30); else setError('Failed to load audio metadata'); }} onEnded={() => { setIsPlaying(false); setCurrentTime(0); }} onError={() => setError('Error loading audio file')} />
             <header className="header">
                 <div className="header-content">
                     <div className="header-left">
@@ -525,24 +290,11 @@ export default function Page() {
                     <div className="header-center">
                         <div className="search-container">
                             <Search className="search-icon" />
-                            <input
-                                type="text"
-                                placeholder="Search songs, artists, albums..."
-                                value={searchQuery}
-                                onChange={handleSearch}
-                                className="search-input"
-                            />
+                            <input type="text" placeholder="Search songs, artists, albums..." value={searchQuery} onChange={handleSearch} className="search-input" />
                         </div>
                     </div>
                     <div className="header-right">
-                        <Image
-                            src={currentUser.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center'}
-                            alt={currentUser.username || currentUser.name}
-                            className="user-avatar"
-                            width={100}
-                            height={100}
-                            priority
-                        />
+                        <Image src={currentUser.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center'} alt={currentUser.username || currentUser.name} className="user-avatar" width={100} height={100} priority />
                         <span className="user-name">{currentUser.username || currentUser.name}</span>
                         <button onClick={handleLogout} className="logout-btn">Logout</button>
                     </div>
@@ -560,11 +312,9 @@ export default function Page() {
                         <button onClick={() => setActiveTab('playlists')} className={`nav-item ${activeTab === 'playlists' ? 'active' : ''}`}>
                             <Music className="nav-icon" /><span>My Playlists</span>
                         </button>
-                        {isAdmin && (
-                            <button onClick={() => setActiveTab('admin')} className={`nav-item ${activeTab === 'admin' ? 'active admin' : ''}`}>
-                                <Shield className="nav-icon" /><span>Admin Panel</span>
-                            </button>
-                        )}
+                        {isAdmin && <button onClick={() => setActiveTab('admin')} className={`nav-item ${activeTab === 'admin' ? 'active admin' : ''}`}>
+                            <Shield className="nav-icon" /><span>Admin Panel</span>
+                        </button>}
                     </nav>
                     <div className="quick-playlists">
                         <h3 className="quick-title">Quick Playlists</h3>
@@ -645,23 +395,16 @@ export default function Page() {
                                     <label className="filter-label">Genre:</label>
                                     <select value={filterGenre} onChange={(e) => setFilterGenre(e.target.value)} className="filter-select">
                                         <option value="all">All Genres</option>
-                                        <option value="Pop">Pop</option>
-                                        <option value="Electronic">Electronic</option>
-                                        <option value="Acoustic">Acoustic</option>
-                                        <option value="Hip-Hop">Hip-Hop</option>
-                                        <option value="Rock">Rock</option>
-                                        <option value="Jazz">Jazz</option>
-                                        <option value="Classical">Classical</option>
-                                        <option value="Country">Country</option>
+                                        <option value="Pop">Pop</option><option value="Electronic">Electronic</option><option value="Acoustic">Acoustic</option>
+                                        <option value="Hip-Hop">Hip-Hop</option><option value="Rock">Rock</option><option value="Jazz">Jazz</option>
+                                        <option value="Classical">Classical</option><option value="Country">Country</option>
                                     </select>
                                 </div>
                                 <div className="filter-group">
                                     <label className="filter-label">Artist:</label>
                                     <select value={filterArtist} onChange={(e) => setFilterArtist(e.target.value)} className="filter-select">
                                         <option value="all">All Artists</option>
-                                        {artists.map((artist) => (
-                                            <option key={artist.id} value={artist.name}>{artist.name}</option>
-                                        ))}
+                                        {artists.map((artist) => <option key={artist.id} value={artist.name}>{artist.name}</option>)}
                                     </select>
                                 </div>
                             </div>
@@ -669,15 +412,7 @@ export default function Page() {
                                 <div className="search-results">
                                     {filteredSongs.map((song) => (
                                         <div key={song.id} className="search-item">
-                                            <Image
-                                                src={song.cover}
-                                                alt={song.title}
-                                                className="search-cover"
-                                                width={300}
-                                                height={300}
-                                                loading="lazy"
-                                                onClick={() => selectSong(song)}
-                                            />
+                                            <Image src={song.cover} alt={song.title} className="search-cover" width={300} height={300} loading="lazy" onClick={() => selectSong(song)} />
                                             <div className="search-info" onClick={() => selectSong(song)}>
                                                 <h4 className="search-title">{song.title}</h4>
                                                 <p className="search-artist">{song.artist} • {song.album}</p>
@@ -685,21 +420,9 @@ export default function Page() {
                                             </div>
                                             <div className="search-actions">
                                                 <span className="search-duration">{song.duration}</span>
-                                                <button
-                                                    className="add-playlist-btn"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setSelectedSongForPlaylist(song);
-                                                        setShowAddToPlaylist(true);
-                                                    }}
-                                                    title="Add to playlist"
-                                                >
-                                                    <Plus className="plus-icon-small" />
-                                                </button>
+                                                <button className="add-playlist-btn" onClick={(e) => { e.stopPropagation(); setSelectedSongForPlaylist(song); setShowAddToPlaylist(true); }} title="Add to playlist"><Plus className="plus-icon-small" /></button>
                                                 <Heart className="heart-icon" />
-                                                <button className="search-play" onClick={() => selectSong(song)}>
-                                                    <Play className="search-play-icon" />
-                                                </button>
+                                                <button className="search-play" onClick={() => selectSong(song)}><Play className="search-play-icon" /></button>
                                             </div>
                                         </div>
                                     ))}
@@ -716,21 +439,13 @@ export default function Page() {
                         <div className="playlists-content">
                             <div className="playlists-header">
                                 <h2 className="page-title">My Playlists</h2>
-                                <button onClick={() => setShowCreatePlaylist(true)} className="create-playlist-btn">
-                                    <Plus className="plus-icon" /><span>Create Playlist</span>
-                                </button>
+                                <button onClick={() => setShowCreatePlaylist(true)} className="create-playlist-btn"><Plus className="plus-icon" /><span>Create Playlist</span></button>
                             </div>
                             {showCreatePlaylist && (
                                 <div className="create-playlist-form">
                                     <h3 className="form-title">Create New Playlist</h3>
                                     <div className="form-controls">
-                                        <input
-                                            type="text"
-                                            placeholder="Playlist name"
-                                            value={newPlaylistName}
-                                            onChange={(e) => setNewPlaylistName(e.target.value)}
-                                            className="playlist-input"
-                                        />
+                                        <input type="text" placeholder="Playlist name" value={newPlaylistName} onChange={(e) => setNewPlaylistName(e.target.value)} className="playlist-input" />
                                         <button onClick={createPlaylist} className="create-btn">Create</button>
                                         <button onClick={() => setShowCreatePlaylist(false)} className="cancel-btn">Cancel</button>
                                     </div>
@@ -741,9 +456,7 @@ export default function Page() {
                                     {playlists.map((playlist) => (
                                         <div key={playlist.id} className="playlist-card" onClick={() => openPlaylist(playlist)}>
                                             <Image src={playlist.cover} alt={playlist.name} className="playlist-card-cover" width={300} height={300} loading="lazy" />
-                                            <div className="playlist-card-overlay">
-                                                <button className="playlist-play-btn"><Play className="play-icon" /></button>
-                                            </div>
+                                            <div className="playlist-card-overlay"><button className="playlist-play-btn"><Play className="play-icon" /></button></div>
                                             <h3 className="playlist-card-name">{playlist.name}</h3>
                                             <p className="playlist-card-count">{playlist.songs.length} songs</p>
                                         </div>
@@ -761,11 +474,7 @@ export default function Page() {
                                     <div className="playlist-header-info">
                                         <h2 className="playlist-detail-title">{selectedPlaylist.name}</h2>
                                         <p className="playlist-detail-count">{selectedPlaylist.songs.length} songs</p>
-                                        {selectedPlaylist.songs.length > 0 && (
-                                            <button onClick={() => selectSong(selectedPlaylist.songs[0])} className="play-all-btn">
-                                                <Play className="play-icon" /> Play All
-                                            </button>
-                                        )}
+                                        {selectedPlaylist.songs.length > 0 && <button onClick={() => selectSong(selectedPlaylist.songs[0])} className="play-all-btn"><Play className="play-icon" /> Play All</button>}
                                     </div>
                                 </div>
                             </div>
@@ -798,57 +507,19 @@ export default function Page() {
                         <div className="admin-content">
                             <h2 className="page-title">Admin Dashboard</h2>
                             <div className="stats-grid">
-                                <div className="stat-card blue-gradient">
-                                    <div className="stat-content">
-                                        <div className="stat-info">
-                                            <p className="stat-label">Total Songs</p>
-                                            <p className="stat-value">{songs.length}</p>
-                                        </div>
-                                        <Music className="stat-icon" />
-                                    </div>
-                                </div>
-                                <div className="stat-card green-gradient">
-                                    <div className="stat-content">
-                                        <div className="stat-info">
-                                            <p className="stat-label">Active Users</p>
-                                            <p className="stat-value">{users.length}</p>
-                                        </div>
-                                        <Users className="stat-icon" />
-                                    </div>
-                                </div>
-                                <div className="stat-card orange-gradient">
-                                    <div className="stat-content">
-                                        <div className="stat-info">
-                                            <p className="stat-label">Total Plays</p>
-                                            <p className="stat-value">2.1M</p>
-                                        </div>
-                                        <TrendingUp className="stat-icon" />
-                                    </div>
-                                </div>
-                                <div className="stat-card purple-gradient">
-                                    <div className="stat-content">
-                                        <div className="stat-info">
-                                            <p className="stat-label">Playlists</p>
-                                            <p className="stat-value">{playlists.length}</p>
-                                        </div>
-                                        <BarChart3 className="stat-icon" />
-                                    </div>
-                                </div>
+                                <div className="stat-card blue-gradient"><div className="stat-content"><div className="stat-info"><p className="stat-label">Total Songs</p><p className="stat-value">{songs.length}</p></div><Music className="stat-icon" /></div></div>
+                                <div className="stat-card green-gradient"><div className="stat-content"><div className="stat-info"><p className="stat-label">Active Users</p><p className="stat-value">{users.length}</p></div><Users className="stat-icon" /></div></div>
+                                <div className="stat-card orange-gradient"><div className="stat-content"><div className="stat-info"><p className="stat-label">Total Plays</p><p className="stat-value">2.1M</p></div><TrendingUp className="stat-icon" /></div></div>
+                                <div className="stat-card purple-gradient"><div className="stat-content"><div className="stat-info"><p className="stat-label">Playlists</p><p className="stat-value">{playlists.length}</p></div><BarChart3 className="stat-icon" /></div></div>
                             </div>
                             <div className="admin-panel">
                                 <h3 className="panel-title">User Management</h3>
-                                {loading ? (
-                                    <p>Loading users...</p>
-                                ) : error ? (
-                                    <p className="error-text">{error}</p>
-                                ) : (
+                                {loading ? <p>Loading...</p> : error ? <p className="error-text">{error}</p> : (
                                     <div className="user-list">
                                         {users.map((user) => (
                                             <div key={user._id} className="user-item">
                                                 <div className="user-left">
-                                                    <div className="user-icon">
-                                                        <User className="user-icon-svg" />
-                                                    </div>
+                                                    <div className="user-icon"><User className="user-icon-svg" /></div>
                                                     <div className="user-details">
                                                         <p className="user-item-name">{user.username}</p>
                                                         <p className="user-email">{user.email}</p>
@@ -857,10 +528,7 @@ export default function Page() {
                                                 <div className="user-right">
                                                     <span className={`role-badge ${user.role}`}>{user.role}</span>
                                                     <span className="join-date">{new Date(user.joinDate).toLocaleDateString()}</span>
-                                                    <button onClick={() => deleteUser(user._id)} className="delete-btn">Delete</button>
-                                                    <button className="user-menu">
-                                                        <MoreVertical className="menu-icon" />
-                                                    </button>
+                                                    <button className="user-menu"><MoreVertical className="menu-icon" /></button>
                                                 </div>
                                             </div>
                                         ))}
@@ -873,40 +541,13 @@ export default function Page() {
                                     <div className="edit-song-form">
                                         <h4 className="form-title">Edit Song</h4>
                                         <div className="form-grid">
-                                            <input
-                                                type="text"
-                                                placeholder="Song Title"
-                                                value={editingSong.title}
-                                                onChange={(e) => setEditingSong({ ...editingSong, title: e.target.value })}
-                                                className="form-input"
-                                            />
-                                            <input
-                                                type="text"
-                                                placeholder="Artist"
-                                                value={editingSong.artist}
-                                                onChange={(e) => setEditingSong({ ...editingSong, artist: e.target.value })}
-                                                className="form-input"
-                                            />
-                                            <input
-                                                type="text"
-                                                placeholder="Album"
-                                                value={editingSong.album}
-                                                onChange={(e) => setEditingSong({ ...editingSong, album: e.target.value })}
-                                                className="form-input"
-                                            />
-                                            <select
-                                                value={editingSong.genre}
-                                                onChange={(e) => setEditingSong({ ...editingSong, genre: e.target.value })}
-                                                className="form-select"
-                                            >
-                                                <option value="Pop">Pop</option>
-                                                <option value="Electronic">Electronic</option>
-                                                <option value="Acoustic">Acoustic</option>
-                                                <option value="Hip-Hop">Hip-Hop</option>
-                                                <option value="Rock">Rock</option>
-                                                <option value="Jazz">Jazz</option>
-                                                <option value="Classical">Classical</option>
-                                                <option value="Country">Country</option>
+                                            <input type="text" placeholder="Song Title" value={editingSong.title} onChange={(e) => setEditingSong({...editingSong, title: e.target.value})} className="form-input" />
+                                            <input type="text" placeholder="Artist" value={editingSong.artist} onChange={(e) => setEditingSong({...editingSong, artist: e.target.value})} className="form-input" />
+                                            <input type="text" placeholder="Album" value={editingSong.album} onChange={(e) => setEditingSong({...editingSong, album: e.target.value})} className="form-input" />
+                                            <select value={editingSong.genre} onChange={(e) => setEditingSong({...editingSong, genre: e.target.value})} className="form-select">
+                                                <option value="Pop">Pop</option><option value="Electronic">Electronic</option><option value="Acoustic">Acoustic</option>
+                                                <option value="Hip-Hop">Hip-Hop</option><option value="Rock">Rock</option><option value="Jazz">Jazz</option>
+                                                <option value="Classical">Classical</option><option value="Country">Country</option>
                                             </select>
                                         </div>
                                         <div className="form-actions">
@@ -981,9 +622,7 @@ export default function Page() {
                         <div className="player-controls">
                             <button className="control-btn"><Shuffle className="control-icon" /></button>
                             <button className="control-btn"><SkipBack className="control-icon" /></button>
-                            <button onClick={togglePlay} className="play-btn">
-                                {isPlaying ? <Pause className="play-icon" /> : <Play className="play-icon" />}
-                            </button>
+                            <button onClick={togglePlay} className="play-btn">{isPlaying ? <Pause className="play-icon" /> : <Play className="play-icon" />}</button>
                             <button className="control-btn"><SkipForward className="control-icon" /></button>
                             <button className="control-btn"><Repeat className="control-icon" /></button>
                         </div>
@@ -991,14 +630,7 @@ export default function Page() {
                             <Heart className="heart-btn" />
                             <div className="volume-controls">
                                 <Volume2 className="volume-icon" />
-                                <input
-                                    type="range"
-                                    min="0"
-                                    max="100"
-                                    value={volume}
-                                    onChange={(e) => setVolume(e.target.value)}
-                                    className="volume-slider"
-                                />
+                                <input type="range" min="0" max="100" value={volume} onChange={(e) => setVolume(e.target.value)} className="volume-slider" />
                             </div>
                         </div>
                     </div>
