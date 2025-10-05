@@ -47,7 +47,7 @@ export default function Callback() {
     }, [router]);
 
     if (loading) return <div>Processing login...</div>;
-    if (error) return <div>Error: {error}. <button onClick={() => router.push('/')}>Go Home</button></div>;
+    if (error) return <div>Error: {error}. <button onClick={() => router.push('/dashboard')}>Go Home</button></div>;
 
     return <div>Success! Redirecting...</div>;
 }

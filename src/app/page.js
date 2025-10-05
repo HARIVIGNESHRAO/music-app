@@ -11,6 +11,29 @@ export default function MusicLandingPage() {
     const [particles, setParticles] = useState([]);
     const heroRef = useRef(null);
 
+    // Add chatbot scripts
+    useEffect(() => {
+        // Create the configuration script
+        const configScript = document.createElement('script');
+        configScript.innerHTML = `window.chtlConfig = { chatbotId: "8783531273" };`;
+        document.head.appendChild(configScript);
+
+        // Create the embed script
+        const embedScript = document.createElement('script');
+        embedScript.async = true;
+        embedScript.setAttribute('data-id', '8783531273');
+        embedScript.id = 'chtl-script';
+        embedScript.type = 'text/javascript';
+        embedScript.src = 'https://chatling.ai/js/embed.js';
+        document.head.appendChild(embedScript);
+
+        // Cleanup scripts on component unmount
+        return () => {
+            document.head.removeChild(configScript);
+            document.head.removeChild(embedScript);
+        };
+    }, []);
+
     useEffect(() => {
         const newParticles = [...Array(50)].map(() => ({
             left: `${Math.random() * 100}%`,
