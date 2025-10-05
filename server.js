@@ -36,7 +36,7 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 
-// Seed Admin User (Run once manually if needed)
+// Seed Admin User
 const seedAdminUser = async () => {
     try {
         const adminExists = await User.findOne({ username: 'salaar' });
@@ -50,27 +50,37 @@ const seedAdminUser = async () => {
             });
             await admin.save();
             console.log('Admin user created');
+        } else {
+            console.log('Admin user already exists');
         }
     } catch (err) {
         console.error('Error seeding admin user:', err);
     }
 };
-// Uncomment to run seeding: seedAdminUser();
+seedAdminUser();
 
 // Middleware to verify admin role
 const isAdmin = async (req, res, next) => {
     try {
-        const userId = req.headers['user-id']; // Assume frontend sends user ID in headers
+        const userId = req.headers['user-id'];
+        console.log('isAdmin middleware: Received user-id:', userId);
         if (!userId) {
+            console.log('isAdmin middleware: User ID missing');
             return res.status(401).json({ message: 'User ID required' });
         }
         const user = await User.findById(userId);
-        if (!user || user.role !== 'admin') {
+        if (!user) {
+            console.log('isAdmin middleware: User not found for ID:', userId);
+            return res.status(404).json({ message: 'User not found' });
+        }
+        if (user.role !== 'admin') {
+            console.log('isAdmin middleware: User is not admin:', user.username);
             return res.status(403).json({ message: 'Admin access required' });
         }
         req.user = user;
         next();
     } catch (err) {
+        console.error('isAdmin middleware error:', err.message);
         res.status(500).json({ message: 'Server error', error: err.message });
     }
 };
@@ -127,7 +137,7 @@ app.post('/api/google-login', async (req, res) => {
                 username,
                 email,
                 googleId,
-                role: email === 'admin@music.com' ? 'admin' : 'user', // Assign admin role if needed
+                role: email === 'admin@music.com' ? 'admin' : 'user',
             });
             await user.save();
         } else if (!user.googleId) {
@@ -211,7 +221,8 @@ app.post('/api/login', async (req, res) => {
 app.get('/api/users', isAdmin, async (req, res) => {
     try {
         const users = await User.find({}, '-password -googleId'); // Exclude sensitive fields
-        res.status(200).json(users);
+        console.log('Fetched users:', users);
+        res.status(200).json(users || []);
     } catch (err) {
         console.error('Fetch users error:', err);
         res.status(500).json({ message: 'Server error', error: err.message });

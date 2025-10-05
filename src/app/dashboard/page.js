@@ -38,7 +38,6 @@ export default function Page() {
     const [selectedSongForPlaylist, setSelectedSongForPlaylist] = useState(null);
     const [editingSong, setEditingSong] = useState(null);
     const [artists, setArtists] = useState([]);
-    const [users, setUsers] = useState([]);
     const audioRef = useRef(null);
 
     const CLIENT_ID = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID;
@@ -47,6 +46,12 @@ export default function Page() {
     const RESPONSE_TYPE = 'code';
     const SCOPES = 'user-read-private user-read-email user-top-read playlist-read-private playlist-modify-public';
     const CODE_CHALLENGE_METHOD = 'S256';
+
+    const [users] = useState([
+        { id: 1, name: "Alex Johnson", email: "alex@music.com", role: "user", joinDate: "2024-01-15" },
+        { id: 2, name: "Sarah Chen", email: "sarah@music.com", role: "user", joinDate: "2024-02-20" },
+        { id: 3, name: "Mike Wilson", email: "mike@music.com", role: "admin", joinDate: "2023-12-01" }
+    ]);
 
     const staticSongs = [
         { id: 1, title: "Midnight Dreams", artist: "Luna Martinez", album: "Nocturnal Vibes", duration: "3:24", cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center", genre: "Pop", plays: 1234567, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" },
@@ -61,22 +66,6 @@ export default function Page() {
 
     const generateCodeVerifier = () => crypto.lib.WordArray.random(32).toString(crypto.enc.Base64url);
     const generateCodeChallenge = (verifier) => crypto.SHA256(verifier).toString(crypto.enc.Base64url);
-
-    // Fetch users from backend
-    const fetchUsers = useCallback(async () => {
-        if (!isAdmin || !currentUser) return;
-        try {
-            setLoading(true);
-            const response = await axios.get('http://localhost:5000/api/users', {
-                headers: { 'user-id': currentUser.id }
-            });
-            setUsers(response.data);
-        } catch (err) {
-            setError('Failed to fetch users: ' + (err.response?.data?.message || err.message));
-        } finally {
-            setLoading(false);
-        }
-    }, [isAdmin, currentUser]);
 
     // Define fetchTopTracks and fetchUserPlaylists before fetchUserProfile
     const fetchTopTracks = useCallback(async (token) => {
@@ -130,11 +119,8 @@ export default function Page() {
             setIsAdmin(user.role === 'admin');
             window.localStorage.setItem('user', JSON.stringify(user));
             await Promise.all([fetchTopTracks(token), fetchUserPlaylists(token)]);
-            if (user.role === 'admin') {
-                await fetchUsers();
-            }
         } catch (err) { setError('Failed to fetch profile: ' + (err.response?.data?.error?.message || err.message)); } finally { setLoading(false); }
-    }, [fetchTopTracks, fetchUserPlaylists, fetchUsers]);
+    }, [fetchTopTracks, fetchUserPlaylists]);
 
     useEffect(() => {
         const storedUser = window.localStorage.getItem('user');
@@ -153,13 +139,10 @@ export default function Page() {
             ]);
             generateRecommendations(staticSongs);
             setActiveTab('home');
-            if (user.role === 'admin') {
-                fetchUsers();
-            }
         }
         const storedToken = window.localStorage.getItem('spotify_token');
         if (storedToken) { setAccessToken(storedToken); fetchUserProfile(storedToken); }
-    }, [fetchUserProfile, fetchUsers]);
+    }, [fetchUserProfile]);
 
     useEffect(() => { if (audioRef.current) audioRef.current.volume = volume / 100; }, [volume]);
 
@@ -200,7 +183,7 @@ export default function Page() {
     };
 
     const handleLogout = () => {
-        setAccessToken(null); setCurrentUser(null); setIsAdmin(false); setCurrentSong(null); setIsPlaying(false); setActiveTab('home'); setSongs([]); setFilteredSongs([]); setPlaylists([]); setUsers([]);
+        setAccessToken(null); setCurrentUser(null); setIsAdmin(false); setCurrentSong(null); setIsPlaying(false); setActiveTab('home'); setSongs([]); setFilteredSongs([]); setPlaylists([]);
         window.localStorage.removeItem('spotify_token'); window.localStorage.removeItem('spotify_code_verifier'); window.localStorage.removeItem('user');
         router.push('/login');
     };
@@ -514,26 +497,24 @@ export default function Page() {
                             </div>
                             <div className="admin-panel">
                                 <h3 className="panel-title">User Management</h3>
-                                {loading ? <p>Loading...</p> : error ? <p className="error-text">{error}</p> : (
-                                    <div className="user-list">
-                                        {users.map((user) => (
-                                            <div key={user._id} className="user-item">
-                                                <div className="user-left">
-                                                    <div className="user-icon"><User className="user-icon-svg" /></div>
-                                                    <div className="user-details">
-                                                        <p className="user-item-name">{user.username}</p>
-                                                        <p className="user-email">{user.email}</p>
-                                                    </div>
-                                                </div>
-                                                <div className="user-right">
-                                                    <span className={`role-badge ${user.role}`}>{user.role}</span>
-                                                    <span className="join-date">{new Date(user.joinDate).toLocaleDateString()}</span>
-                                                    <button className="user-menu"><MoreVertical className="menu-icon" /></button>
+                                <div className="user-list">
+                                    {users.map((user) => (
+                                        <div key={user.id} className="user-item">
+                                            <div className="user-left">
+                                                <div className="user-icon"><User className="user-icon-svg" /></div>
+                                                <div className="user-details">
+                                                    <p className="user-item-name">{user.name}</p>
+                                                    <p className="user-email">{user.email}</p>
                                                 </div>
                                             </div>
-                                        ))}
-                                    </div>
-                                )}
+                                            <div className="user-right">
+                                                <span className={`role-badge ${user.role}`}>{user.role}</span>
+                                                <span className="join-date">{user.joinDate}</span>
+                                                <button className="user-menu"><MoreVertical className="menu-icon" /></button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                             <div className="admin-panel">
                                 <h3 className="panel-title">Songs Management</h3>
