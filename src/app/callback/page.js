@@ -27,7 +27,7 @@ export default function Callback() {
                     const { access_token } = response.data;
                     if (access_token) {
                         window.localStorage.setItem('spotify_token', access_token);
-                        router.push('/');
+                        router.push('/dashboard');
                     } else {
                         setError('No access token received');
                     }
