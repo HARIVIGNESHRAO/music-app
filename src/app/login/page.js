@@ -142,7 +142,7 @@ export default function Home() {
         }
 
         try {
-            const response = await axios.post('http://localhost:5000/api/login', {
+            const response = await axios.post('https://backendserver-edb4bafdgxcwg7d5.centralindia-01.azurewebsites.net/api/login', {
                 username: loginEmail,
                 password: loginPassword,
                 turnstileToken,
@@ -166,7 +166,7 @@ export default function Home() {
         setError(null);
 
         try {
-            const response = await axios.post('http://localhost:5000/api/google-login', {
+            const response = await axios.post('https://backendserver-edb4bafdgxcwg7d5.centralindia-01.azurewebsites.net/api/google-login', {
                 googleToken: credentialResponse.credential,
             });
             const user = response.data.user;
@@ -203,7 +203,7 @@ export default function Home() {
 
         try {
             // Perform signup
-            const signupResponse = await axios.post('http://localhost:5000/api/signup', {
+            const signupResponse = await axios.post('https://backendserver-edb4bafdgxcwg7d5.centralindia-01.azurewebsites.net/api/signup', {
                 username: signupUsername,
                 email: signupEmail,
                 password: signupPassword,
@@ -211,7 +211,7 @@ export default function Home() {
             const user = signupResponse.data.user;
 
             // Automatically log in after successful signup
-            const loginResponse = await axios.post('http://localhost:5000/api/login', {
+            const loginResponse = await axios.post('https://backendserver-edb4bafdgxcwg7d5.centralindia-01.azurewebsites.net/api/login', {
                 username: signupUsername,
                 password: signupPassword,
                 turnstileToken,
