@@ -2266,3 +2266,27 @@ body {
         grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
     }
 }
+.control-btn.active {
+    color: #1db954; /* Spotify green or your theme color */
+}
+.heart-icon.liked, .heart-btn.liked {
+    fill: #1db954;
+    color: #1db954;
+}
+.repeat-indicator {
+    position: absolute;
+    font-size: 10px;
+    bottom: -5px;
+    right: -5px;
+    background: #1db954;
+    color: white;
+    border-radius: 50%;
+    padding: 2px 5px;
+}
+.recommendations-section {
+    margin-top: 20px;
+}
+.error-text {
+    color: #ff4d4d;
+    text-align: center;
+}

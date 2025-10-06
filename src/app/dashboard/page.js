@@ -43,6 +43,14 @@ export default function Page() {
     const [usersError, setUsersError] = useState(null);
     const audioRef = useRef(null);
 
+    // Enhanced queue and playback features
+    const [queue, setQueue] = useState([]);
+    const [currentIndex, setCurrentIndex] = useState(0);
+    const [shuffle, setShuffle] = useState(false);
+    const [repeat, setRepeat] = useState('off'); // 'off', 'all', 'one'
+    const [isLoadingSong, setIsLoadingSong] = useState(false);
+    const [likedSongs, setLikedSongs] = useState(new Set());
+
     const CLIENT_ID = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID;
     const REDIRECT_URI = process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI;
     const AUTH_ENDPOINT = 'https://accounts.spotify.com/authorize';
@@ -55,7 +63,17 @@ export default function Page() {
         { id: 1, title: "Midnight Dreams", artist: "Luna Martinez", album: "Nocturnal Vibes", duration: "3:24", cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center", genre: "Pop", plays: 1234567, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" },
         { id: 2, title: "Electric Pulse", artist: "Neon Collective", album: "Digital Horizons", duration: "4:12", cover: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&h=300&fit=crop&crop=center", genre: "Electronic", plays: 987654, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3" },
         { id: 3, title: "Acoustic Soul", artist: "River Stone", album: "Unplugged Sessions", duration: "2:58", cover: "https://images.unsplash.com/photo-1493612276216-ee3925520721?w=300&h=300&fit=crop&crop=center", genre: "Acoustic", plays: 756432, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3" },
-        { id: 4, title: "Urban Rhythm", artist: "City Beats", album: "Street Anthology", duration: "3:45", cover: "https://images.unsplash.com/photo-1571974599782-87613f249808?w=300&h=300&fit=crop&crop=center", genre: "Hip-Hop", plays: 2143567, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3" },
+        {
+            id: 4,
+            title: "Urban Rhythm",
+            artist: "City Beats",
+            album: "Street Anthology",
+            duration: "3:45",
+            cover: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=300&h=300&fit=crop&crop=center" || "https://via.placeholder.com/300x300?text=Urban+Rhythm",
+            genre: "Hip-Hop",
+            plays: 2143567,
+            preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3"
+        },
         { id: 5, title: "Sunset Boulevard", artist: "Golden Hour", album: "California Dreams", duration: "4:33", cover: "https://images.unsplash.com/photo-1514320291840-2e0a9bf2a9ae?w=300&h=300&fit=crop&crop=center", genre: "Rock", plays: 654321, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3" },
         { id: 6, title: "Jazz Nights", artist: "Smooth Operators", album: "After Hours", duration: "5:12", cover: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=300&h=300&fit=crop&crop=center", genre: "Jazz", plays: 543210, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3" },
         { id: 7, title: "Classical Morning", artist: "Orchestra Symphony", album: "Dawn Collection", duration: "6:45", cover: "https://images.unsplash.com/photo-1507838153414-b4b713384a76?w=300&h=300&fit=crop&crop=center", genre: "Classical", plays: 432109, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3" },
@@ -81,10 +99,9 @@ export default function Page() {
         }
     }, [BACKEND_URL]);
 
-    // Define fetchTopTracks and fetchUserPlaylists before fetchUserProfile
     const fetchTopTracks = useCallback(async (token) => {
         try {
-            const { data } = await axios.get('https://api.spotify.com/v1/me/top/tracks?time_range=short_term&limit=5', { headers: { Authorization: `Bearer ${token}` } });
+            const { data } = await axios.get('https://api.spotify.com/v1/me/top/tracks?time_range=short_term&limit=20', { headers: { Authorization: `Bearer ${token}` } });
             const mappedSongs = data.items.map(track => ({
                 id: track.id,
                 title: track.name,
@@ -93,7 +110,7 @@ export default function Page() {
                 duration: new Date(track.duration_ms).toISOString().substr(14, 5),
                 cover: track.album.images[0]?.url || 'default-cover',
                 genre: 'Unknown',
-                plays: 0,
+                plays: track.popularity * 10000,
                 preview_url: track.preview_url || null,
             }));
             setSongs(mappedSongs);
@@ -153,7 +170,6 @@ export default function Page() {
             ]);
             generateRecommendations(staticSongs);
             setActiveTab('home');
-            // Fetch users when component mounts if user is admin
             if (user.role === 'admin') {
                 fetchUsers();
             }
@@ -162,7 +178,6 @@ export default function Page() {
         if (storedToken) { setAccessToken(storedToken); fetchUserProfile(storedToken); }
     }, [fetchUserProfile, fetchUsers]);
 
-    // Fetch users when admin tab is opened
     useEffect(() => {
         if (activeTab === 'admin' && isAdmin && users.length === 0) {
             fetchUsers();
@@ -171,19 +186,89 @@ export default function Page() {
 
     useEffect(() => { if (audioRef.current) audioRef.current.volume = volume / 100; }, [volume]);
 
+    // Enhanced audio playback with better error handling
     useEffect(() => {
-        if (audioRef.current && currentSong?.preview_url) {
-            audioRef.current.src = currentSong.preview_url;
-            if (isPlaying) {
-                audioRef.current.play().catch((err) => {
-                    if (err.name === 'NotAllowedError') setError('Playback blocked by browser. Please interact with the page first.');
-                    else if (err.name === 'NotSupportedError') setError('Audio format not supported by your browser.');
-                    else setError('Failed to play preview: ' + err.message);
+        if (!audioRef.current || !currentSong?.preview_url) return;
+
+        const audio = audioRef.current;
+
+        const loadAndPlay = async () => {
+            try {
+                setIsLoadingSong(true);
+                setError(null);
+
+                // Pause and reset current playback
+                audio.pause();
+                audio.currentTime = 0;
+
+                // Load new song
+                audio.src = currentSong.preview_url;
+                audio.load();
+
+                if (isPlaying) {
+                    // Wait for audio to be ready
+                    await audio.play();
+                }
+            } catch (err) {
+                if (err.name === 'AbortError') {
+                    console.log('Playback was interrupted, ignoring...');
+                } else if (err.name === 'NotAllowedError') {
+                    setError('Playback blocked. Please click play to start.');
                     setIsPlaying(false);
-                });
-            } else audioRef.current.pause();
-        } else if (currentSong && !currentSong.preview_url) { setError('No preview available for this song'); setIsPlaying(false); }
-    }, [isPlaying, currentSong]);
+                } else if (err.name === 'NotSupportedError') {
+                    setError('Audio format not supported.');
+                    setIsPlaying(false);
+                } else {
+                    setError('Failed to play: ' + err.message);
+                    setIsPlaying(false);
+                }
+            } finally {
+                setIsLoadingSong(false);
+            }
+        };
+
+        loadAndPlay();
+
+        return () => {
+            audio.pause();
+        };
+    }, [currentSong]);
+
+    // Handle play/pause separately
+    useEffect(() => {
+        if (!audioRef.current) return;
+
+        const audio = audioRef.current;
+
+        if (isPlaying && !isLoadingSong) {
+            audio.play().catch(err => {
+                if (err.name !== 'AbortError') {
+                    console.error('Play error:', err);
+                    setIsPlaying(false);
+                }
+            });
+        } else {
+            audio.pause();
+        }
+    }, [isPlaying, isLoadingSong]);
+
+    // Handle song end - auto play next or repeat
+    useEffect(() => {
+        const audio = audioRef.current;
+        if (!audio) return;
+
+        const handleEnded = () => {
+            if (repeat === 'one') {
+                audio.currentTime = 0;
+                audio.play();
+            } else {
+                playNext();
+            }
+        };
+
+        audio.addEventListener('ended', handleEnded);
+        return () => audio.removeEventListener('ended', handleEnded);
+    }, [repeat, currentIndex, queue]);
 
     const searchSongs = async (query) => {
         if (!accessToken || !query) {
@@ -193,8 +278,8 @@ export default function Page() {
         }
         try {
             setLoading(true);
-            const { data } = await axios.get(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, { headers: { Authorization: `Bearer ${accessToken}` } });
-            const mappedSongs = data.tracks.items.map(track => ({ id: track.id, title: track.name, artist: track.artists.map(a => a.name).join(', '), album: track.album.name, duration: new Date(track.duration_ms).toISOString().substr(14, 5), cover: track.album.images[0]?.url || 'default-cover', genre: 'Unknown', plays: 0, preview_url: track.preview_url || null }));
+            const { data } = await axios.get(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=20`, { headers: { Authorization: `Bearer ${accessToken}` } });
+            const mappedSongs = data.tracks.items.map(track => ({ id: track.id, title: track.name, artist: track.artists.map(a => a.name).join(', '), album: track.album.name, duration: new Date(track.duration_ms).toISOString().substr(14, 5), cover: track.album.images[0]?.url || 'default-cover', genre: 'Unknown', plays: track.popularity * 10000, preview_url: track.preview_url || null }));
             setFilteredSongs(mappedSongs);
         } catch (err) { setError('Search failed'); } finally { setLoading(false); }
     };
@@ -208,15 +293,138 @@ export default function Page() {
     };
 
     const handleLogout = () => {
-        setAccessToken(null); setCurrentUser(null); setIsAdmin(false); setCurrentSong(null); setIsPlaying(false); setActiveTab('home'); setSongs([]); setFilteredSongs([]); setPlaylists([]); setUsers([]);
+        setAccessToken(null); setCurrentUser(null); setIsAdmin(false); setCurrentSong(null); setIsPlaying(false); setActiveTab('home'); setSongs([]); setFilteredSongs([]); setPlaylists([]); setUsers([]); setQueue([]); setCurrentIndex(0);
         window.localStorage.removeItem('spotify_token'); window.localStorage.removeItem('spotify_code_verifier'); window.localStorage.removeItem('user');
         router.push('/login');
     };
 
     const togglePlay = () => setIsPlaying(!isPlaying);
-    const selectSong = (song) => { if (!song.preview_url) { setError('No preview available for this song'); setCurrentSong(song); setIsPlaying(false); return; } setCurrentSong(song); setIsPlaying(true); setError(null); };
-    const handleSeek = (e) => { if (audioRef.current && duration) { const progressBar = e.currentTarget; const rect = progressBar.getBoundingClientRect(); const clickX = e.clientX - rect.left; const width = rect.width; const seekTime = (clickX / width) * duration; audioRef.current.currentTime = seekTime; setCurrentTime(seekTime); } };
-    const formatTime = (seconds) => { const mins = Math.floor(seconds / 60); const secs = Math.floor(seconds % 60); return `${mins}:${secs.toString().padStart(2, '0')}`; };
+
+    // Enhanced song selection with queue management
+    const selectSong = (song, songList = null) => {
+        if (!song.preview_url) {
+            setError('No preview available for this song');
+            setCurrentSong(song);
+            setIsPlaying(false);
+            return;
+        }
+
+        // Set up queue if a list is provided
+        if (songList && songList.length > 0) {
+            const validSongs = songList.filter(s => s.preview_url);
+            setQueue(validSongs);
+            const index = validSongs.findIndex(s => s.id === song.id);
+            setCurrentIndex(index >= 0 ? index : 0);
+        } else if (queue.length === 0) {
+            // If no queue exists, use current filtered songs
+            const validSongs = (filteredSongs.length > 0 ? filteredSongs : songs).filter(s => s.preview_url);
+            setQueue(validSongs);
+            const index = validSongs.findIndex(s => s.id === song.id);
+            setCurrentIndex(index >= 0 ? index : 0);
+        } else {
+            // Update current index in existing queue
+            const index = queue.findIndex(s => s.id === song.id);
+            if (index >= 0) {
+                setCurrentIndex(index);
+            }
+        }
+
+        setCurrentSong(song);
+        setIsPlaying(true);
+        setError(null);
+    };
+
+    // Play next song in queue
+    const playNext = () => {
+        if (queue.length === 0) return;
+
+        let nextIndex;
+        if (shuffle) {
+            nextIndex = Math.floor(Math.random() * queue.length);
+        } else {
+            nextIndex = currentIndex + 1;
+            if (nextIndex >= queue.length) {
+                if (repeat === 'all') {
+                    nextIndex = 0;
+                } else {
+                    setIsPlaying(false);
+                    return;
+                }
+            }
+        }
+
+        setCurrentIndex(nextIndex);
+        selectSong(queue[nextIndex]);
+    };
+
+    // Play previous song
+    const playPrevious = () => {
+        if (queue.length === 0) return;
+
+        if (currentTime > 3) {
+            // If more than 3 seconds played, restart current song
+            if (audioRef.current) {
+                audioRef.current.currentTime = 0;
+            }
+            return;
+        }
+
+        let prevIndex = currentIndex - 1;
+        if (prevIndex < 0) {
+            if (repeat === 'all') {
+                prevIndex = queue.length - 1;
+            } else {
+                prevIndex = 0;
+            }
+        }
+
+        setCurrentIndex(prevIndex);
+        selectSong(queue[prevIndex]);
+    };
+
+    // Toggle shuffle mode
+    const toggleShuffle = () => {
+        setShuffle(!shuffle);
+    };
+
+    // Toggle repeat mode
+    const toggleRepeat = () => {
+        const modes = ['off', 'all', 'one'];
+        const currentModeIndex = modes.indexOf(repeat);
+        const nextMode = modes[(currentModeIndex + 1) % modes.length];
+        setRepeat(nextMode);
+    };
+
+    // Toggle like song
+    const toggleLike = (songId) => {
+        setLikedSongs(prev => {
+            const newLiked = new Set(prev);
+            if (newLiked.has(songId)) {
+                newLiked.delete(songId);
+            } else {
+                newLiked.add(songId);
+            }
+            return newLiked;
+        });
+    };
+
+    const handleSeek = (e) => {
+        if (audioRef.current && duration) {
+            const progressBar = e.currentTarget;
+            const rect = progressBar.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const width = rect.width;
+            const seekTime = (clickX / width) * duration;
+            audioRef.current.currentTime = seekTime;
+            setCurrentTime(seekTime);
+        }
+    };
+
+    const formatTime = (seconds) => {
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
+    };
 
     const createPlaylist = async () => {
         if (!newPlaylistName.trim()) return;
@@ -263,6 +471,17 @@ export default function Page() {
     const saveEditSong = () => { if (!editingSong) return; setSongs(prev => prev.map(song => song.id === editingSong.id ? editingSong : song)); setFilteredSongs(prev => prev.map(song => song.id === editingSong.id ? editingSong : song)); setEditingSong(null); };
     const deleteArtist = (artistName) => { if (window.confirm(`Are you sure you want to delete ${artistName} and all their songs?`)) { setSongs(prev => prev.filter(song => song.artist !== artistName)); setArtists(prev => prev.filter(artist => artist.name !== artistName)); } };
 
+    // Play all songs in a playlist
+    const playAllSongs = (songList) => {
+        if (songList.length === 0) return;
+        const validSongs = songList.filter(s => s.preview_url);
+        if (validSongs.length === 0) {
+            setError('No playable songs in this list');
+            return;
+        }
+        selectSong(validSongs[0], validSongs);
+    };
+
     const formatDate = (dateString) => {
         const date = new Date(dateString);
         return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
@@ -293,7 +512,23 @@ export default function Page() {
 
     return (
         <div className="app-container">
-            <audio ref={audioRef} onTimeUpdate={() => setCurrentTime(audioRef.current?.currentTime || 0)} onLoadedMetadata={() => { if (audioRef.current) setDuration(audioRef.current.duration || 30); else setError('Failed to load audio metadata'); }} onEnded={() => { setIsPlaying(false); setCurrentTime(0); }} onError={() => setError('Error loading audio file')} />
+            <audio
+                ref={audioRef}
+                onTimeUpdate={() => setCurrentTime(audioRef.current?.currentTime || 0)}
+                onLoadedMetadata={() => {
+                    if (audioRef.current) setDuration(audioRef.current.duration || 30);
+                    else setError('Failed to load audio metadata');
+                }}
+                onEnded={() => {
+                    if (repeat === 'one') {
+                        audioRef.current.currentTime = 0;
+                        audioRef.current.play();
+                    } else {
+                        playNext();
+                    }
+                }}
+                onError={() => setError('Error loading audio file')}
+            />
             <header className="header">
                 <div className="header-content">
                     <div className="header-left">
@@ -303,11 +538,24 @@ export default function Page() {
                     <div className="header-center">
                         <div className="search-container">
                             <Search className="search-icon" />
-                            <input type="text" placeholder="Search songs, artists, albums..." value={searchQuery} onChange={handleSearch} className="search-input" />
+                            <input
+                                type="text"
+                                placeholder="Search songs, artists, albums..."
+                                value={searchQuery}
+                                onChange={handleSearch}
+                                className="search-input"
+                            />
                         </div>
                     </div>
                     <div className="header-right">
-                        <Image src={currentUser.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center'} alt={currentUser.username || currentUser.name} className="user-avatar" width={100} height={100} priority />
+                        <Image
+                            src={currentUser.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center'}
+                            alt={currentUser.username || currentUser.name}
+                            className="user-avatar"
+                            width={100}
+                            height={100}
+                            priority
+                        />
                         <span className="user-name">{currentUser.username || currentUser.name}</span>
                         <button onClick={handleLogout} className="logout-btn">Logout</button>
                     </div>
@@ -325,16 +573,25 @@ export default function Page() {
                         <button onClick={() => setActiveTab('playlists')} className={`nav-item ${activeTab === 'playlists' ? 'active' : ''}`}>
                             <Music className="nav-icon" /><span>My Playlists</span>
                         </button>
-                        {isAdmin && <button onClick={() => setActiveTab('admin')} className={`nav-item ${activeTab === 'admin' ? 'active admin' : ''}`}>
-                            <Shield className="nav-icon" /><span>Admin Panel</span>
-                        </button>}
+                        {isAdmin && (
+                            <button onClick={() => setActiveTab('admin')} className={`nav-item ${activeTab === 'admin' ? 'active admin' : ''}`}>
+                                <Shield className="nav-icon" /><span>Admin Panel</span>
+                            </button>
+                        )}
                     </nav>
                     <div className="quick-playlists">
                         <h3 className="quick-title">Quick Playlists</h3>
                         <div className="playlist-list">
                             {playlists.slice(0, 3).map((playlist) => (
                                 <div key={playlist.id} className="playlist-item" onClick={() => openPlaylist(playlist)}>
-                                    <Image src={playlist.cover} alt={playlist.name} className="playlist-cover" width={300} height={300} loading="lazy" />
+                                    <Image
+                                        src={playlist.cover}
+                                        alt={playlist.name}
+                                        className="playlist-cover"
+                                        width={300}
+                                        height={300}
+                                        loading="lazy"
+                                    />
                                     <div className="playlist-info">
                                         <p className="playlist-name">{playlist.name}</p>
                                         <p className="playlist-count">{playlist.songs.length} songs</p>
@@ -355,11 +612,22 @@ export default function Page() {
                                             {songs.map((song) => (
                                                 <div key={song.id} className="song-card" onClick={() => selectSong(song)}>
                                                     <div className="song-cover-container">
-                                                        <Image src={song.cover} alt={song.title} className="song-cover" width={300} height={300} loading="lazy" />
+                                                        <Image
+                                                            src={song.cover}
+                                                            alt={song.title}
+                                                            className="song-cover"
+                                                            width={300}
+                                                            height={300}
+                                                            loading="lazy"
+                                                        />
                                                         <button className="play-overlay"><Play className="play-icon" /></button>
                                                     </div>
                                                     <h3 className="song-title">{song.title}</h3>
                                                     <p className="song-artist">{song.artist}</p>
+                                                    <Heart
+                                                        className={`heart-icon ${likedSongs.has(song.id) ? 'liked' : ''}`}
+                                                        onClick={(e) => { e.stopPropagation(); toggleLike(song.id); }}
+                                                    />
                                                 </div>
                                             ))}
                                         </div>
@@ -368,13 +636,24 @@ export default function Page() {
                                             <div className="recent-list">
                                                 {songs.slice(0, 3).map((song) => (
                                                     <div key={song.id} className="recent-item" onClick={() => selectSong(song)}>
-                                                        <Image src={song.cover} alt={song.title} className="recent-cover" width={300} height={300} loading="lazy" />
+                                                        <Image
+                                                            src={song.cover}
+                                                            alt={song.title}
+                                                            className="recent-cover"
+                                                            width={300}
+                                                            height={300}
+                                                            loading="lazy"
+                                                        />
                                                         <div className="recent-info">
                                                             <h4 className="recent-title">{song.title}</h4>
                                                             <p className="recent-artist">{song.artist} • {song.album}</p>
                                                         </div>
                                                         <span className="recent-duration">{song.duration}</span>
                                                         <button className="recent-play"><Play className="recent-play-icon" /></button>
+                                                        <Heart
+                                                            className={`heart-icon ${likedSongs.has(song.id) ? 'liked' : ''}`}
+                                                            onClick={(e) => { e.stopPropagation(); toggleLike(song.id); }}
+                                                        />
                                                     </div>
                                                 ))}
                                             </div>
@@ -385,12 +664,23 @@ export default function Page() {
                                                 {recommendations.map((song) => (
                                                     <div key={song.id} className="song-card" onClick={() => selectSong(song)}>
                                                         <div className="song-cover-container">
-                                                            <Image src={song.cover} alt={song.title} className="song-cover" width={300} height={300} loading="lazy" />
+                                                            <Image
+                                                                src={song.cover}
+                                                                alt={song.title}
+                                                                className="song-cover"
+                                                                width={300}
+                                                                height={300}
+                                                                loading="lazy"
+                                                            />
                                                             <button className="play-overlay"><Play className="play-icon" /></button>
                                                         </div>
                                                         <h3 className="song-title">{song.title}</h3>
                                                         <p className="song-artist">{song.artist}</p>
                                                         <span className="song-genre">{song.genre}</span>
+                                                        <Heart
+                                                            className={`heart-icon ${likedSongs.has(song.id) ? 'liked' : ''}`}
+                                                            onClick={(e) => { e.stopPropagation(); toggleLike(song.id); }}
+                                                        />
                                                     </div>
                                                 ))}
                                             </div>
@@ -425,7 +715,15 @@ export default function Page() {
                                 <div className="search-results">
                                     {filteredSongs.map((song) => (
                                         <div key={song.id} className="search-item">
-                                            <Image src={song.cover} alt={song.title} className="search-cover" width={300} height={300} loading="lazy" onClick={() => selectSong(song)} />
+                                            <Image
+                                                src={song.cover}
+                                                alt={song.title}
+                                                className="search-cover"
+                                                width={300}
+                                                height={300}
+                                                loading="lazy"
+                                                onClick={() => selectSong(song)}
+                                            />
                                             <div className="search-info" onClick={() => selectSong(song)}>
                                                 <h4 className="search-title">{song.title}</h4>
                                                 <p className="search-artist">{song.artist} • {song.album}</p>
@@ -433,9 +731,20 @@ export default function Page() {
                                             </div>
                                             <div className="search-actions">
                                                 <span className="search-duration">{song.duration}</span>
-                                                <button className="add-playlist-btn" onClick={(e) => { e.stopPropagation(); setSelectedSongForPlaylist(song); setShowAddToPlaylist(true); }} title="Add to playlist"><Plus className="plus-icon-small" /></button>
-                                                <Heart className="heart-icon" />
-                                                <button className="search-play" onClick={() => selectSong(song)}><Play className="search-play-icon" /></button>
+                                                <button
+                                                    className="add-playlist-btn"
+                                                    onClick={(e) => { e.stopPropagation(); setSelectedSongForPlaylist(song); setShowAddToPlaylist(true); }}
+                                                    title="Add to playlist"
+                                                >
+                                                    <Plus className="plus-icon-small" />
+                                                </button>
+                                                <Heart
+                                                    className={`heart-icon ${likedSongs.has(song.id) ? 'liked' : ''}`}
+                                                    onClick={(e) => { e.stopPropagation(); toggleLike(song.id); }}
+                                                />
+                                                <button className="search-play" onClick={() => selectSong(song)}>
+                                                    <Play className="search-play-icon" />
+                                                </button>
                                             </div>
                                         </div>
                                     ))}
@@ -452,13 +761,21 @@ export default function Page() {
                         <div className="playlists-content">
                             <div className="playlists-header">
                                 <h2 className="page-title">My Playlists</h2>
-                                <button onClick={() => setShowCreatePlaylist(true)} className="create-playlist-btn"><Plus className="plus-icon" /><span>Create Playlist</span></button>
+                                <button onClick={() => setShowCreatePlaylist(true)} className="create-playlist-btn">
+                                    <Plus className="plus-icon" /><span>Create Playlist</span>
+                                </button>
                             </div>
                             {showCreatePlaylist && (
                                 <div className="create-playlist-form">
                                     <h3 className="form-title">Create New Playlist</h3>
                                     <div className="form-controls">
-                                        <input type="text" placeholder="Playlist name" value={newPlaylistName} onChange={(e) => setNewPlaylistName(e.target.value)} className="playlist-input" />
+                                        <input
+                                            type="text"
+                                            placeholder="Playlist name"
+                                            value={newPlaylistName}
+                                            onChange={(e) => setNewPlaylistName(e.target.value)}
+                                            className="playlist-input"
+                                        />
                                         <button onClick={createPlaylist} className="create-btn">Create</button>
                                         <button onClick={() => setShowCreatePlaylist(false)} className="cancel-btn">Cancel</button>
                                     </div>
@@ -468,8 +785,19 @@ export default function Page() {
                                 <div className="playlists-grid">
                                     {playlists.map((playlist) => (
                                         <div key={playlist.id} className="playlist-card" onClick={() => openPlaylist(playlist)}>
-                                            <Image src={playlist.cover} alt={playlist.name} className="playlist-card-cover" width={300} height={300} loading="lazy" />
-                                            <div className="playlist-card-overlay"><button className="playlist-play-btn"><Play className="play-icon" /></button></div>
+                                            <Image
+                                                src={playlist.cover}
+                                                alt={playlist.name}
+                                                className="playlist-card-cover"
+                                                width={300}
+                                                height={300}
+                                                loading="lazy"
+                                            />
+                                            <div className="playlist-card-overlay">
+                                                <button className="playlist-play-btn" onClick={(e) => { e.stopPropagation(); playAllSongs(playlist.songs); }}>
+                                                    <Play className="play-icon" />
+                                                </button>
+                                            </div>
                                             <h3 className="playlist-card-name">{playlist.name}</h3>
                                             <p className="playlist-card-count">{playlist.songs.length} songs</p>
                                         </div>
@@ -483,11 +811,22 @@ export default function Page() {
                             <div className="playlist-detail-header">
                                 <button onClick={() => setActiveTab('playlists')} className="back-btn">← Back to Playlists</button>
                                 <div className="playlist-header-content">
-                                    <Image src={selectedPlaylist.cover} alt={selectedPlaylist.name} className="playlist-detail-cover" width={300} height={300} loading="lazy" />
+                                    <Image
+                                        src={selectedPlaylist.cover}
+                                        alt={selectedPlaylist.name}
+                                        className="playlist-detail-cover"
+                                        width={300}
+                                        height={300}
+                                        loading="lazy"
+                                    />
                                     <div className="playlist-header-info">
                                         <h2 className="playlist-detail-title">{selectedPlaylist.name}</h2>
                                         <p className="playlist-detail-count">{selectedPlaylist.songs.length} songs</p>
-                                        {selectedPlaylist.songs.length > 0 && <button onClick={() => selectSong(selectedPlaylist.songs[0])} className="play-all-btn"><Play className="play-icon" /> Play All</button>}
+                                        {selectedPlaylist.songs.length > 0 && (
+                                            <button onClick={() => playAllSongs(selectedPlaylist.songs)} className="play-all-btn">
+                                                <Play className="play-icon" /> Play All
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
                             </div>
@@ -500,16 +839,29 @@ export default function Page() {
                                     </div>
                                 ) : (
                                     selectedPlaylist.songs.map((song, index) => (
-                                        <div key={song.id} className="playlist-song-item" onClick={() => selectSong(song)}>
+                                        <div key={song.id} className="playlist-song-item" onClick={() => selectSong(song, selectedPlaylist.songs)}>
                                             <span className="song-number">{index + 1}</span>
-                                            <Image src={song.cover} alt={song.title} className="playlist-song-cover" width={300} height={300} loading="lazy" />
+                                            <Image
+                                                src={song.cover}
+                                                alt={song.title}
+                                                className="playlist-song-cover"
+                                                width={300}
+                                                height={300}
+                                                loading="lazy"
+                                            />
                                             <div className="playlist-song-info">
                                                 <h4 className="playlist-song-title">{song.title}</h4>
                                                 <p className="playlist-song-artist">{song.artist}</p>
                                             </div>
                                             <span className="playlist-song-album">{song.album}</span>
                                             <span className="playlist-song-duration">{song.duration}</span>
-                                            <button className="playlist-song-play"><Play className="play-icon-small" /></button>
+                                            <button className="playlist-song-play">
+                                                <Play className="play-icon-small" />
+                                            </button>
+                                            <Heart
+                                                className={`heart-icon ${likedSongs.has(song.id) ? 'liked' : ''}`}
+                                                onClick={(e) => { e.stopPropagation(); toggleLike(song.id); }}
+                                            />
                                         </div>
                                     ))
                                 )}
@@ -520,10 +872,42 @@ export default function Page() {
                         <div className="admin-content">
                             <h2 className="page-title">Admin Dashboard</h2>
                             <div className="stats-grid">
-                                <div className="stat-card blue-gradient"><div className="stat-content"><div className="stat-info"><p className="stat-label">Total Songs</p><p className="stat-value">{songs.length}</p></div><Music className="stat-icon" /></div></div>
-                                <div className="stat-card green-gradient"><div className="stat-content"><div className="stat-info"><p className="stat-label">Active Users</p><p className="stat-value">{users.length}</p></div><Users className="stat-icon" /></div></div>
-                                <div className="stat-card orange-gradient"><div className="stat-content"><div className="stat-info"><p className="stat-label">Total Plays</p><p className="stat-value">2.1M</p></div><TrendingUp className="stat-icon" /></div></div>
-                                <div className="stat-card purple-gradient"><div className="stat-content"><div className="stat-info"><p className="stat-label">Playlists</p><p className="stat-value">{playlists.length}</p></div><BarChart3 className="stat-icon" /></div></div>
+                                <div className="stat-card blue-gradient">
+                                    <div className="stat-content">
+                                        <div className="stat-info">
+                                            <p className="stat-label">Total Songs</p>
+                                            <p className="stat-value">{songs.length}</p>
+                                        </div>
+                                        <Music className="stat-icon" />
+                                    </div>
+                                </div>
+                                <div className="stat-card green-gradient">
+                                    <div className="stat-content">
+                                        <div className="stat-info">
+                                            <p className="stat-label">Active Users</p>
+                                            <p className="stat-value">{users.length}</p>
+                                        </div>
+                                        <Users className="stat-icon" />
+                                    </div>
+                                </div>
+                                <div className="stat-card orange-gradient">
+                                    <div className="stat-content">
+                                        <div className="stat-info">
+                                            <p className="stat-label">Total Plays</p>
+                                            <p className="stat-value">{songs.reduce((sum, song) => sum + song.plays, 0).toLocaleString()}</p>
+                                        </div>
+                                        <TrendingUp className="stat-icon" />
+                                    </div>
+                                </div>
+                                <div className="stat-card purple-gradient">
+                                    <div className="stat-content">
+                                        <div className="stat-info">
+                                            <p className="stat-label">Playlists</p>
+                                            <p className="stat-value">{playlists.length}</p>
+                                        </div>
+                                        <BarChart3 className="stat-icon" />
+                                    </div>
+                                </div>
                             </div>
                             <div className="admin-panel">
                                 <h3 className="panel-title">User Management</h3>
@@ -563,10 +947,32 @@ export default function Page() {
                                     <div className="edit-song-form">
                                         <h4 className="form-title">Edit Song</h4>
                                         <div className="form-grid">
-                                            <input type="text" placeholder="Song Title" value={editingSong.title} onChange={(e) => setEditingSong({...editingSong, title: e.target.value})} className="form-input" />
-                                            <input type="text" placeholder="Artist" value={editingSong.artist} onChange={(e) => setEditingSong({...editingSong, artist: e.target.value})} className="form-input" />
-                                            <input type="text" placeholder="Album" value={editingSong.album} onChange={(e) => setEditingSong({...editingSong, album: e.target.value})} className="form-input" />
-                                            <select value={editingSong.genre} onChange={(e) => setEditingSong({...editingSong, genre: e.target.value})} className="form-select">
+                                            <input
+                                                type="text"
+                                                placeholder="Song Title"
+                                                value={editingSong.title}
+                                                onChange={(e) => setEditingSong({ ...editingSong, title: e.target.value })}
+                                                className="form-input"
+                                            />
+                                            <input
+                                                type="text"
+                                                placeholder="Artist"
+                                                value={editingSong.artist}
+                                                onChange={(e) => setEditingSong({ ...editingSong, artist: e.target.value })}
+                                                className="form-input"
+                                            />
+                                            <input
+                                                type="text"
+                                                placeholder="Album"
+                                                value={editingSong.album}
+                                                onChange={(e) => setEditingSong({ ...editingSong, album: e.target.value })}
+                                                className="form-input"
+                                            />
+                                            <select
+                                                value={editingSong.genre}
+                                                onChange={(e) => setEditingSong({ ...editingSong, genre: e.target.value })}
+                                                className="form-select"
+                                            >
                                                 <option value="Pop">Pop</option><option value="Electronic">Electronic</option><option value="Acoustic">Acoustic</option>
                                                 <option value="Hip-Hop">Hip-Hop</option><option value="Rock">Rock</option><option value="Jazz">Jazz</option>
                                                 <option value="Classical">Classical</option><option value="Country">Country</option>
@@ -581,7 +987,14 @@ export default function Page() {
                                 <div className="songs-list">
                                     {songs.map((song) => (
                                         <div key={song.id} className="admin-song-item">
-                                            <Image src={song.cover} alt={song.title} className="admin-song-cover" width={300} height={300} loading="lazy" />
+                                            <Image
+                                                src={song.cover}
+                                                alt={song.title}
+                                                className="admin-song-cover"
+                                                width={300}
+                                                height={300}
+                                                loading="lazy"
+                                            />
                                             <div className="admin-song-info">
                                                 <h4 className="admin-song-title">{song.title}</h4>
                                                 <p className="admin-song-artist">{song.artist} • {song.album}</p>
@@ -620,7 +1033,14 @@ export default function Page() {
                         <div className="modal-playlist-list">
                             {playlists.map((playlist) => (
                                 <button key={playlist.id} onClick={() => addSongToPlaylist(playlist.id)} className="modal-playlist-item">
-                                    <Image src={playlist.cover} alt={playlist.name} className="modal-playlist-cover" width={300} height={300} loading="lazy" />
+                                    <Image
+                                        src={playlist.cover}
+                                        alt={playlist.name}
+                                        className="modal-playlist-cover"
+                                        width={300}
+                                        height={300}
+                                        loading="lazy"
+                                    />
                                     <span className="modal-playlist-name">{playlist.name}</span>
                                     <span className="modal-playlist-count">{playlist.songs.length} songs</span>
                                 </button>
@@ -634,7 +1054,14 @@ export default function Page() {
                 <div className="music-player">
                     <div className="player-content">
                         <div className="player-left">
-                            <Image src={currentSong.cover} alt={currentSong.title} className="player-cover" width={300} height={300} loading="lazy" />
+                            <Image
+                                src={currentSong.cover}
+                                alt={currentSong.title}
+                                className="player-cover"
+                                width={300}
+                                height={300}
+                                loading="lazy"
+                            />
                             <div className="player-info">
                                 <h4 className="player-title">{currentSong.title}</h4>
                                 <p className="player-artist">{currentSong.artist}</p>
@@ -642,17 +1069,38 @@ export default function Page() {
                             </div>
                         </div>
                         <div className="player-controls">
-                            <button className="control-btn"><Shuffle className="control-icon" /></button>
-                            <button className="control-btn"><SkipBack className="control-icon" /></button>
-                            <button onClick={togglePlay} className="play-btn">{isPlaying ? <Pause className="play-icon" /> : <Play className="play-icon" />}</button>
-                            <button className="control-btn"><SkipForward className="control-icon" /></button>
-                            <button className="control-btn"><Repeat className="control-icon" /></button>
+                            <button className={`control-btn ${shuffle ? 'active' : ''}`} onClick={toggleShuffle}>
+                                <Shuffle className="control-icon" />
+                            </button>
+                            <button className="control-btn" onClick={playPrevious}>
+                                <SkipBack className="control-icon" />
+                            </button>
+                            <button onClick={togglePlay} className="play-btn">
+                                {isPlaying ? <Pause className="play-icon" /> : <Play className="play-icon" />}
+                            </button>
+                            <button className="control-btn" onClick={playNext}>
+                                <SkipForward className="control-icon" />
+                            </button>
+                            <button className={`control-btn ${repeat !== 'off' ? 'active' : ''}`} onClick={toggleRepeat}>
+                                <Repeat className="control-icon" />
+                                {repeat === 'one' && <span className="repeat-indicator">1</span>}
+                            </button>
                         </div>
                         <div className="player-right">
-                            <Heart className="heart-btn" />
+                            <Heart
+                                className={`heart-btn ${likedSongs.has(currentSong.id) ? 'liked' : ''}`}
+                                onClick={() => toggleLike(currentSong.id)}
+                            />
                             <div className="volume-controls">
                                 <Volume2 className="volume-icon" />
-                                <input type="range" min="0" max="100" value={volume} onChange={(e) => setVolume(e.target.value)} className="volume-slider" />
+                                <input
+                                    type="range"
+                                    min="0"
+                                    max="100"
+                                    value={volume}
+                                    onChange={(e) => setVolume(e.target.value)}
+                                    className="volume-slider"
+                                />
                             </div>
                         </div>
                     </div>
