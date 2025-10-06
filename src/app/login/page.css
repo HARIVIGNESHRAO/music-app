@@ -470,8 +470,8 @@ body, html {
 
 .cont_form_login > h2,
 .cont_form_sign_up > h2 {
-    margin-top: 3.5rem;
-    margin-bottom: 2rem;
+    margin-top: 2rem;
+    margin-bottom: 1.8rem;
     font-weight: 800;
     font-size: 2.25rem;
     color: #ffffff;
@@ -643,7 +643,7 @@ body, html {
     .btn_login,
     .btn_sign_up {
         width: 180px;
-        padding: 0.75rem 2rem;
+        padding: 0.7rem 2rem;
         font-size: 0.9375rem;
     }
 

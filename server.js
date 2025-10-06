@@ -217,8 +217,8 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-// Get All Users (For Admin)
-app.get('/api/users', isAdmin, async (req, res) => {
+// Get All Users (Public endpoint - removed admin authentication)
+app.get('/api/users', async (req, res) => {
     try {
         const users = await User.find({}, '-password -googleId'); // Exclude sensitive fields
         console.log('Fetched users:', users);

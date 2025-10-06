@@ -101,12 +101,17 @@ export default function Home() {
         setError(null);
         setTimeout(() => {
             setSignUpOpacity(1);
+            if (turnstileRef.current && window.turnstile) {
+                window.turnstile.render(turnstileRef.current, {
+                    sitekey: '0x4AAAAAAB4cfsr9SqqyyKm3',
+                    callback: (token) => {
+                        setTurnstileToken(token);
+                    },
+                });
+            }
         }, time_to_show_sign_up);
         setTimeout(() => {
             setLoginDisplay('none');
-            if (window.turnstile && turnstileRef.current) {
-                window.turnstile.reset(turnstileRef.current);
-            }
         }, time_to_hidden_sign_up);
     };
 
@@ -190,6 +195,12 @@ export default function Home() {
             return;
         }
 
+        if (!turnstileToken) {
+            setError('Please complete the CAPTCHA verification');
+            setLoading(false);
+            return;
+        }
+
         try {
             // Perform signup
             const signupResponse = await axios.post('http://localhost:5000/api/signup', {
@@ -203,6 +214,7 @@ export default function Home() {
             const loginResponse = await axios.post('http://localhost:5000/api/login', {
                 username: signupUsername,
                 password: signupPassword,
+                turnstileToken,
             });
 
             // Store user data and redirect to dashboard
@@ -212,6 +224,10 @@ export default function Home() {
         } catch (err) {
             setLoading(false);
             setError(err.response?.data?.message || 'Signup or login failed');
+            if (window.turnstile && turnstileRef.current) {
+                window.turnstile.reset(turnstileRef.current);
+            }
+            setTurnstileToken(null);
         }
     };
 
@@ -384,6 +400,12 @@ export default function Home() {
                                     value={signupConfirmPassword}
                                     onChange={(e) => setSignupConfirmPassword(e.target.value)}
                                 />
+                                <div
+                                    ref={turnstileRef}
+                                    className="cf-turnstile"
+                                    data-sitekey="0x4AAAAAAB4cfsr9SqqyyKm3"
+                                    data-callback="onTurnstileSuccess"
+                                ></div>
                                 <button className="btn_sign_up" onClick={handleSignup}>
                                     SIGN UP
                                 </button>

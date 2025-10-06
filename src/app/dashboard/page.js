@@ -38,6 +38,9 @@ export default function Page() {
     const [selectedSongForPlaylist, setSelectedSongForPlaylist] = useState(null);
     const [editingSong, setEditingSong] = useState(null);
     const [artists, setArtists] = useState([]);
+    const [users, setUsers] = useState([]);
+    const [usersLoading, setUsersLoading] = useState(false);
+    const [usersError, setUsersError] = useState(null);
     const audioRef = useRef(null);
 
     const CLIENT_ID = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID;
@@ -46,12 +49,7 @@ export default function Page() {
     const RESPONSE_TYPE = 'code';
     const SCOPES = 'user-read-private user-read-email user-top-read playlist-read-private playlist-modify-public';
     const CODE_CHALLENGE_METHOD = 'S256';
-
-    const [users] = useState([
-        { id: 1, name: "Alex Johnson", email: "alex@music.com", role: "user", joinDate: "2024-01-15" },
-        { id: 2, name: "Sarah Chen", email: "sarah@music.com", role: "user", joinDate: "2024-02-20" },
-        { id: 3, name: "Mike Wilson", email: "mike@music.com", role: "admin", joinDate: "2023-12-01" }
-    ]);
+    const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:5000';
 
     const staticSongs = [
         { id: 1, title: "Midnight Dreams", artist: "Luna Martinez", album: "Nocturnal Vibes", duration: "3:24", cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center", genre: "Pop", plays: 1234567, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" },
@@ -66,6 +64,22 @@ export default function Page() {
 
     const generateCodeVerifier = () => crypto.lib.WordArray.random(32).toString(crypto.enc.Base64url);
     const generateCodeChallenge = (verifier) => crypto.SHA256(verifier).toString(crypto.enc.Base64url);
+
+    // Fetch users from backend
+    const fetchUsers = useCallback(async () => {
+        try {
+            setUsersLoading(true);
+            setUsersError(null);
+            const { data } = await axios.get(`${BACKEND_URL}/api/users`);
+            console.log('Fetched users from backend:', data);
+            setUsers(data);
+        } catch (err) {
+            console.error('Failed to fetch users:', err);
+            setUsersError('Failed to load users from server');
+        } finally {
+            setUsersLoading(false);
+        }
+    }, [BACKEND_URL]);
 
     // Define fetchTopTracks and fetchUserPlaylists before fetchUserProfile
     const fetchTopTracks = useCallback(async (token) => {
@@ -139,10 +153,21 @@ export default function Page() {
             ]);
             generateRecommendations(staticSongs);
             setActiveTab('home');
+            // Fetch users when component mounts if user is admin
+            if (user.role === 'admin') {
+                fetchUsers();
+            }
         }
         const storedToken = window.localStorage.getItem('spotify_token');
         if (storedToken) { setAccessToken(storedToken); fetchUserProfile(storedToken); }
-    }, [fetchUserProfile]);
+    }, [fetchUserProfile, fetchUsers]);
+
+    // Fetch users when admin tab is opened
+    useEffect(() => {
+        if (activeTab === 'admin' && isAdmin && users.length === 0) {
+            fetchUsers();
+        }
+    }, [activeTab, isAdmin, users.length, fetchUsers]);
 
     useEffect(() => { if (audioRef.current) audioRef.current.volume = volume / 100; }, [volume]);
 
@@ -183,7 +208,7 @@ export default function Page() {
     };
 
     const handleLogout = () => {
-        setAccessToken(null); setCurrentUser(null); setIsAdmin(false); setCurrentSong(null); setIsPlaying(false); setActiveTab('home'); setSongs([]); setFilteredSongs([]); setPlaylists([]);
+        setAccessToken(null); setCurrentUser(null); setIsAdmin(false); setCurrentSong(null); setIsPlaying(false); setActiveTab('home'); setSongs([]); setFilteredSongs([]); setPlaylists([]); setUsers([]);
         window.localStorage.removeItem('spotify_token'); window.localStorage.removeItem('spotify_code_verifier'); window.localStorage.removeItem('user');
         router.push('/login');
     };
@@ -237,6 +262,11 @@ export default function Page() {
     const startEditSong = (song) => setEditingSong({ ...song });
     const saveEditSong = () => { if (!editingSong) return; setSongs(prev => prev.map(song => song.id === editingSong.id ? editingSong : song)); setFilteredSongs(prev => prev.map(song => song.id === editingSong.id ? editingSong : song)); setEditingSong(null); };
     const deleteArtist = (artistName) => { if (window.confirm(`Are you sure you want to delete ${artistName} and all their songs?`)) { setSongs(prev => prev.filter(song => song.artist !== artistName)); setArtists(prev => prev.filter(artist => artist.name !== artistName)); } };
+
+    const formatDate = (dateString) => {
+        const date = new Date(dateString);
+        return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+    };
 
     if (!currentUser) {
         return (
@@ -497,24 +527,35 @@ export default function Page() {
                             </div>
                             <div className="admin-panel">
                                 <h3 className="panel-title">User Management</h3>
-                                <div className="user-list">
-                                    {users.map((user) => (
-                                        <div key={user.id} className="user-item">
-                                            <div className="user-left">
-                                                <div className="user-icon"><User className="user-icon-svg" /></div>
-                                                <div className="user-details">
-                                                    <p className="user-item-name">{user.name}</p>
-                                                    <p className="user-email">{user.email}</p>
+                                {usersLoading ? (
+                                    <p>Loading users from server...</p>
+                                ) : usersError ? (
+                                    <div className="error-section">
+                                        <p className="error-text">{usersError}</p>
+                                        <button onClick={fetchUsers} className="retry-btn">Retry</button>
+                                    </div>
+                                ) : users.length === 0 ? (
+                                    <p>No users found</p>
+                                ) : (
+                                    <div className="user-list">
+                                        {users.map((user) => (
+                                            <div key={user._id} className="user-item">
+                                                <div className="user-left">
+                                                    <div className="user-icon"><User className="user-icon-svg" /></div>
+                                                    <div className="user-details">
+                                                        <p className="user-item-name">{user.username}</p>
+                                                        <p className="user-email">{user.email}</p>
+                                                    </div>
+                                                </div>
+                                                <div className="user-right">
+                                                    <span className={`role-badge ${user.role}`}>{user.role}</span>
+                                                    <span className="join-date">{formatDate(user.joinDate)}</span>
+                                                    <button className="user-menu"><MoreVertical className="menu-icon" /></button>
                                                 </div>
                                             </div>
-                                            <div className="user-right">
-                                                <span className={`role-badge ${user.role}`}>{user.role}</span>
-                                                <span className="join-date">{user.joinDate}</span>
-                                                <button className="user-menu"><MoreVertical className="menu-icon" /></button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                             <div className="admin-panel">
                                 <h3 className="panel-title">Songs Management</h3>
