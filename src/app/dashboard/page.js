@@ -42,48 +42,157 @@ export default function Page() {
     const [usersLoading, setUsersLoading] = useState(false);
     const [usersError, setUsersError] = useState(null);
     const audioRef = useRef(null);
-
-    // Enhanced queue and playback features
     const [queue, setQueue] = useState([]);
     const [currentIndex, setCurrentIndex] = useState(0);
     const [shuffle, setShuffle] = useState(false);
-    const [repeat, setRepeat] = useState('off'); // 'off', 'all', 'one'
+    const [repeat, setRepeat] = useState('off');
     const [isLoadingSong, setIsLoadingSong] = useState(false);
     const [likedSongs, setLikedSongs] = useState(new Set());
+    const [recentlyPlayed, setRecentlyPlayed] = useState([]);
+    const [isPremium, setIsPremium] = useState(false);
+    const [spotifyPlayer, setSpotifyPlayer] = useState(null);
+    const [deviceId, setDeviceId] = useState(null);
 
     const CLIENT_ID = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID;
     const REDIRECT_URI = process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI;
     const AUTH_ENDPOINT = 'https://accounts.spotify.com/authorize';
     const RESPONSE_TYPE = 'code';
-    const SCOPES = 'user-read-private user-read-email user-top-read playlist-read-private playlist-modify-public';
+    const SCOPES = 'user-read-private user-read-email user-top-read playlist-read-private playlist-modify-public streaming user-read-playback-state user-modify-playback-state';
     const CODE_CHALLENGE_METHOD = 'S256';
     const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://backendserver-edb4bafdgxcwg7d5.centralindia-01.azurewebsites.net';
 
     const staticSongs = [
-        { id: 1, title: "Midnight Dreams", artist: "Luna Martinez", album: "Nocturnal Vibes", duration: "3:24", cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center", genre: "Pop", plays: 1234567, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" },
-        { id: 2, title: "Electric Pulse", artist: "Neon Collective", album: "Digital Horizons", duration: "4:12", cover: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&h=300&fit=crop&crop=center", genre: "Electronic", plays: 987654, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3" },
-        { id: 3, title: "Acoustic Soul", artist: "River Stone", album: "Unplugged Sessions", duration: "2:58", cover: "https://images.unsplash.com/photo-1493612276216-ee3925520721?w=300&h=300&fit=crop&crop=center", genre: "Acoustic", plays: 756432, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3" },
-        {
-            id: 4,
-            title: "Urban Rhythm",
-            artist: "City Beats",
-            album: "Street Anthology",
-            duration: "3:45",
-            cover: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=300&h=300&fit=crop&crop=center" || "https://via.placeholder.com/300x300?text=Urban+Rhythm",
-            genre: "Hip-Hop",
-            plays: 2143567,
-            preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3"
-        },
-        { id: 5, title: "Sunset Boulevard", artist: "Golden Hour", album: "California Dreams", duration: "4:33", cover: "https://images.unsplash.com/photo-1514320291840-2e0a9bf2a9ae?w=300&h=300&fit=crop&crop=center", genre: "Rock", plays: 654321, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3" },
-        { id: 6, title: "Jazz Nights", artist: "Smooth Operators", album: "After Hours", duration: "5:12", cover: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=300&h=300&fit=crop&crop=center", genre: "Jazz", plays: 543210, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3" },
-        { id: 7, title: "Classical Morning", artist: "Orchestra Symphony", album: "Dawn Collection", duration: "6:45", cover: "https://images.unsplash.com/photo-1507838153414-b4b713384a76?w=300&h=300&fit=crop&crop=center", genre: "Classical", plays: 432109, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3" },
-        { id: 8, title: "Country Roads", artist: "Nashville Stars", album: "Southern Tales", duration: "3:56", cover: "https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=300&h=300&fit=crop&crop=center", genre: "Country", plays: 321098, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3" }
+        { id: 1, title: "Midnight Dreams", artist: "Luna Martinez", album: "Nocturnal Vibes", duration: "3:24", cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center", genre: "Pop", plays: 1234567, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3", spotify_uri: null },
+        { id: 2, title: "Electric Pulse", artist: "Neon Collective", album: "Digital Horizons", duration: "4:12", cover: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&h=300&fit=crop&crop=center", genre: "Electronic", plays: 987654, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3", spotify_uri: null },
+        { id: 3, title: "Acoustic Soul", artist: "River Stone", album: "Unplugged Sessions", duration: "2:58", cover: "https://images.unsplash.com/photo-1493612276216-ee3925520721?w=300&h=300&fit=crop&crop=center", genre: "Acoustic", plays: 756432, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3", spotify_uri: null },
+        { id: 4, title: "Urban Rhythm", artist: "City Beats", album: "Street Anthology", duration: "3:45", cover: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=300&h=300&fit=crop&crop=center", genre: "Hip-Hop", plays: 2143567, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3", spotify_uri: null },
+        { id: 5, title: "Sunset Boulevard", artist: "Golden Hour", album: "California Dreams", duration: "4:33", cover: "https://images.unsplash.com/photo-1514320291840-2e0a9bf2a9ae?w=300&h=300&fit=crop&crop=center", genre: "Rock", plays: 654321, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3", spotify_uri: null },
+        { id: 6, title: "Jazz Nights", artist: "Smooth Operators", album: "After Hours", duration: "5:12", cover: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=300&h=300&fit=crop&crop=center", genre: "Jazz", plays: 543210, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3", spotify_uri: null },
+        { id: 7, title: "Classical Morning", artist: "Orchestra Symphony", album: "Dawn Collection", duration: "6:45", cover: "https://images.unsplash.com/photo-1507838153414-b4b713384a76?w=300&h=300&fit=crop&crop=center", genre: "Classical", plays: 432109, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3", spotify_uri: null },
+        { id: 8, title: "Country Roads", artist: "Nashville Stars", album: "Southern Tales", duration: "3:56", cover: "https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=300&h=300&fit=crop&crop=center", genre: "Country", plays: 321098, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3", spotify_uri: null }
     ];
 
     const generateCodeVerifier = () => crypto.lib.WordArray.random(32).toString(crypto.enc.Base64url);
     const generateCodeChallenge = (verifier) => crypto.SHA256(verifier).toString(crypto.enc.Base64url);
 
-    // Fetch users from backend
+    // Initialize Spotify Web Playback SDK
+    useEffect(() => {
+        if (!accessToken || !isPremium) return;
+
+        const script = document.createElement('script');
+        script.src = 'https://sdk.scdn.co/spotify-player.js';
+        script.async = true;
+        document.body.appendChild(script);
+
+        window.onSpotifyWebPlaybackSDKReady = () => {
+            const player = new window.Spotify.Player({
+                name: 'MusicStream Web Player',
+                getOAuthToken: cb => { cb(accessToken); },
+                volume: volume / 100
+            });
+
+            player.addListener('ready', ({ device_id }) => {
+                console.log('Spotify Player ready with Device ID', device_id);
+                setDeviceId(device_id);
+                setSpotifyPlayer(player);
+            });
+
+            player.addListener('not_ready', ({ device_id }) => {
+                console.log('Device ID has gone offline', device_id);
+                setDeviceId(null);
+            });
+
+            player.addListener('player_state_changed', (state) => {
+                if (!state) return;
+                setIsPlaying(!state.paused);
+                setCurrentTime(state.position / 1000);
+                setDuration(state.duration / 1000);
+                if (state.track_window.current_track) {
+                    const track = state.track_window.current_track;
+                    setCurrentSong({
+                        id: track.id,
+                        title: track.name,
+                        artist: track.artists.map(a => a.name).join(', '),
+                        album: track.album.name,
+                        duration: new Date(track.duration_ms).toISOString().substr(14, 5),
+                        cover: track.album.images[0]?.url || 'default-cover',
+                        genre: 'Unknown',
+                        plays: 0,
+                        spotify_uri: track.uri
+                    });
+                    setRecentlyPlayed(prev => {
+                        const newPlayed = [{ ...track, id: track.id, title: track.name, artist: track.artists.map(a => a.name).join(', '), album: track.album.name, duration: new Date(track.duration_ms).toISOString().substr(14, 5), cover: track.album.images[0]?.url, genre: 'Unknown', plays: 0, spotify_uri: track.uri }, ...prev.filter(s => s.id !== track.id)];
+                        return newPlayed.slice(0, 5);
+                    });
+                    generateRecommendations(songs);
+                }
+            });
+
+            player.connect();
+            return () => {
+                player.disconnect();
+                document.body.removeChild(script);
+            };
+        };
+    }, [accessToken, isPremium, volume, songs]);
+
+    const createFeatureVector = (song, allGenres, allArtists) => {
+        const genreVector = allGenres.map(genre => song.genre === genre ? 1 : 0);
+        const artistVector = allArtists.map(artist => song.artist === artist ? 1 : 0);
+        const maxPlays = Math.max(...staticSongs.map(s => s.plays));
+        const plays = song.plays / maxPlays;
+        return [...genreVector, ...artistVector, plays];
+    };
+
+    const cosineSimilarity = (vecA, vecB) => {
+        const dotProduct = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
+        const magnitudeA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
+        const magnitudeB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
+        return magnitudeA && magnitudeB ? dotProduct / (magnitudeA * magnitudeB) : 0;
+    };
+
+    const generateRecommendations = (allSongs) => {
+        if (!allSongs || allSongs.length === 0) {
+            setRecommendations([]);
+            return;
+        }
+
+        const allGenres = [...new Set(allSongs.map(song => song.genre))];
+        const allArtists = [...new Set(allSongs.map(song => song.artist))];
+
+        const songVectors = allSongs.map(song => ({
+            song,
+            vector: createFeatureVector(song, allGenres, allArtists)
+        }));
+
+        const userPreferenceSongs = [
+            ...recentlyPlayed,
+            ...Array.from(likedSongs).map(songId => allSongs.find(s => s.id === songId)).filter(s => s)
+        ].filter((song, index, self) => song && self.findIndex(s => s.id === song.id) === index);
+
+        if (userPreferenceSongs.length === 0) {
+            const shuffled = [...allSongs].sort(() => 0.5 - Math.random());
+            setRecommendations(shuffled.slice(0, 4));
+            return;
+        }
+
+        const userVectors = userPreferenceSongs.map(song => createFeatureVector(song, allGenres, allArtists));
+        const userVector = userVectors.reduce((avg, vec) => avg.map((val, i) => val + vec[i] / userVectors.length), new Array(allGenres.length + allArtists.length + 1).fill(0));
+
+        const scores = songVectors.map(({ song, vector }) => ({
+            song,
+            score: cosineSimilarity(userVector, vector)
+        }));
+
+        const recommendations = scores
+            .sort((a, b) => b.score - a.score)
+            .map(item => item.song)
+            .filter(song => !userPreferenceSongs.some(s => s.id === song.id))
+            .slice(0, 4);
+
+        setRecommendations(recommendations);
+    };
+
     const fetchUsers = useCallback(async () => {
         try {
             setUsersLoading(true);
@@ -112,8 +221,10 @@ export default function Page() {
                 genre: 'Unknown',
                 plays: track.popularity * 10000,
                 preview_url: track.preview_url || null,
+                spotify_uri: track.uri
             }));
             setSongs(mappedSongs);
+            generateRecommendations(mappedSongs);
         } catch (err) { setError('Failed to fetch tracks'); }
     }, []);
 
@@ -133,6 +244,7 @@ export default function Page() {
                         genre: 'Unknown',
                         plays: 0,
                         preview_url: item.track.preview_url || null,
+                        spotify_uri: item.track.uri
                     }));
                     return { id: playlist.id, name: playlist.name, songs, cover: playlist.images[0]?.url || 'default-cover' };
                 } catch (err) { return { id: playlist.id, name: playlist.name, songs: [], cover: playlist.images[0]?.url || 'default-cover' }; }
@@ -145,12 +257,24 @@ export default function Page() {
         try {
             setLoading(true);
             const { data } = await axios.get('https://api.spotify.com/v1/me', { headers: { Authorization: `Bearer ${token}` } });
-            const user = { id: data.id, name: data.display_name, email: data.email, avatar: data.images?.[0]?.url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center', role: data.email === 'admin@music.com' ? 'admin' : 'user' };
+            const user = {
+                id: data.id,
+                name: data.display_name,
+                email: data.email,
+                avatar: data.images?.[0]?.url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center',
+                role: data.email === 'admin@music.com' ? 'admin' : 'user',
+                product: data.product || 'free'
+            };
             setCurrentUser(user);
             setIsAdmin(user.role === 'admin');
+            setIsPremium(user.product === 'premium');
             window.localStorage.setItem('user', JSON.stringify(user));
             await Promise.all([fetchTopTracks(token), fetchUserPlaylists(token)]);
-        } catch (err) { setError('Failed to fetch profile: ' + (err.response?.data?.error?.message || err.message)); } finally { setLoading(false); }
+        } catch (err) {
+            setError('Failed to fetch profile: ' + (err.response?.data?.error?.message || err.message));
+        } finally {
+            setLoading(false);
+        }
     }, [fetchTopTracks, fetchUserPlaylists]);
 
     useEffect(() => {
@@ -159,6 +283,7 @@ export default function Page() {
             const user = JSON.parse(storedUser);
             setCurrentUser(user);
             setIsAdmin(user.role === 'admin');
+            setIsPremium(user.product === 'premium');
             setSongs(staticSongs);
             setFilteredSongs(staticSongs);
             const uniqueArtists = [...new Set(staticSongs.map(song => song.artist))];
@@ -175,7 +300,10 @@ export default function Page() {
             }
         }
         const storedToken = window.localStorage.getItem('spotify_token');
-        if (storedToken) { setAccessToken(storedToken); fetchUserProfile(storedToken); }
+        if (storedToken) {
+            setAccessToken(storedToken);
+            fetchUserProfile(storedToken);
+        }
     }, [fetchUserProfile, fetchUsers]);
 
     useEffect(() => {
@@ -184,30 +312,44 @@ export default function Page() {
         }
     }, [activeTab, isAdmin, users.length, fetchUsers]);
 
-    useEffect(() => { if (audioRef.current) audioRef.current.volume = volume / 100; }, [volume]);
-
-    // Enhanced audio playback with better error handling
     useEffect(() => {
-        if (!audioRef.current || !currentSong?.preview_url) return;
+        if (audioRef.current) audioRef.current.volume = volume / 100;
+        if (spotifyPlayer) spotifyPlayer.setVolume(volume / 100);
+    }, [volume, spotifyPlayer]);
 
-        const audio = audioRef.current;
+    useEffect(() => {
+        if (!currentSong) return;
 
-        const loadAndPlay = async () => {
+        const playSong = async () => {
             try {
                 setIsLoadingSong(true);
                 setError(null);
 
-                // Pause and reset current playback
-                audio.pause();
-                audio.currentTime = 0;
-
-                // Load new song
-                audio.src = currentSong.preview_url;
-                audio.load();
-
-                if (isPlaying) {
-                    // Wait for audio to be ready
-                    await audio.play();
+                if (isPremium && spotifyPlayer && deviceId && currentSong.spotify_uri) {
+                    // Premium user: Use Spotify Web Playback SDK
+                    await axios.put(
+                        `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
+                        { uris: [currentSong.spotify_uri] },
+                        { headers: { Authorization: `Bearer ${accessToken}` } }
+                    );
+                } else if (audioRef.current && currentSong.preview_url) {
+                    // Free user or static song: Use HTML5 audio for preview
+                    const audio = audioRef.current;
+                    audio.pause();
+                    audio.currentTime = 0;
+                    audio.src = currentSong.preview_url;
+                    audio.load();
+                    if (isPlaying) {
+                        await audio.play();
+                    }
+                    setRecentlyPlayed(prev => {
+                        const newPlayed = [currentSong, ...prev.filter(s => s.id !== currentSong.id)];
+                        return newPlayed.slice(0, 5);
+                    });
+                    generateRecommendations(songs);
+                } else {
+                    setError('No playable content available');
+                    setIsPlaying(false);
                 }
             } catch (err) {
                 if (err.name === 'AbortError') {
@@ -227,19 +369,23 @@ export default function Page() {
             }
         };
 
-        loadAndPlay();
+        playSong();
 
         return () => {
-            audio.pause();
+            if (audioRef.current) audioRef.current.pause();
+            if (spotifyPlayer && deviceId) {
+                axios.put(
+                    `https://api.spotify.com/v1/me/player/pause?device_id=${deviceId}`,
+                    {},
+                    { headers: { Authorization: `Bearer ${accessToken}` } }
+                ).catch(err => console.error('Failed to pause Spotify player:', err));
+            }
         };
-    }, [currentSong]);
+    }, [currentSong, isPremium, spotifyPlayer, deviceId, accessToken, isPlaying, songs]);
 
-    // Handle play/pause separately
     useEffect(() => {
-        if (!audioRef.current) return;
-
+        if (!audioRef.current || isPremium) return;
         const audio = audioRef.current;
-
         if (isPlaying && !isLoadingSong) {
             audio.play().catch(err => {
                 if (err.name !== 'AbortError') {
@@ -250,13 +396,11 @@ export default function Page() {
         } else {
             audio.pause();
         }
-    }, [isPlaying, isLoadingSong]);
+    }, [isPlaying, isLoadingSong, isPremium]);
 
-    // Handle song end - auto play next or repeat
     useEffect(() => {
         const audio = audioRef.current;
-        if (!audio) return;
-
+        if (!audio || isPremium) return;
         const handleEnded = () => {
             if (repeat === 'one') {
                 audio.currentTime = 0;
@@ -265,10 +409,9 @@ export default function Page() {
                 playNext();
             }
         };
-
         audio.addEventListener('ended', handleEnded);
         return () => audio.removeEventListener('ended', handleEnded);
-    }, [repeat, currentIndex, queue]);
+    }, [repeat, currentIndex, queue, isPremium]);
 
     const searchSongs = async (query) => {
         if (!accessToken || !query) {
@@ -279,9 +422,24 @@ export default function Page() {
         try {
             setLoading(true);
             const { data } = await axios.get(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=20`, { headers: { Authorization: `Bearer ${accessToken}` } });
-            const mappedSongs = data.tracks.items.map(track => ({ id: track.id, title: track.name, artist: track.artists.map(a => a.name).join(', '), album: track.album.name, duration: new Date(track.duration_ms).toISOString().substr(14, 5), cover: track.album.images[0]?.url || 'default-cover', genre: 'Unknown', plays: track.popularity * 10000, preview_url: track.preview_url || null }));
+            const mappedSongs = data.tracks.items.map(track => ({
+                id: track.id,
+                title: track.name,
+                artist: track.artists.map(a => a.name).join(', '),
+                album: track.album.name,
+                duration: new Date(track.duration_ms).toISOString().substr(14, 5),
+                cover: track.album.images[0]?.url || 'default-cover',
+                genre: 'Unknown',
+                plays: track.popularity * 10000,
+                preview_url: track.preview_url || null,
+                spotify_uri: track.uri
+            }));
             setFilteredSongs(mappedSongs);
-        } catch (err) { setError('Search failed'); } finally { setLoading(false); }
+        } catch (err) {
+            setError('Search failed');
+        } finally {
+            setLoading(false);
+        }
     };
 
     const handleSpotifyLogin = () => {
@@ -293,36 +451,59 @@ export default function Page() {
     };
 
     const handleLogout = () => {
-        setAccessToken(null); setCurrentUser(null); setIsAdmin(false); setCurrentSong(null); setIsPlaying(false); setActiveTab('home'); setSongs([]); setFilteredSongs([]); setPlaylists([]); setUsers([]); setQueue([]); setCurrentIndex(0);
-        window.localStorage.removeItem('spotify_token'); window.localStorage.removeItem('spotify_code_verifier'); window.localStorage.removeItem('user');
+        setAccessToken(null);
+        setCurrentUser(null);
+        setIsAdmin(false);
+        setIsPremium(false);
+        setCurrentSong(null);
+        setIsPlaying(false);
+        setActiveTab('home');
+        setSongs([]);
+        setFilteredSongs([]);
+        setPlaylists([]);
+        setUsers([]);
+        setQueue([]);
+        setCurrentIndex(0);
+        setRecentlyPlayed([]);
+        setSpotifyPlayer(null);
+        setDeviceId(null);
+        window.localStorage.removeItem('spotify_token');
+        window.localStorage.removeItem('spotify_code_verifier');
+        window.localStorage.removeItem('user');
         router.push('/login');
     };
 
-    const togglePlay = () => setIsPlaying(!isPlaying);
+    const togglePlay = () => {
+        if (isPremium && spotifyPlayer && deviceId) {
+            if (isPlaying) {
+                spotifyPlayer.pause();
+            } else {
+                spotifyPlayer.resume();
+            }
+        } else {
+            setIsPlaying(!isPlaying);
+        }
+    };
 
-    // Enhanced song selection with queue management
-    const selectSong = (song, songList = null) => {
-        if (!song.preview_url) {
-            setError('No preview available for this song');
+    const selectSong = async (song, songList = null) => {
+        if (!song.preview_url && !song.spotify_uri) {
+            setError('No playable content available for this song');
             setCurrentSong(song);
             setIsPlaying(false);
             return;
         }
 
-        // Set up queue if a list is provided
         if (songList && songList.length > 0) {
-            const validSongs = songList.filter(s => s.preview_url);
+            const validSongs = songList.filter(s => s.preview_url || s.spotify_uri);
             setQueue(validSongs);
             const index = validSongs.findIndex(s => s.id === song.id);
             setCurrentIndex(index >= 0 ? index : 0);
         } else if (queue.length === 0) {
-            // If no queue exists, use current filtered songs
-            const validSongs = (filteredSongs.length > 0 ? filteredSongs : songs).filter(s => s.preview_url);
+            const validSongs = (filteredSongs.length > 0 ? filteredSongs : songs).filter(s => s.preview_url || s.spotify_uri);
             setQueue(validSongs);
             const index = validSongs.findIndex(s => s.id === song.id);
             setCurrentIndex(index >= 0 ? index : 0);
         } else {
-            // Update current index in existing queue
             const index = queue.findIndex(s => s.id === song.id);
             if (index >= 0) {
                 setCurrentIndex(index);
@@ -334,10 +515,8 @@ export default function Page() {
         setError(null);
     };
 
-    // Play next song in queue
     const playNext = () => {
         if (queue.length === 0) return;
-
         let nextIndex;
         if (shuffle) {
             nextIndex = Math.floor(Math.random() * queue.length);
@@ -352,23 +531,20 @@ export default function Page() {
                 }
             }
         }
-
         setCurrentIndex(nextIndex);
         selectSong(queue[nextIndex]);
     };
 
-    // Play previous song
     const playPrevious = () => {
         if (queue.length === 0) return;
-
         if (currentTime > 3) {
-            // If more than 3 seconds played, restart current song
-            if (audioRef.current) {
+            if (isPremium && spotifyPlayer && deviceId) {
+                spotifyPlayer.seek(0);
+            } else if (audioRef.current) {
                 audioRef.current.currentTime = 0;
             }
             return;
         }
-
         let prevIndex = currentIndex - 1;
         if (prevIndex < 0) {
             if (repeat === 'all') {
@@ -377,17 +553,14 @@ export default function Page() {
                 prevIndex = 0;
             }
         }
-
         setCurrentIndex(prevIndex);
         selectSong(queue[prevIndex]);
     };
 
-    // Toggle shuffle mode
     const toggleShuffle = () => {
         setShuffle(!shuffle);
     };
 
-    // Toggle repeat mode
     const toggleRepeat = () => {
         const modes = ['off', 'all', 'one'];
         const currentModeIndex = modes.indexOf(repeat);
@@ -395,7 +568,6 @@ export default function Page() {
         setRepeat(nextMode);
     };
 
-    // Toggle like song
     const toggleLike = (songId) => {
         setLikedSongs(prev => {
             const newLiked = new Set(prev);
@@ -404,12 +576,25 @@ export default function Page() {
             } else {
                 newLiked.add(songId);
             }
+            generateRecommendations(songs);
             return newLiked;
         });
     };
 
-    const handleSeek = (e) => {
-        if (audioRef.current && duration) {
+    const handleSeek = async (e) => {
+        if (isPremium && spotifyPlayer && deviceId) {
+            const progressBar = e.currentTarget;
+            const rect = progressBar.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const width = rect.width;
+            const seekTime = (clickX / width) * duration * 1000; // Convert to ms
+            try {
+                await spotifyPlayer.seek(seekTime);
+                setCurrentTime(seekTime / 1000);
+            } catch (err) {
+                setError('Failed to seek: ' + err.message);
+            }
+        } else if (audioRef.current && duration) {
             const progressBar = e.currentTarget;
             const rect = progressBar.getBoundingClientRect();
             const clickX = e.clientX - rect.left;
@@ -432,16 +617,24 @@ export default function Page() {
             try {
                 const { data } = await axios.post(`https://api.spotify.com/v1/users/${currentUser.id}/playlists`, { name: newPlaylistName, public: true }, { headers: { Authorization: `Bearer ${accessToken}` } });
                 setPlaylists(prev => [...prev, { id: data.id, name: data.name, songs: [], cover: data.images[0]?.url || 'default-cover' }]);
-                setNewPlaylistName(''); setShowCreatePlaylist(false);
-            } catch (err) { setError('Failed to create playlist'); }
+                setNewPlaylistName('');
+                setShowCreatePlaylist(false);
+            } catch (err) {
+                setError('Failed to create playlist');
+            }
         } else {
             const newPlaylist = { id: playlists.length + 1, name: newPlaylistName, songs: [], cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center" };
-            setPlaylists([...playlists, newPlaylist]); setNewPlaylistName(''); setShowCreatePlaylist(false);
+            setPlaylists([...playlists, newPlaylist]);
+            setNewPlaylistName('');
+            setShowCreatePlaylist(false);
         }
     };
 
-    const handleSearch = (e) => { const query = e.target.value; setSearchQuery(query); if (query) searchSongs(query); };
-    const generateRecommendations = (allSongs) => { const shuffled = [...allSongs].sort(() => 0.5 - Math.random()); setRecommendations(shuffled.slice(0, 4)); };
+    const handleSearch = (e) => {
+        const query = e.target.value;
+        setSearchQuery(query);
+        if (query) searchSongs(query);
+    };
 
     const applyFilters = useCallback(() => {
         let filtered = [...songs];
@@ -451,7 +644,9 @@ export default function Page() {
         setFilteredSongs(filtered);
     }, [songs, filterGenre, filterArtist, searchQuery]);
 
-    useEffect(() => { applyFilters(); }, [applyFilters]);
+    useEffect(() => {
+        applyFilters();
+    }, [applyFilters]);
 
     const addSongToPlaylist = (playlistId) => {
         if (!selectedSongForPlaylist) return;
@@ -462,19 +657,41 @@ export default function Page() {
             }
             return playlist;
         }));
-        setShowAddToPlaylist(false); setSelectedSongForPlaylist(null);
+        setShowAddToPlaylist(false);
+        setSelectedSongForPlaylist(null);
     };
 
-    const openPlaylist = (playlist) => { setSelectedPlaylist(playlist); setActiveTab('playlist-detail'); };
-    const deleteSong = (songId) => { if (window.confirm('Are you sure you want to delete this song?')) { setSongs(prev => prev.filter(song => song.id !== songId)); setFilteredSongs(prev => prev.filter(song => song.id !== songId)); } };
-    const startEditSong = (song) => setEditingSong({ ...song });
-    const saveEditSong = () => { if (!editingSong) return; setSongs(prev => prev.map(song => song.id === editingSong.id ? editingSong : song)); setFilteredSongs(prev => prev.map(song => song.id === editingSong.id ? editingSong : song)); setEditingSong(null); };
-    const deleteArtist = (artistName) => { if (window.confirm(`Are you sure you want to delete ${artistName} and all their songs?`)) { setSongs(prev => prev.filter(song => song.artist !== artistName)); setArtists(prev => prev.filter(artist => artist.name !== artistName)); } };
+    const openPlaylist = (playlist) => {
+        setSelectedPlaylist(playlist);
+        setActiveTab('playlist-detail');
+    };
 
-    // Play all songs in a playlist
+    const deleteSong = (songId) => {
+        if (window.confirm('Are you sure you want to delete this song?')) {
+            setSongs(prev => prev.filter(song => song.id !== songId));
+            setFilteredSongs(prev => prev.filter(song => song.id !== songId));
+        }
+    };
+
+    const startEditSong = (song) => setEditingSong({ ...song });
+
+    const saveEditSong = () => {
+        if (!editingSong) return;
+        setSongs(prev => prev.map(song => song.id === editingSong.id ? editingSong : song));
+        setFilteredSongs(prev => prev.map(song => song.id === editingSong.id ? editingSong : song));
+        setEditingSong(null);
+    };
+
+    const deleteArtist = (artistName) => {
+        if (window.confirm(`Are you sure you want to delete ${artistName} and all their songs?`)) {
+            setSongs(prev => prev.filter(song => song.artist !== artistName));
+            setArtists(prev => prev.filter(artist => artist.name !== artistName));
+        }
+    };
+
     const playAllSongs = (songList) => {
         if (songList.length === 0) return;
-        const validSongs = songList.filter(s => s.preview_url);
+        const validSongs = songList.filter(s => s.preview_url || s.spotify_uri);
         if (validSongs.length === 0) {
             setError('No playable songs in this list');
             return;
@@ -514,16 +731,16 @@ export default function Page() {
         <div className="app-container">
             <audio
                 ref={audioRef}
-                onTimeUpdate={() => setCurrentTime(audioRef.current?.currentTime || 0)}
+                onTimeUpdate={() => !isPremium && setCurrentTime(audioRef.current?.currentTime || 0)}
                 onLoadedMetadata={() => {
-                    if (audioRef.current) setDuration(audioRef.current.duration || 30);
-                    else setError('Failed to load audio metadata');
+                    if (!isPremium && audioRef.current) setDuration(audioRef.current.duration || 30);
+                    else if (!isPremium) setError('Failed to load audio metadata');
                 }}
                 onEnded={() => {
-                    if (repeat === 'one') {
+                    if (!isPremium && repeat === 'one') {
                         audioRef.current.currentTime = 0;
                         audioRef.current.play();
-                    } else {
+                    } else if (!isPremium) {
                         playNext();
                     }
                 }}
@@ -556,7 +773,7 @@ export default function Page() {
                             height={100}
                             priority
                         />
-                        <span className="user-name">{currentUser.username || currentUser.name}</span>
+                        <span className="user-name">{currentUser.username || currentUser.name} {isPremium ? '(Premium)' : '(Free)'}</span>
                         <button onClick={handleLogout} className="logout-btn">Logout</button>
                     </div>
                 </div>
@@ -634,7 +851,7 @@ export default function Page() {
                                         <div className="recent-section">
                                             <h3 className="section-title">Recently Played</h3>
                                             <div className="recent-list">
-                                                {songs.slice(0, 3).map((song) => (
+                                                {recentlyPlayed.slice(0, 3).map((song) => (
                                                     <div key={song.id} className="recent-item" onClick={() => selectSong(song)}>
                                                         <Image
                                                             src={song.cover}
@@ -1065,7 +1282,7 @@ export default function Page() {
                             <div className="player-info">
                                 <h4 className="player-title">{currentSong.title}</h4>
                                 <p className="player-artist">{currentSong.artist}</p>
-                                {currentSong.preview_url && <p className="player-note">30-second preview</p>}
+                                {(!isPremium || !currentSong.spotify_uri) && currentSong.preview_url && <p className="player-note">30-second preview</p>}
                             </div>
                         </div>
                         <div className="player-controls">
