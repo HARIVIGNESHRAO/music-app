@@ -227,7 +227,6 @@ export default function Page() {
             generateRecommendations(mappedSongs);
         } catch (err) { setError('Failed to fetch tracks'); }
     }, []);
-
     const fetchUserPlaylists = useCallback(async (token) => {
         try {
             const { data } = await axios.get('https://api.spotify.com/v1/me/playlists?limit=10', { headers: { Authorization: `Bearer ${token}` } });
