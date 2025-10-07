@@ -229,9 +229,13 @@ export default function Page() {
     }, []);
     const fetchUserPlaylists = useCallback(async (token) => {
         try {
+            console.log('Fetching user playlists from Spotify...');
             const { data } = await axios.get('https://api.spotify.com/v1/me/playlists?limit=10', { headers: { Authorization: `Bearer ${token}` } });
+            console.log('Found', data.items.length, 'playlists');
+
             const playlistsWithSongs = await Promise.all(data.items.map(async (playlist) => {
                 try {
+                    console.log('Fetching tracks for playlist:', playlist.name);
                     const tracksData = await axios.get(playlist.tracks.href, { headers: { Authorization: `Bearer ${token}` } });
                     const songs = tracksData.data.items
                         .filter(item => item.track && item.track.id) // Filter out null tracks
@@ -247,19 +251,28 @@ export default function Page() {
                             preview_url: item.track.preview_url || null,
                             spotify_uri: item.track.uri
                         }));
+                    console.log('Playlist', playlist.name, ':', songs.length, 'songs');
+                    console.log('Songs with preview URLs:', songs.filter(s => s.preview_url).length);
+                    console.log('Songs with Spotify URIs:', songs.filter(s => s.spotify_uri).length);
+
                     // Use playlist cover or first song's cover as fallback
                     const coverImage = playlist.images?.[0]?.url ||
                         songs[0]?.cover ||
                         'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center';
                     return { id: playlist.id, name: playlist.name, songs, cover: coverImage };
                 } catch (err) {
+                    console.error('Error fetching playlist tracks:', err);
                     const coverImage = playlist.images?.[0]?.url ||
                         'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center';
                     return { id: playlist.id, name: playlist.name, songs: [], cover: coverImage };
                 }
             }));
+            console.log('Total playlists loaded:', playlistsWithSongs.length);
             setPlaylists(playlistsWithSongs);
-        } catch (err) { setError('Failed to fetch playlists'); }
+        } catch (err) {
+            console.error('Failed to fetch playlists:', err);
+            setError('Failed to fetch playlists');
+        }
     }, []);
     const fetchUserProfile = useCallback(async (token) => {
         try {
