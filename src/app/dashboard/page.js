@@ -234,25 +234,34 @@ export default function Page() {
             const playlistsWithSongs = await Promise.all(data.items.map(async (playlist) => {
                 try {
                     const tracksData = await axios.get(playlist.tracks.href, { headers: { Authorization: `Bearer ${token}` } });
-                    const songs = tracksData.data.items.map(item => ({
-                        id: item.track.id,
-                        title: item.track.name,
-                        artist: item.track.artists.map(a => a.name).join(', '),
-                        album: item.track.album.name,
-                        duration: new Date(item.track.duration_ms).toISOString().substr(14, 5),
-                        cover: item.track.album.images[0]?.url || 'default-cover',
-                        genre: 'Unknown',
-                        plays: 0,
-                        preview_url: item.track.preview_url || null,
-                        spotify_uri: item.track.uri
-                    }));
-                    return { id: playlist.id, name: playlist.name, songs, cover: playlist.images[0]?.url || 'default-cover' };
-                } catch (err) { return { id: playlist.id, name: playlist.name, songs: [], cover: playlist.images[0]?.url || 'default-cover' }; }
+                    const songs = tracksData.data.items
+                        .filter(item => item.track && item.track.id) // Filter out null tracks
+                        .map(item => ({
+                            id: item.track.id,
+                            title: item.track.name,
+                            artist: item.track.artists.map(a => a.name).join(', '),
+                            album: item.track.album.name,
+                            duration: new Date(item.track.duration_ms).toISOString().substr(14, 5),
+                            cover: item.track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
+                            genre: 'Unknown',
+                            plays: 0,
+                            preview_url: item.track.preview_url || null,
+                            spotify_uri: item.track.uri
+                        }));
+                    // Use playlist cover or first song's cover as fallback
+                    const coverImage = playlist.images?.[0]?.url ||
+                        songs[0]?.cover ||
+                        'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center';
+                    return { id: playlist.id, name: playlist.name, songs, cover: coverImage };
+                } catch (err) {
+                    const coverImage = playlist.images?.[0]?.url ||
+                        'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center';
+                    return { id: playlist.id, name: playlist.name, songs: [], cover: coverImage };
+                }
             }));
             setPlaylists(playlistsWithSongs);
         } catch (err) { setError('Failed to fetch playlists'); }
     }, []);
-
     const fetchUserProfile = useCallback(async (token) => {
         try {
             setLoading(true);
