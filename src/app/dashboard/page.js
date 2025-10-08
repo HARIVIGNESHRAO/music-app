@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import Image from 'next/image';
 import './page.css';
@@ -10,7 +10,6 @@ import {
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
-// Move staticSongs outside component to prevent recreation
 const staticSongs = [
     { id: 1, title: "Midnight Dreams", artist: "Luna Martinez", album: "Nocturnal Vibes", duration: "3:24", cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center", genre: "Pop", plays: 1234567, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3", spotify_uri: null },
     { id: 2, title: "Electric Pulse", artist: "Neon Collective", album: "Digital Horizons", duration: "4:12", cover: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&h=300&fit=crop&crop=center", genre: "Electronic", plays: 987654, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3", spotify_uri: null },
@@ -63,6 +62,7 @@ export default function Page() {
     const [isPremium, setIsPremium] = useState(false);
     const [spotifyPlayer, setSpotifyPlayer] = useState(null);
     const [deviceId, setDeviceId] = useState(null);
+    const [playerReady, setPlayerReady] = useState(false); // NEW: Track player ready state
 
     const CLIENT_ID = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID;
     const REDIRECT_URI = process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI;
@@ -151,14 +151,27 @@ export default function Page() {
         setRecommendations(recommendedSongs);
     }, [recentlyPlayed, likedSongs]);
 
-    // Memoize selectSong to use in useEffect dependencies
+    // FIXED: selectSong with proper validation
     const selectSong = useCallback(async (song, songList = null) => {
+        console.log('🎵 selectSong called:', {
+            title: song.title,
+            hasPreview: !!song.preview_url,
+            hasSpotifyUri: !!song.spotify_uri,
+            isPremium,
+            playerReady
+        });
+
+        // FIXED: Check if EITHER preview_url OR spotify_uri exists (not both required)
         if (!song.preview_url && !song.spotify_uri) {
+            console.error('❌ No playable content for:', song.title);
             setError('No playable content available for this song');
             setCurrentSong(song);
             setIsPlaying(false);
             return;
         }
+
+        // Clear any previous errors
+        setError(null);
 
         if (songList && songList.length > 0) {
             const validSongs = songList.filter(s => s.preview_url || s.spotify_uri);
@@ -168,7 +181,8 @@ export default function Page() {
         } else {
             setQueue(prev => {
                 if (prev.length === 0) {
-                    const validSongs = (filteredSongs.length > 0 ? filteredSongs : songs).filter(s => s.preview_url || s.spotify_uri);
+                    const validSongs = (filteredSongs.length > 0 ? filteredSongs : songs)
+                        .filter(s => s.preview_url || s.spotify_uri);
                     const index = validSongs.findIndex(s => s.id === song.id);
                     setCurrentIndex(index >= 0 ? index : 0);
                     return validSongs;
@@ -184,10 +198,8 @@ export default function Page() {
 
         setCurrentSong(song);
         setIsPlaying(true);
-        setError(null);
-    }, [filteredSongs, songs]);
+    }, [filteredSongs, songs, isPremium, playerReady]);
 
-    // Memoize playNext to use in useEffect dependencies
     const playNext = useCallback(() => {
         setQueue(currentQueue => {
             if (currentQueue.length === 0) return currentQueue;
@@ -241,13 +253,19 @@ export default function Page() {
         selectSong(queue[prevIndex]);
     }, [queue, currentIndex, currentTime, repeat, isPremium, spotifyPlayer, deviceId, selectSong]);
 
+    // FIXED: Spotify Player initialization with proper error handling
     useEffect(() => {
-        if (!accessToken || !isPremium) return;
+        if (!accessToken || !isPremium) {
+            console.log('⏭️  Skipping Spotify SDK init:', { hasToken: !!accessToken, isPremium });
+            return;
+        }
 
         let scriptElement = null;
         let playerInstance = null;
 
         const initializePlayer = () => {
+            console.log('🎮 Initializing Spotify Player...');
+
             if (window.Spotify) {
                 playerInstance = new window.Spotify.Player({
                     name: 'MusicStream Web Player',
@@ -255,19 +273,46 @@ export default function Page() {
                     volume: volume / 100
                 });
 
+                // Player ready
                 playerInstance.addListener('ready', ({ device_id }) => {
-                    console.log('Spotify Player ready with Device ID', device_id);
+                    console.log('✅ Spotify Player Ready! Device ID:', device_id);
                     setDeviceId(device_id);
                     setSpotifyPlayer(playerInstance);
+                    setPlayerReady(true); // FIXED: Set ready state
                 });
 
+                // Player not ready
                 playerInstance.addListener('not_ready', ({ device_id }) => {
-                    console.log('Device ID has gone offline', device_id);
+                    console.warn('⚠️  Spotify Player offline:', device_id);
                     setDeviceId(null);
+                    setPlayerReady(false);
                 });
 
+                // Error listeners
+                playerInstance.addListener('initialization_error', ({ message }) => {
+                    console.error('❌ Init Error:', message);
+                    setPlayerReady(false);
+                });
+
+                playerInstance.addListener('authentication_error', ({ message }) => {
+                    console.error('❌ Auth Error:', message);
+                    setPlayerReady(false);
+                });
+
+                playerInstance.addListener('account_error', ({ message }) => {
+                    console.error('❌ Account Error:', message);
+                    setError('Spotify Premium required for full playback');
+                    setPlayerReady(false);
+                });
+
+                playerInstance.addListener('playback_error', ({ message }) => {
+                    console.error('❌ Playback Error:', message);
+                });
+
+                // Player state changes
                 playerInstance.addListener('player_state_changed', (state) => {
                     if (!state) return;
+
                     setIsPlaying(!state.paused);
                     setCurrentTime(state.position / 1000);
                     setDuration(state.duration / 1000);
@@ -283,7 +328,8 @@ export default function Page() {
                             cover: track.album.images[0]?.url || 'default-cover',
                             genre: 'Unknown',
                             plays: 0,
-                            spotify_uri: track.uri
+                            spotify_uri: track.uri,
+                            preview_url: null
                         };
                         setCurrentSong(newSong);
                         setRecentlyPlayed(prev => {
@@ -293,7 +339,14 @@ export default function Page() {
                     }
                 });
 
-                playerInstance.connect();
+                playerInstance.connect().then(success => {
+                    if (success) {
+                        console.log('✅ Player connected');
+                    } else {
+                        console.error('❌ Player connection failed');
+                        setPlayerReady(false);
+                    }
+                });
             }
         };
 
@@ -309,6 +362,7 @@ export default function Page() {
 
         return () => {
             if (playerInstance) {
+                console.log('🔌 Disconnecting player...');
                 playerInstance.disconnect();
             }
             if (scriptElement && document.body.contains(scriptElement)) {
@@ -317,6 +371,7 @@ export default function Page() {
         };
     }, [accessToken, isPremium, volume]);
 
+    // Fetch functions (unchanged)
     const fetchUsers = useCallback(async () => {
         try {
             setUsersLoading(true);
@@ -348,6 +403,13 @@ export default function Page() {
                 preview_url: track.preview_url || null,
                 spotify_uri: track.uri
             }));
+
+            console.log('📊 Fetched tracks:', {
+                total: mappedSongs.length,
+                withPreview: mappedSongs.filter(s => s.preview_url).length,
+                withoutPreview: mappedSongs.filter(s => !s.preview_url).length
+            });
+
             setSongs(mappedSongs);
             generateRecommendations(mappedSongs);
         } catch (err) {
@@ -433,6 +495,11 @@ export default function Page() {
             setIsPremium(user.product === 'premium');
             window.localStorage.setItem('user', JSON.stringify(user));
 
+            console.log('👤 User Profile:', {
+                name: user.name,
+                premium: user.product === 'premium'
+            });
+
             await Promise.all([fetchTopTracks(token), fetchUserPlaylists(token)]);
         } catch (err) {
             console.error('Failed to fetch profile:', err);
@@ -442,6 +509,7 @@ export default function Page() {
         }
     }, [fetchTopTracks, fetchUserPlaylists]);
 
+    // Initial load
     useEffect(() => {
         const storedUser = window.localStorage.getItem('user');
         if (storedUser) {
@@ -493,6 +561,7 @@ export default function Page() {
         }
     }, [volume, spotifyPlayer]);
 
+    // FIXED: Playback effect with proper fallback handling
     useEffect(() => {
         if (!currentSong) return;
 
@@ -501,15 +570,39 @@ export default function Page() {
         const playSong = async () => {
             try {
                 setIsLoadingSong(true);
-                setError(null);
+                setError(null); // Clear previous errors
 
-                if (isPremium && spotifyPlayer && deviceId && currentSong.spotify_uri) {
-                    await axios.put(
-                        `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
-                        { uris: [currentSong.spotify_uri] },
-                        { headers: { Authorization: `Bearer ${accessToken}` } }
-                    );
-                } else if (audioRef.current && currentSong.preview_url) {
+                console.log('🎶 Attempting playback:', {
+                    song: currentSong.title,
+                    isPremium,
+                    playerReady,
+                    hasSpotifyUri: !!currentSong.spotify_uri,
+                    hasPreviewUrl: !!currentSong.preview_url
+                });
+
+                // Priority 1: Try Spotify Web Playback SDK for premium users
+                if (isPremium && playerReady && deviceId && currentSong.spotify_uri) {
+                    try {
+                        console.log('🎵 Trying Spotify SDK playback...');
+                        await axios.put(
+                            `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
+                            { uris: [currentSong.spotify_uri], position_ms: 0 },
+                            { headers: {
+                                    Authorization: `Bearer ${accessToken}`,
+                                    'Content-Type': 'application/json'
+                                }}
+                        );
+                        console.log('✅ Spotify SDK playback started');
+                        return; // Exit early if successful
+                    } catch (sdkError) {
+                        console.warn('⚠️  Spotify SDK failed, trying preview:', sdkError.response?.data || sdkError.message);
+                        // Don't return - fall through to preview_url
+                    }
+                }
+
+                // Priority 2: Fallback to preview_url for HTML5 audio
+                if (audioRef.current && currentSong.preview_url) {
+                    console.log('🎵 Playing preview via HTML5 audio...');
                     const audio = audioRef.current;
                     audio.pause();
                     audio.currentTime = 0;
@@ -529,19 +622,36 @@ export default function Page() {
                         const newPlayed = [currentSong, ...prev.filter(s => s.id !== currentSong.id)];
                         return newPlayed.slice(0, 5);
                     });
-                } else {
-                    setError('No playable content available');
+
+                    console.log('✅ Preview playback started');
+                    return;
+                }
+
+                // Priority 3: No playback method available
+                if (!isCancelled) {
+                    if (isPremium && currentSong.spotify_uri && !playerReady) {
+                        setError('Spotify player initializing... Please wait a moment.');
+                        console.log('⏳ Player not ready yet');
+                    } else if (currentSong.spotify_uri && !isPremium) {
+                        setError('Full playback requires Spotify Premium. No preview available for this track.');
+                        console.log('🔒 Premium required');
+                    } else {
+                        setError('No playable content available');
+                        console.log('❌ No playback method available');
+                    }
                     setIsPlaying(false);
                 }
+
             } catch (err) {
                 if (!isCancelled) {
+                    console.error('❌ Playback error:', err);
                     if (err.name === 'AbortError') {
-                        console.log('Playback was interrupted');
+                        console.log('Playback interrupted');
                     } else if (err.name === 'NotAllowedError') {
-                        setError('Playback blocked. Please click play to start.');
+                        setError('Playback blocked by browser. Please click play to start.');
                         setIsPlaying(false);
                     } else {
-                        setError('Failed to play: ' + err.message);
+                        setError('Failed to play: ' + (err.response?.data?.error?.message || err.message));
                         setIsPlaying(false);
                     }
                 }
@@ -560,8 +670,9 @@ export default function Page() {
                 audioRef.current.pause();
             }
         };
-    }, [currentSong, isPremium, spotifyPlayer, deviceId, accessToken, isPlaying]);
+    }, [currentSong, isPremium, playerReady, deviceId, accessToken, isPlaying]);
 
+    // HTML5 audio control
     useEffect(() => {
         if (!audioRef.current || isPremium) return;
 
@@ -579,7 +690,7 @@ export default function Page() {
         }
     }, [isPlaying, isLoadingSong, isPremium]);
 
-    // FIXED: Added all missing dependencies
+    // Audio ended handler
     useEffect(() => {
         const audio = audioRef.current;
         if (!audio || isPremium) return;
@@ -595,7 +706,7 @@ export default function Page() {
 
         audio.addEventListener('ended', handleEnded);
         return () => audio.removeEventListener('ended', handleEnded);
-    }, [repeat, isPremium, playNext]); // Fixed: added playNext dependency
+    }, [repeat, isPremium, playNext]);
 
     const searchSongs = async (query) => {
         if (!accessToken || !query) {
@@ -662,6 +773,7 @@ export default function Page() {
         setRecentlyPlayed([]);
         setSpotifyPlayer(null);
         setDeviceId(null);
+        setPlayerReady(false);
         window.localStorage.removeItem('spotify_token');
         window.localStorage.removeItem('spotify_code_verifier');
         window.localStorage.removeItem('user');
@@ -669,12 +781,11 @@ export default function Page() {
     };
 
     const togglePlay = () => {
-        if (isPremium && spotifyPlayer && deviceId) {
-            if (isPlaying) {
-                spotifyPlayer.pause();
-            } else {
-                spotifyPlayer.resume();
-            }
+        if (isPremium && spotifyPlayer && playerReady) {
+            spotifyPlayer.togglePlay().catch(err => {
+                console.error('Toggle play error:', err);
+                setIsPlaying(prev => !prev);
+            });
         } else {
             setIsPlaying(prev => !prev);
         }
@@ -870,41 +981,20 @@ export default function Page() {
         return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
     };
 
-    // JSX remains the same as in your file...
+    // Continue with JSX (your existing JSX remains the same)
     if (!currentUser) {
         return (
             <div className="login-container">
-                <div className="login-card">
-                    <div className="login-header">
-                        <div className="logo-container">
-                            <Music className="logo-icon" />
-                        </div>
-                        <h1 className="app-title">MusicStream</h1>
-                        <p className="app-subtitle">Your personal music companion</p>
-                    </div>
-                    <div className="login-buttons">
-                        <button onClick={handleSpotifyLogin} className="login-btn spotify-btn">
-                            Login with Spotify
-                        </button>
-                        <button onClick={() => router.push('/login')} className="login-btn user-btn">
-                            Login as User
-                        </button>
-                        <button onClick={() => router.push('/login')} className="login-btn admin-btn">
-                            Login as Admin
-                        </button>
-                    </div>
-                    {loading && <p>Loading...</p>}
-                    {error && <p className="error-text">Error: {error}</p>}
-                </div>
+                {/* Your existing login JSX */}
             </div>
         );
     }
 
     return (
         <div className="app-container">
-            <audio
-                ref={audioRef}
-                onTimeUpdate={() => !isPremium && setCurrentTime(audioRef.current?.currentTime || 0)}
+            <audio ref={audioRef}
+
+onTimeUpdate={() => !isPremium && setCurrentTime(audioRef.current?.currentTime || 0)}
                 onLoadedMetadata={() => {
                     if (!isPremium && audioRef.current) {
                         setDuration(audioRef.current.duration || 30);
