@@ -356,9 +356,13 @@ export default function Page() {
 
     const fetchTopTracks = useCallback(async (token) => {
         try {
+            // FIXED: Add small delay before request
+            await new Promise(resolve => setTimeout(resolve, 300));
+
             const { data } = await axios.get('https://api.spotify.com/v1/me/top/tracks?time_range=short_term&limit=20', {
                 headers: { Authorization: `Bearer ${token}` }
             });
+
             const mappedSongs = data.items.map(track => ({
                 id: track.id,
                 title: track.name,
@@ -371,25 +375,40 @@ export default function Page() {
                 preview_url: track.preview_url || null,
                 spotify_uri: track.uri
             }));
+
             setSongs(mappedSongs);
             generateRecommendations(mappedSongs);
         } catch (err) {
             console.error('Failed to fetch tracks:', err);
-            setError('Failed to fetch tracks');
+            if (err.response?.status === 429) {
+                setError('Rate limit exceeded. Please wait a moment and refresh.');
+            } else {
+                setError('Failed to fetch tracks');
+            }
         }
     }, [generateRecommendations]);
 
+
     const fetchUserPlaylists = useCallback(async (token) => {
         try {
+            // FIXED: Add delay before request
+            await new Promise(resolve => setTimeout(resolve, 300));
+
             const { data } = await axios.get('https://api.spotify.com/v1/me/playlists?limit=10', {
                 headers: { Authorization: `Bearer ${token}` }
             });
 
-            const playlistsWithSongs = await Promise.all(data.items.map(async (playlist) => {
+            // FIXED: Process playlists sequentially with delays to avoid rate limiting
+            const playlistsWithSongs = [];
+            for (const playlist of data.items) {
                 try {
+                    // Add delay between each playlist fetch
+                    await new Promise(resolve => setTimeout(resolve, 200));
+
                     const tracksData = await axios.get(playlist.tracks.href, {
                         headers: { Authorization: `Bearer ${token}` }
                     });
+
                     const playlistSongs = tracksData.data.items
                         .filter(item => item.track && item.track.id)
                         .map(item => ({
@@ -409,35 +428,47 @@ export default function Page() {
                         playlistSongs[0]?.cover ||
                         'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center';
 
-                    return {
+                    playlistsWithSongs.push({
                         id: playlist.id,
                         name: playlist.name,
                         songs: playlistSongs,
                         cover: coverImage
-                    };
+                    });
                 } catch (err) {
                     console.error('Error fetching playlist tracks:', err);
+                    if (err.response?.status === 429) {
+                        console.log('Rate limited on playlist fetch, skipping...');
+                        continue; // Skip this playlist
+                    }
+
                     const coverImage = playlist.images?.[0]?.url ||
                         'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center';
-                    return {
+                    playlistsWithSongs.push({
                         id: playlist.id,
                         name: playlist.name,
                         songs: [],
                         cover: coverImage
-                    };
+                    });
                 }
-            }));
+            }
 
             setPlaylists(playlistsWithSongs);
         } catch (err) {
             console.error('Failed to fetch playlists:', err);
-            setError('Failed to fetch playlists');
+            if (err.response?.status === 429) {
+                setError('Rate limit exceeded. Please wait and try again.');
+            } else {
+                setError('Failed to fetch playlists');
+            }
         }
     }, []);
 
-    const fetchUserProfile = useCallback(async (token) => {
+
+    const fetchUserProfile = useCallback(async (token, retryCount = 0) => {
         try {
             setLoading(true);
+            setError(null); // Clear previous errors
+
             const { data } = await axios.get('https://api.spotify.com/v1/me', {
                 headers: { Authorization: `Bearer ${token}` }
             });
@@ -456,14 +487,31 @@ export default function Page() {
             setIsPremium(user.product === 'premium');
             window.localStorage.setItem('user', JSON.stringify(user));
 
+            // FIXED: Add delay between API calls to avoid rate limiting
+            await new Promise(resolve => setTimeout(resolve, 500));
+
             await Promise.all([fetchTopTracks(token), fetchUserPlaylists(token)]);
+
         } catch (err) {
             console.error('Failed to fetch profile:', err);
+
+            // FIXED: Handle rate limiting with retry
+            if (err.response?.status === 429 && retryCount < 3) {
+                const retryAfter = parseInt(err.response.headers['retry-after'] || '2');
+                console.log(`Rate limited. Retrying after ${retryAfter} seconds...`);
+
+                setError(`Rate limited. Retrying in ${retryAfter} seconds...`);
+
+                await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+                return fetchUserProfile(token, retryCount + 1);
+            }
+
             setError('Failed to fetch profile: ' + (err.response?.data?.error?.message || err.message));
         } finally {
             setLoading(false);
         }
     }, [fetchTopTracks, fetchUserPlaylists]);
+
 
     useEffect(() => {
         const storedUser = window.localStorage.getItem('user');
@@ -663,7 +711,15 @@ export default function Page() {
         return () => audio.removeEventListener('ended', handleEnded);
     }, [repeat, isPremium, playNext]); // Fixed: added playNext dependency
 
+    // Add debounce timer at the top of your component
+    const searchTimerRef = useRef(null);
+
     const searchSongs = async (query) => {
+        // Clear existing timer
+        if (searchTimerRef.current) {
+            clearTimeout(searchTimerRef.current);
+        }
+
         if (!accessToken || !query) {
             const filtered = staticSongs.filter(song =>
                 song.title.toLowerCase().includes(query.toLowerCase()) ||
@@ -674,34 +730,42 @@ export default function Page() {
             return;
         }
 
-        try {
-            setLoading(true);
-            const { data } = await axios.get(
-                `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=20`,
-                { headers: { Authorization: `Bearer ${accessToken}` } }
-            );
+        // FIXED: Debounce search to avoid rate limiting
+        searchTimerRef.current = setTimeout(async () => {
+            try {
+                setLoading(true);
+                const { data } = await axios.get(
+                    `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=20`,
+                    { headers: { Authorization: `Bearer ${accessToken}` } }
+                );
 
-            const mappedSongs = data.tracks.items.map(track => ({
-                id: track.id,
-                title: track.name,
-                artist: track.artists.map(a => a.name).join(', '),
-                album: track.album.name,
-                duration: new Date(track.duration_ms).toISOString().substr(14, 5),
-                cover: track.album.images[0]?.url || 'default-cover',
-                genre: 'Unknown',
-                plays: track.popularity * 10000,
-                preview_url: track.preview_url || null,
-                spotify_uri: track.uri
-            }));
+                const mappedSongs = data.tracks.items.map(track => ({
+                    id: track.id,
+                    title: track.name,
+                    artist: track.artists.map(a => a.name).join(', '),
+                    album: track.album.name,
+                    duration: new Date(track.duration_ms).toISOString().substr(14, 5),
+                    cover: track.album.images[0]?.url || 'default-cover',
+                    genre: 'Unknown',
+                    plays: track.popularity * 10000,
+                    preview_url: track.preview_url || null,
+                    spotify_uri: track.uri
+                }));
 
-            setFilteredSongs(mappedSongs);
-        } catch (err) {
-            console.error('Search failed:', err);
-            setError('Search failed');
-        } finally {
-            setLoading(false);
-        }
+                setFilteredSongs(mappedSongs);
+            } catch (err) {
+                console.error('Search failed:', err);
+                if (err.response?.status === 429) {
+                    setError('Too many searches. Please wait a moment.');
+                } else {
+                    setError('Search failed');
+                }
+            } finally {
+                setLoading(false);
+            }
+        }, 500); // Wait 500ms after user stops typing
     };
+
 
     const handleSpotifyLogin = async () => {
         const codeVerifier = generateCodeVerifier();
