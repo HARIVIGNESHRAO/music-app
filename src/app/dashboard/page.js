@@ -464,10 +464,12 @@ export default function Page() {
     }, []);
 
 
-    const fetchUserProfile = useCallback(async (token, retryCount = 0) => {
+    const fetchUserProfile = useCallback(async (token) => {
         try {
             setLoading(true);
-            setError(null); // Clear previous errors
+            setError(null);
+
+            console.log('🔐 Fetching user profile...');
 
             const { data } = await axios.get('https://api.spotify.com/v1/me', {
                 headers: { Authorization: `Bearer ${token}` }
@@ -487,30 +489,77 @@ export default function Page() {
             setIsPremium(user.product === 'premium');
             window.localStorage.setItem('user', JSON.stringify(user));
 
-            // FIXED: Add delay between API calls to avoid rate limiting
-            await new Promise(resolve => setTimeout(resolve, 500));
+            console.log('✅ Profile loaded:', user.name);
 
-            await Promise.all([fetchTopTracks(token), fetchUserPlaylists(token)]);
+            // CRITICAL: Don't load Spotify data immediately
+            // Use static songs instead
+            setSongs(staticSongs);
+            setFilteredSongs(staticSongs);
+            generateRecommendations(staticSongs);
+
+            const uniqueArtists = [...new Set(staticSongs.map(song => song.artist))];
+            setArtists(uniqueArtists.map((name, idx) => ({
+                id: idx + 1,
+                name,
+                songs: staticSongs.filter(s => s.artist === name).length,
+                albums: new Set(staticSongs.filter(s => s.artist === name).map(s => s.album)).size
+            })));
+
+            setPlaylists([
+                { id: 1, name: "My Favorites", songs: [staticSongs[0], staticSongs[2]], cover: staticSongs[0].cover },
+                { id: 2, name: "Workout Mix", songs: [staticSongs[1], staticSongs[3]], cover: staticSongs[1].cover },
+                { id: 3, name: "Chill Vibes", songs: [staticSongs[2], staticSongs[4], staticSongs[5]], cover: staticSongs[2].cover }
+            ]);
+
+            // OPTIONAL: Load Spotify data later with button click
+            console.log('⏳ Spotify tracks available on demand');
 
         } catch (err) {
-            console.error('Failed to fetch profile:', err);
+            console.error('❌ Profile fetch error:', err);
 
-            // FIXED: Handle rate limiting with retry
-            if (err.response?.status === 429 && retryCount < 3) {
-                const retryAfter = parseInt(err.response.headers['retry-after'] || '2');
-                console.log(`Rate limited. Retrying after ${retryAfter} seconds...`);
-
-                setError(`Rate limited. Retrying in ${retryAfter} seconds...`);
-
-                await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
-                return fetchUserProfile(token, retryCount + 1);
+            if (err.response?.status === 429) {
+                const retryAfter = err.response.headers['retry-after'] || '10';
+                setError(`Rate limited. Please wait ${retryAfter} seconds and refresh.`);
+            } else {
+                setError('Failed to fetch profile: ' + (err.response?.data?.error?.message || err.message));
             }
-
-            setError('Failed to fetch profile: ' + (err.response?.data?.error?.message || err.message));
         } finally {
             setLoading(false);
         }
-    }, [fetchTopTracks, fetchUserPlaylists]);
+    }, [generateRecommendations]);
+    const loadSpotifyData = useCallback(async () => {
+        if (!accessToken) return;
+
+        setLoading(true);
+        setError(null);
+
+        try {
+            console.log('📥 Loading Spotify tracks...');
+
+            // Load tracks with delay
+            await fetchTopTracks(accessToken);
+
+            // Wait 2 seconds
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            console.log('📥 Loading playlists...');
+            await fetchUserPlaylists(accessToken);
+
+            console.log('✅ Spotify data loaded');
+            setError('Spotify library loaded successfully!');
+            setTimeout(() => setError(null), 3000);
+
+        } catch (err) {
+            console.error('❌ Failed to load Spotify data:', err);
+            if (err.response?.status === 429) {
+                setError('Rate limited. Please try again in 1 minute.');
+            } else {
+                setError('Failed to load Spotify data');
+            }
+        } finally {
+            setLoading(false);
+        }
+    }, [accessToken, fetchTopTracks, fetchUserPlaylists]);
 
 
     useEffect(() => {
@@ -1128,6 +1177,63 @@ export default function Page() {
                                 <h2 className="welcome-title">Welcome back, {currentUser.username || currentUser.name}!</h2>
                                 {loading ? <p>Loading...</p> : error ? <p className="error-text">{error}</p> : (
                                     <>
+                                        {/* Spotify Library Loader */}
+                                        {accessToken && currentUser && (
+                                            <div style={{
+                                                padding: '20px',
+                                                background: 'linear-gradient(135deg, #1DB954 0%, #1ed760 100%)',
+                                                borderRadius: '12px',
+                                                margin: '20px 0',
+                                                textAlign: 'center',
+                                                boxShadow: '0 4px 12px rgba(29, 185, 84, 0.3)'
+                                            }}>
+                                                <h3 style={{
+                                                    color: 'white',
+                                                    marginBottom: '10px',
+                                                    fontSize: '20px',
+                                                    fontWeight: 'bold'
+                                                }}>
+                                                    🎵 Load Your Spotify Library
+                                                </h3>
+                                                <button
+                                                    onClick={loadSpotifyData}
+                                                    disabled={loading}
+                                                    style={{
+                                                        padding: '12px 32px',
+                                                        background: 'white',
+                                                        color: '#1DB954',
+                                                        border: 'none',
+                                                        borderRadius: '24px',
+                                                        fontSize: '16px',
+                                                        fontWeight: 'bold',
+                                                        cursor: loading ? 'not-allowed' : 'pointer',
+                                                        opacity: loading ? 0.6 : 1,
+                                                        transition: 'all 0.3s ease',
+                                                        boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+                                                    }}
+                                                    onMouseOver={(e) => {
+                                                        if (!loading) {
+                                                            e.target.style.transform = 'scale(1.05)';
+                                                            e.target.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+                                                        }
+                                                    }}
+                                                    onMouseOut={(e) => {
+                                                        e.target.style.transform = 'scale(1)';
+                                                        e.target.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)';
+                                                    }}
+                                                >
+                                                    {loading ? '⏳ Loading Spotify Data...' : '📥 Load My Music from Spotify'}
+                                                </button>
+                                                <p style={{
+                                                    color: 'rgba(255,255,255,0.9)',
+                                                    marginTop: '10px',
+                                                    fontSize: '13px'
+                                                }}>
+                                                    Click to load your personalized top tracks and playlists from Spotify
+                                                </p>
+                                            </div>
+                                        )}
+
                                         <div className="featured-songs">
                                             {songs.map((song) => (
                                                 <div key={song.id} className="song-card" onClick={() => selectSong(song)}>
