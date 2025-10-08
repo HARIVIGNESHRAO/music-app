@@ -63,6 +63,7 @@ export default function Page() {
     const [isPremium, setIsPremium] = useState(false);
     const [spotifyPlayer, setSpotifyPlayer] = useState(null);
     const [deviceId, setDeviceId] = useState(null);
+    const [playerReady, setPlayerReady] = useState(false);
 
     const CLIENT_ID = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID;
     const REDIRECT_URI = process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI;
@@ -153,6 +154,7 @@ export default function Page() {
 
     // Memoize selectSong to use in useEffect dependencies
     const selectSong = useCallback(async (song, songList = null) => {
+        setError(null);
         if (!song.preview_url && !song.spotify_uri) {
             setError('No playable content available for this song');
             setCurrentSong(song);
@@ -259,11 +261,12 @@ export default function Page() {
                     console.log('Spotify Player ready with Device ID', device_id);
                     setDeviceId(device_id);
                     setSpotifyPlayer(playerInstance);
+                    setPlayerReady(true);
                 });
-
                 playerInstance.addListener('not_ready', ({ device_id }) => {
                     console.log('Device ID has gone offline', device_id);
                     setDeviceId(null);
+                    setPlayerReady(false);
                 });
 
                 playerInstance.addListener('player_state_changed', (state) => {
@@ -503,13 +506,21 @@ export default function Page() {
                 setIsLoadingSong(true);
                 setError(null);
 
-                if (isPremium && spotifyPlayer && deviceId && currentSong.spotify_uri) {
-                    await axios.put(
-                        `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
-                        { uris: [currentSong.spotify_uri] },
-                        { headers: { Authorization: `Bearer ${accessToken}` } }
-                    );
-                } else if (audioRef.current && currentSong.preview_url) {
+                if (isPremium && playerReady && deviceId && currentSong.spotify_uri) {
+                    try {
+                        await axios.put(
+                            `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
+                            { uris: [currentSong.spotify_uri] },
+                            { headers: { Authorization: `Bearer ${accessToken}` } }
+                        );
+                        console.log('✅ Playing via Spotify SDK');
+                        return; // Exit if successful
+                    } catch (sdkError) {
+                        console.warn('⚠️ SDK failed, trying preview:', sdkError.message);
+                        // Fall through to preview_url below
+                    }
+                }
+ else if (audioRef.current && currentSong.preview_url) {
                     const audio = audioRef.current;
                     audio.pause();
                     audio.currentTime = 0;
@@ -529,11 +540,18 @@ export default function Page() {
                         const newPlayed = [currentSong, ...prev.filter(s => s.id !== currentSong.id)];
                         return newPlayed.slice(0, 5);
                     });
+                }  else {
+                if (isPremium && currentSong.spotify_uri && !playerReady) {
+                    setError('Spotify player initializing... Please wait.');
+                } else if (currentSong.spotify_uri && !isPremium) {
+                    setError('Full playback requires Spotify Premium. No preview available.');
                 } else {
                     setError('No playable content available');
-                    setIsPlaying(false);
                 }
-            } catch (err) {
+                setIsPlaying(false);
+            }
+
+        } catch (err) {
                 if (!isCancelled) {
                     if (err.name === 'AbortError') {
                         console.log('Playback was interrupted');
@@ -645,31 +663,34 @@ export default function Page() {
         window.location.href = authUrl;
     };
 
-    const handleLogout = () => {
-        setAccessToken(null);
-        setCurrentUser(null);
-        setIsAdmin(false);
-        setIsPremium(false);
-        setCurrentSong(null);
-        setIsPlaying(false);
-        setActiveTab('home');
-        setSongs([]);
-        setFilteredSongs([]);
-        setPlaylists([]);
-        setUsers([]);
-        setQueue([]);
-        setCurrentIndex(0);
-        setRecentlyPlayed([]);
-        setSpotifyPlayer(null);
-        setDeviceId(null);
-        window.localStorage.removeItem('spotify_token');
-        window.localStorage.removeItem('spotify_code_verifier');
-        window.localStorage.removeItem('user');
-        router.push('/login');
-    };
+        const handleLogout = () => {
+            setAccessToken(null);
+            setCurrentUser(null);
+            setIsAdmin(false);
+            setIsPremium(false);
+            setCurrentSong(null);
+            setIsPlaying(false);
+            setActiveTab('home');
+            setSongs([]);
+            setFilteredSongs([]);
+            setPlaylists([]);
+            setUsers([]);
+            setQueue([]);
+            setCurrentIndex(0);
+            setRecentlyPlayed([]);
+            setSpotifyPlayer(null);
+            setDeviceId(null);
+            setPlayerReady(false); // ADD THIS LINE
+            window.localStorage.removeItem('spotify_token');
+            window.localStorage.removeItem('spotify_code_verifier');
+            window.localStorage.removeItem('user');
+            router.push('/login');
+        };
 
-    const togglePlay = () => {
-        if (isPremium && spotifyPlayer && deviceId) {
+
+        const togglePlay = () => {
+            if (isPremium && spotifyPlayer && playerReady) {
+
             if (isPlaying) {
                 spotifyPlayer.pause();
             } else {
