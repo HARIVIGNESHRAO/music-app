@@ -151,16 +151,36 @@ export default function Page() {
 
         setRecommendations(recommendedSongs);
     }, [recentlyPlayed, likedSongs]);
+// Helper to check if song is playable
+    const isSongPlayable = useCallback((song) => {
+        if (!song) return false;
+
+        // Static songs always have preview_url
+        if (song.preview_url) return true;
+
+        // Spotify songs need URI and premium for full playback
+        if (song.spotify_uri && isPremium && playerReady) return true;
+
+        return false;
+    }, [isPremium, playerReady]);
 
     // Memoize selectSong to use in useEffect dependencies
     const selectSong = useCallback(async (song, songList = null) => {
+        console.log('🎵 Selecting song:', song.title, {
+            hasPreview: !!song.preview_url,
+            hasUri: !!song.spotify_uri
+        });
+
+        // CRITICAL: Clear error immediately
         setError(null);
+        setIsPlaying(false); // Reset playing state first
+
         if (!song.preview_url && !song.spotify_uri) {
-            setError('No playable content available for this song');
+            setError(`No playable content available for "${song.title}"`);
             setCurrentSong(song);
-            setIsPlaying(false);
             return;
         }
+
 
         if (songList && songList.length > 0) {
             const validSongs = songList.filter(s => s.preview_url || s.spotify_uri);
@@ -521,35 +541,63 @@ export default function Page() {
                     }
                 }
  else if (audioRef.current && currentSong.preview_url) {
+                    console.log('🎵 Attempting preview playback...');
                     const audio = audioRef.current;
+
+                    // Stop any previous playback
                     audio.pause();
                     audio.currentTime = 0;
                     audio.src = currentSong.preview_url;
 
                     await new Promise((resolve, reject) => {
-                        audio.onloadedmetadata = resolve;
-                        audio.onerror = reject;
+                        const timeout = setTimeout(() => reject(new Error('Load timeout')), 10000);
+
+                        audio.onloadedmetadata = () => {
+                            clearTimeout(timeout);
+                            resolve();
+                        };
+                        audio.onerror = (e) => {
+                            clearTimeout(timeout);
+                            reject(new Error('Audio load failed'));
+                        };
                         audio.load();
                     });
 
                     if (!isCancelled && isPlaying) {
                         await audio.play();
+                        console.log('✅ Preview playing');
+
+                        // IMPORTANT: Clear error on successful playback
+                        setError(null);
                     }
 
                     setRecentlyPlayed(prev => {
                         const newPlayed = [currentSong, ...prev.filter(s => s.id !== currentSong.id)];
                         return newPlayed.slice(0, 5);
                     });
-                }  else {
-                if (isPremium && currentSong.spotify_uri && !playerReady) {
-                    setError('Spotify player initializing... Please wait.');
-                } else if (currentSong.spotify_uri && !isPremium) {
-                    setError('Full playback requires Spotify Premium. No preview available.');
-                } else {
-                    setError('No playable content available');
+
+                    return; // Exit successfully
                 }
-                setIsPlaying(false);
+                else {
+                // FIXED: Only show error if this specific song truly has no playback option
+                if (!isCancelled) {
+                    if (isPremium && currentSong.spotify_uri && !playerReady) {
+                        setError(`Player initializing... Please wait.`);
+                    } else if (!currentSong.preview_url && !currentSong.spotify_uri) {
+                        // Truly no content available
+                        setError(`No playable content available for "${currentSong.title}"`);
+                    } else if (currentSong.spotify_uri && !currentSong.preview_url && !isPremium) {
+                        // Has Spotify URI but no preview, and user is not premium
+                        setError(`"${currentSong.title}" requires Spotify Premium. No preview available.`);
+                    } else {
+                        // Has preview but something else failed
+                        console.error('Playback failed despite available content');
+                        setError(`Failed to play "${currentSong.title}". Please try again.`);
+                    }
+                    setIsPlaying(false);
+                }
             }
+
 
         } catch (err) {
                 if (!isCancelled) {
