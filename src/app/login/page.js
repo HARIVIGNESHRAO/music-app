@@ -150,7 +150,7 @@ export default function Home() {
             const user = response.data.user;
             window.localStorage.setItem('user', JSON.stringify(user));
             setLoading(false);
-            router.push('/dashboard');
+            router.push('/youtube');
         } catch (err) {
             setLoading(false);
             setError(err.response?.data?.message || 'Login failed');
@@ -172,7 +172,7 @@ export default function Home() {
             const user = response.data.user;
             window.localStorage.setItem('user', JSON.stringify(user));
             setLoading(false);
-            router.push('/dashboard');
+            router.push('/youtube');
         } catch (err) {
             setLoading(false);
             setError(err.response?.data?.message || 'Google login failed');
@@ -220,7 +220,7 @@ export default function Home() {
             // Store user data and redirect to dashboard
             window.localStorage.setItem('user', JSON.stringify(loginResponse.data.user));
             setLoading(false);
-            router.push('/dashboard');
+            router.push('/youtube');
         } catch (err) {
             setLoading(false);
             setError(err.response?.data?.message || 'Signup or login failed');

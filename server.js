@@ -37,6 +37,27 @@ const userSchema = new mongoose.Schema({
 const User = mongoose.model('User', userSchema);
 
 // Seed Admin User
+// Playlist Schema
+const playlistSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    songs: [{
+        id: { type: String, required: true }, // YouTube video ID
+        title: { type: String, required: true },
+        artist: { type: String, required: true },
+        album: { type: String },
+        duration: { type: String },
+        cover: { type: String },
+        genre: { type: String },
+        plays: { type: Number, default: 0 }
+    }],
+    cover: { type: String, default: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center' },
+    createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date, default: Date.now }
+});
+
+const Playlist = mongoose.model('Playlist', playlistSchema);
+
 const seedAdminUser = async () => {
     try {
         const adminExists = await User.findOne({ username: 'salaar' });
@@ -151,6 +172,143 @@ app.post('/api/google-login', async (req, res) => {
         });
     } catch (err) {
         console.error('Google login error:', err);
+        res.status(500).json({ message: 'Server error', error: err.message });
+    }
+});
+// Get user's playlists
+app.get('/api/playlists/:userId', async (req, res) => {
+    try {
+        const userId = req.params.userId;
+        const playlists = await Playlist.find({ userId }).sort({ createdAt: -1 });
+        res.status(200).json(playlists || []);
+    } catch (err) {
+        console.error('Fetch playlists error:', err);
+        res.status(500).json({ message: 'Server error', error: err.message });
+    }
+});
+
+// Create new playlist
+app.post('/api/playlists', async (req, res) => {
+    try {
+        const { name, userId, cover } = req.body;
+
+        if (!name || !userId) {
+            return res.status(400).json({ message: 'Name and userId are required' });
+        }
+
+        const newPlaylist = new Playlist({
+            name,
+            userId,
+            songs: [],
+            cover: cover || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center'
+        });
+
+        await newPlaylist.save();
+        res.status(201).json({ message: 'Playlist created successfully', playlist: newPlaylist });
+    } catch (err) {
+        console.error('Create playlist error:', err);
+        res.status(500).json({ message: 'Server error', error: err.message });
+    }
+});
+
+// Add song to playlist
+app.post('/api/playlists/:playlistId/songs', async (req, res) => {
+    try {
+        const { playlistId } = req.params;
+        const song = req.body;
+
+        if (!song || !song.id) {
+            return res.status(400).json({ message: 'Valid song data required' });
+        }
+
+        const playlist = await Playlist.findById(playlistId);
+        if (!playlist) {
+            return res.status(404).json({ message: 'Playlist not found' });
+        }
+
+        // Check if song already exists
+        const songExists = playlist.songs.some(s => s.id === song.id);
+        if (songExists) {
+            return res.status(400).json({ message: 'Song already in playlist' });
+        }
+
+        playlist.songs.push(song);
+        playlist.updatedAt = Date.now();
+
+        // Update cover if it's the first song
+        if (playlist.songs.length === 1 && song.cover) {
+            playlist.cover = song.cover;
+        }
+
+        await playlist.save();
+        res.status(200).json({ message: 'Song added successfully', playlist });
+    } catch (err) {
+        console.error('Add song error:', err);
+        res.status(500).json({ message: 'Server error', error: err.message });
+    }
+});
+
+// Remove song from playlist
+app.delete('/api/playlists/:playlistId/songs/:songId', async (req, res) => {
+    try {
+        const { playlistId, songId } = req.params;
+
+        const playlist = await Playlist.findById(playlistId);
+        if (!playlist) {
+            return res.status(404).json({ message: 'Playlist not found' });
+        }
+
+        playlist.songs = playlist.songs.filter(s => s.id !== songId);
+        playlist.updatedAt = Date.now();
+
+        await playlist.save();
+        res.status(200).json({ message: 'Song removed successfully', playlist });
+    } catch (err) {
+        console.error('Remove song error:', err);
+        res.status(500).json({ message: 'Server error', error: err.message });
+    }
+});
+
+// Delete playlist
+app.delete('/api/playlists/:playlistId', async (req, res) => {
+    try {
+        const { playlistId } = req.params;
+        const playlist = await Playlist.findByIdAndDelete(playlistId);
+
+        if (!playlist) {
+            return res.status(404).json({ message: 'Playlist not found' });
+        }
+
+        res.status(200).json({ message: 'Playlist deleted successfully' });
+    } catch (err) {
+        console.error('Delete playlist error:', err);
+        res.status(500).json({ message: 'Server error', error: err.message });
+    }
+});
+
+// Update playlist name
+app.patch('/api/playlists/:playlistId', async (req, res) => {
+    try {
+        const { playlistId } = req.params;
+        const { name } = req.body;
+
+        if (!name) {
+            return res.status(400).json({ message: 'Playlist name required' });
+        }
+
+        const playlist = await Playlist.findByIdAndUpdate(
+            playlistId,
+            { name, updatedAt: Date.now() },
+            { new: true }
+        );
+
+        if (!playlist) {
+            return res.status(404).json({ message: 'Playlist not found' });
+        }
+
+        res.status(200).json({ message: 'Playlist updated successfully', playlist });
+    } catch (err) {
+        console.error('Update playlist error:', err);
         res.status(500).json({ message: 'Server error', error: err.message });
     }
 });
