@@ -1,4 +1,3 @@
-
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
@@ -7,7 +6,7 @@ import Image from 'next/image';
 import './page.css';
 import {
     Play, Pause, SkipBack, SkipForward, Volume2, Heart, Search, Home, Music, User,
-    Plus, Shuffle, Repeat, MoreVertical, TrendingUp, Users, BarChart3, Shield
+    Plus, Shuffle, Repeat, MoreVertical, TrendingUp, Users, BarChart3, Shield, Mic
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
@@ -30,12 +29,15 @@ export default function Page() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const [selectedPlaylist, setSelectedPlaylist] = useState(null);
-    const [filterGenre, setFilterGenre] = useState('all');
-    const [filterArtist, setFilterArtist] = useState('all');
+    const [filterGenres, setFilterGenres] = useState([]);
+    const [filterArtists, setFilterArtists] = useState([]);
+    const [filterPopularity, setFilterPopularity] = useState([0, 10000000]);
+    const [allArtists, setAllArtists] = useState([]);
     const [recommendations, setRecommendations] = useState([]);
     const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);
     const [selectedSongForPlaylist, setSelectedSongForPlaylist] = useState(null);
     const [editingSong, setEditingSong] = useState(null);
+    const [editingPlaylist, setEditingPlaylist] = useState(null); // New state for editing playlists
     const [artists, setArtists] = useState([]);
     const [users, setUsers] = useState([]);
     const [usersLoading, setUsersLoading] = useState(false);
@@ -48,13 +50,19 @@ export default function Page() {
     const [likedSongs, setLikedSongs] = useState(new Set());
     const [recentlyPlayed, setRecentlyPlayed] = useState([]);
     const [youtubePlayer, setYoutubePlayer] = useState(null);
+    const [isListening, setIsListening] = useState(false);
     const playerRef = useRef(null);
     const searchTimerRef = useRef(null);
+    const recognitionRef = useRef(null);
 
     const API_KEY = 'AIzaSyBgRC_fO76woVltp73KOidbDK6YAkdXefo';
     const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://backendserver-edb4bafdgxcwg7d5.centralindia-01.azurewebsites.net';
     const DEFAULT_COVER = 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center';
     const DEFAULT_AVATAR = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center';
+
+    const AVAILABLE_GENRES = [
+        'Pop', 'Rock', 'Hip-Hop', 'Jazz', 'Classical', 'Electronic', 'Country', 'R&B', 'Metal', 'Indie'
+    ];
 
     const parseDuration = (iso) => {
         const match = iso.match(/PT(\d+H)?(\d+M)?(\d+S)?/);
@@ -71,21 +79,44 @@ export default function Page() {
         return `${mins}:${secs.toString().padStart(2, '0')}`;
     };
 
+    // Load filter preferences from local storage
+    useEffect(() => {
+        const savedGenres = localStorage.getItem('filterGenres');
+        const savedArtists = localStorage.getItem('filterArtists');
+        const savedPopularity = localStorage.getItem('filterPopularity');
+        if (savedGenres) setFilterGenres(JSON.parse(savedGenres));
+        if (savedArtists) setFilterArtists(JSON.parse(savedArtists));
+        if (savedPopularity) setFilterPopularity(JSON.parse(savedPopularity));
+    }, []);
+
+    // Save filter preferences to local storage
+    useEffect(() => {
+        localStorage.setItem('filterGenres', JSON.stringify(filterGenres));
+        localStorage.setItem('filterArtists', JSON.stringify(filterArtists));
+        localStorage.setItem('filterPopularity', JSON.stringify(filterPopularity));
+    }, [filterGenres, filterArtists, filterPopularity]);
+
     const generateRecommendations = useCallback((allSongs) => {
         if (!allSongs || allSongs.length === 0) {
             setRecommendations([]);
             return;
         }
+        const combinedSongs = [...new Set([...allSongs, ...songs, ...filteredSongs].map(s => JSON.stringify(s)))].map(s => JSON.parse(s));
 
-        const allGenres = [...new Set(allSongs.map(song => song.genre))];
-        const allArtists = [...new Set(allSongs.map(song => song.artist))];
+        const allGenres = [...new Set(combinedSongs.map(song => song.genre || 'Music'))];
+        const allArtists = [...new Set(combinedSongs.map(song => song.artist))];
 
         const createFeatureVector = (song) => {
             const genreVector = allGenres.map(genre => song.genre === genre ? 1 : 0);
             const artistVector = allArtists.map(artist => song.artist === artist ? 1 : 0);
-            const maxPlays = Math.max(...allSongs.map(s => s.plays || 0), 1);
+            const maxPlays = Math.max(...combinedSongs.map(s => s.plays || 0), 1);
             const plays = (song.plays || 0) / maxPlays;
-            return [...genreVector, ...artistVector, plays];
+            const playFrequency = recentlyPlayed.filter(s => s.id === song.id).length / (recentlyPlayed.length || 1);
+            const recency = recentlyPlayed.findIndex(s => s.id === song.id) >= 0
+                ? 1 - (recentlyPlayed.findIndex(s => s.id === song.id) / recentlyPlayed.length)
+                : 0;
+            const recencyWeight = recentlyPlayed.findIndex(s => s.id === song.id) >= 0 ? 1.5 : 1;
+            return [...genreVector, ...artistVector, plays, playFrequency, recency * recencyWeight];
         };
 
         const cosineSimilarity = (vecA, vecB) => {
@@ -95,26 +126,26 @@ export default function Page() {
             return magnitudeA && magnitudeB ? dotProduct / (magnitudeA * magnitudeB) : 0;
         };
 
-        const songVectors = allSongs.map(song => ({
+        const songVectors = combinedSongs.map(song => ({
             song,
             vector: createFeatureVector(song)
         }));
 
         const userPreferenceSongs = [
             ...recentlyPlayed,
-            ...Array.from(likedSongs).map(songId => allSongs.find(s => s.id === songId)).filter(s => s)
+            ...Array.from(likedSongs).map(songId => combinedSongs.find(s => s.id === songId)).filter(s => s)
         ].filter((song, index, self) => song && self.findIndex(s => s.id === song.id) === index);
 
         if (userPreferenceSongs.length === 0) {
-            const shuffled = [...allSongs].sort(() => 0.5 - Math.random());
-            setRecommendations(shuffled.slice(0, 4));
+            const shuffled = [...combinedSongs].sort(() => 0.5 - Math.random());
+            setRecommendations(shuffled.slice(0, 6));
             return;
         }
 
         const userVectors = userPreferenceSongs.map(song => createFeatureVector(song));
         const userVector = userVectors.reduce(
             (avg, vec) => avg.map((val, i) => val + vec[i] / userVectors.length),
-            new Array(allGenres.length + allArtists.length + 1).fill(0)
+            new Array(allGenres.length + allArtists.length + 3).fill(0)
         );
 
         const scores = songVectors.map(({ song, vector }) => ({
@@ -126,10 +157,53 @@ export default function Page() {
             .sort((a, b) => b.score - a.score)
             .map(item => item.song)
             .filter(song => !userPreferenceSongs.some(s => s.id === song.id))
-            .slice(0, 4);
+            .slice(0, 6);
 
         setRecommendations(recommendedSongs);
-    }, [recentlyPlayed, likedSongs]);
+    }, [recentlyPlayed, likedSongs, songs, filteredSongs]);
+
+    const startVoiceSearch = () => {
+        if (!('webkitSpeechRecognition' in window)) {
+            setError('Voice search is not supported in this browser');
+            return;
+        }
+
+        const recognition = new window.webkitSpeechRecognition();
+        recognitionRef.current = recognition;
+        recognition.continuous = false;
+        recognition.interimResults = false;
+        recognition.lang = 'en-US';
+
+        recognition.onstart = () => {
+            setIsListening(true);
+        };
+
+        recognition.onresult = (event) => {
+            const transcript = event.results[0][0].transcript;
+            setSearchQuery(transcript);
+            searchSongs(transcript);
+            setIsListening(false);
+        };
+
+        recognition.onerror = (event) => {
+            console.error('Voice recognition error:', event.error);
+            setError('Voice recognition failed. Please try again.');
+            setIsListening(false);
+        };
+
+        recognition.onend = () => {
+            setIsListening(false);
+        };
+
+        recognition.start();
+    };
+
+    const stopVoiceSearch = () => {
+        if (recognitionRef.current) {
+            recognitionRef.current.stop();
+            setIsListening(false);
+        }
+    };
 
     const selectSong = useCallback(async (song, songList = null) => {
         console.log('🎵 Selecting song:', song.title);
@@ -170,7 +244,9 @@ export default function Page() {
             const newPlayed = [song, ...prev.filter(s => s.id !== song.id)];
             return newPlayed.slice(0, 5);
         });
-    }, [filteredSongs, songs]);
+
+        generateRecommendations([...songs, ...filteredSongs]);
+    }, [filteredSongs, songs, generateRecommendations]);
 
     const playNext = useCallback(() => {
         setQueue(currentQueue => {
@@ -222,9 +298,7 @@ export default function Page() {
         setCurrentIndex(prevIndex);
         selectSong(queue[prevIndex]);
     }, [queue, currentIndex, currentTime, repeat, youtubePlayer, selectSong]);
-    // Add these functions to your Page component
 
-// Fetch playlists from server
     const fetchPlaylists = useCallback(async () => {
         if (!currentUser?.id) return;
 
@@ -237,17 +311,23 @@ export default function Page() {
         }
     }, [currentUser, BACKEND_URL]);
 
-// Load playlists when user logs in
+    const fetchAllPlaylists = useCallback(async () => {
+        try {
+            const response = await axios.get(`${BACKEND_URL}/api/playlists`);
+            return response.data;
+        } catch (err) {
+            console.error('Failed to fetch all playlists:', err);
+            setError('Failed to load all playlists');
+            return [];
+        }
+    }, [BACKEND_URL]);
+
     useEffect(() => {
         if (currentUser?.id) {
             fetchPlaylists();
         }
     }, [currentUser, fetchPlaylists]);
 
-// Update createPlaylist function
-
-
-// Add delete playlist function
     const deletePlaylist = async (playlistId) => {
         if (!window.confirm('Are you sure you want to delete this playlist?')) return;
 
@@ -265,8 +345,6 @@ export default function Page() {
         }
     };
 
-
-// Add remove song from playlist function
     const removeSongFromPlaylist = async (playlistId, songId) => {
         try {
             const response = await axios.delete(
@@ -275,11 +353,11 @@ export default function Page() {
 
             setPlaylists(prev =>
                 prev.map(playlist =>
-                    playlist._id === playlistId ? response.data.playlist : playlist
+                    (playlist._id || playlist.id) === playlistId ? response.data.playlist : playlist
                 )
             );
 
-            if (selectedPlaylist?._id === playlistId) {
+            if ((selectedPlaylist?._id || selectedPlaylist?.id) === playlistId) {
                 setSelectedPlaylist(response.data.playlist);
             }
         } catch (err) {
@@ -288,12 +366,42 @@ export default function Page() {
         }
     };
 
-// Update the volume state and YouTube player
+    const startEditPlaylist = (playlist) => {
+        setEditingPlaylist({ ...playlist });
+    };
+
+    const saveEditPlaylist = async () => {
+        if (!editingPlaylist) return;
+
+        try {
+            const response = await axios.put(
+                `${BACKEND_URL}/api/playlists/${editingPlaylist._id || editingPlaylist.id}`,
+                { name: editingPlaylist.name, cover: editingPlaylist.cover || DEFAULT_COVER }
+            );
+
+            setPlaylists(prev =>
+                prev.map(playlist =>
+                    (playlist._id || playlist.id) === (editingPlaylist._id || editingPlaylist.id)
+                        ? response.data.playlist
+                        : playlist
+                )
+            );
+
+            if ((selectedPlaylist?._id || selectedPlaylist?.id) === (editingPlaylist._id || editingPlaylist.id)) {
+                setSelectedPlaylist(response.data.playlist);
+            }
+
+            setEditingPlaylist(null);
+        } catch (err) {
+            console.error('Failed to update playlist:', err);
+            setError('Failed to update playlist');
+        }
+    };
+
     const handleVolumeChange = (e) => {
         const newVolume = Number(e.target.value);
         setVolume(newVolume);
 
-        // Only update if player exists and is ready
         if (youtubePlayer && typeof youtubePlayer.setVolume === 'function') {
             try {
                 youtubePlayer.setVolume(newVolume);
@@ -303,14 +411,12 @@ export default function Page() {
         }
     };
 
-
-
     const handleStateChange = useCallback((event) => {
         if (event.data === window.YT.PlayerState.PLAYING) {
             setIsPlaying(true);
             setDuration(event.target.getDuration());
             setIsLoadingSong(false);
-            setError(null); // Clear any previous errors
+            setError(null);
         } else if (event.data === window.YT.PlayerState.PAUSED) {
             setIsPlaying(false);
         } else if (event.data === window.YT.PlayerState.ENDED) {
@@ -324,12 +430,9 @@ export default function Page() {
             setIsLoadingSong(true);
             setDuration(event.target.getDuration());
         } else if (event.data === window.YT.PlayerState.UNSTARTED) {
-            // Remove the error here - UNSTARTED is a normal state when video is loading
-            // Don't set error or stop playback
             setIsLoadingSong(true);
         }
     }, [repeat, playNext]);
-
 
     useEffect(() => {
         if (!window.YT) {
@@ -345,7 +448,6 @@ export default function Page() {
                     events: {
                         onReady: (event) => {
                             setYoutubePlayer(event.target);
-                            // Set volume after player is ready
                             try {
                                 event.target.setVolume(volume);
                             } catch (err) {
@@ -373,7 +475,6 @@ export default function Page() {
                 events: {
                     onReady: (event) => {
                         setYoutubePlayer(event.target);
-                        // Set volume after player is ready
                         try {
                             event.target.setVolume(volume);
                         } catch (err) {
@@ -395,7 +496,6 @@ export default function Page() {
             });
         }
 
-        // Cleanup
         return () => {
             if (youtubePlayer && typeof youtubePlayer.destroy === 'function') {
                 try {
@@ -405,9 +505,7 @@ export default function Page() {
                 }
             }
         };
-    }, [handleStateChange]); // Remove 'volume' from dependencies
-
-
+    }, [handleStateChange]);
 
     useEffect(() => {
         let interval;
@@ -431,6 +529,7 @@ export default function Page() {
             youtubePlayer.loadVideoById(currentSong.id);
         }
     }, [currentSong, youtubePlayer]);
+
     const playSong = useCallback(async (song) => {
         if (!youtubePlayer || !song) return;
 
@@ -440,12 +539,9 @@ export default function Page() {
 
         try {
             await youtubePlayer.loadVideoById(song.id);
-
-            // Apply volume after loading
             if (typeof youtubePlayer.setVolume === 'function') {
                 youtubePlayer.setVolume(volume);
             }
-
             youtubePlayer.playVideo();
         } catch (err) {
             console.error('Failed to play song:', err);
@@ -482,6 +578,7 @@ export default function Page() {
 
             const mappedSongs = detailsResponse.data.items.map(video => {
                 const durationSeconds = parseDuration(video.contentDetails.duration);
+                const randomGenre = AVAILABLE_GENRES[Math.floor(Math.random() * AVAILABLE_GENRES.length)];
                 return {
                     id: video.id,
                     title: video.snippet.title || 'Unknown Title',
@@ -489,16 +586,17 @@ export default function Page() {
                     album: 'YouTube',
                     duration: formatDuration(durationSeconds),
                     cover: video.snippet.thumbnails?.medium?.url || DEFAULT_COVER,
-                    genre: 'Music',
+                    genre: randomGenre,
                     plays: parseInt(video.statistics?.viewCount || 0)
                 };
             });
 
             setSongs(mappedSongs);
             setFilteredSongs(mappedSongs);
-            generateRecommendations(mappedSongs);
+            generateRecommendations([...mappedSongs, ...filteredSongs]);
 
             const uniqueArtists = [...new Set(mappedSongs.map(song => song.artist))];
+            setAllArtists(prev => [...new Set([...prev, ...uniqueArtists])]);
             setArtists(uniqueArtists.map((name, idx) => ({
                 id: idx + 1,
                 name,
@@ -512,7 +610,7 @@ export default function Page() {
         } finally {
             setLoading(false);
         }
-    }, [generateRecommendations]);
+    }, [generateRecommendations, filteredSongs]);
 
     const fetchUsers = useCallback(async () => {
         try {
@@ -539,6 +637,12 @@ export default function Page() {
     }, [fetchPopularSongs]);
 
     useEffect(() => {
+        if (songs.length > 0 || filteredSongs.length > 0) {
+            generateRecommendations([...songs, ...filteredSongs]);
+        }
+    }, [songs, filteredSongs, generateRecommendations]);
+
+    useEffect(() => {
         if (activeTab === 'admin' && isAdmin && users.length === 0) {
             fetchUsers();
         }
@@ -551,6 +655,7 @@ export default function Page() {
 
         if (!query) {
             setFilteredSongs(songs);
+            generateRecommendations(songs);
             return;
         }
 
@@ -580,6 +685,7 @@ export default function Page() {
 
                 const mappedSongs = detailsResponse.data.items.map(video => {
                     const durationSeconds = parseDuration(video.contentDetails.duration);
+                    const randomGenre = AVAILABLE_GENRES[Math.floor(Math.random() * AVAILABLE_GENRES.length)];
                     return {
                         id: video.id,
                         title: video.snippet.title || 'Unknown Title',
@@ -587,12 +693,15 @@ export default function Page() {
                         album: 'YouTube',
                         duration: formatDuration(durationSeconds),
                         cover: video.snippet.thumbnails?.medium?.url || DEFAULT_COVER,
-                        genre: 'Music',
+                        genre: randomGenre,
                         plays: parseInt(video.statistics?.viewCount || 0)
                     };
                 });
 
                 setFilteredSongs(mappedSongs);
+                generateRecommendations([...songs, ...mappedSongs]);
+                const uniqueArtists = [...new Set(mappedSongs.map(song => song.artist))];
+                setAllArtists(prev => [...new Set([...prev, ...uniqueArtists])]);
             } catch (err) {
                 console.error('Search failed:', err);
                 setError('Search failed on YouTube');
@@ -619,7 +728,6 @@ export default function Page() {
         window.localStorage.removeItem('user');
         router.push('/login');
     };
-
 
     const togglePlay = () => {
         if (!youtubePlayer || !currentSong) return;
@@ -653,7 +761,6 @@ export default function Page() {
             console.error('Failed to seek:', err);
         }
     };
-
 
     const toggleShuffle = () => setShuffle(prev => !prev);
 
@@ -703,7 +810,6 @@ export default function Page() {
         }
     };
 
-
     const handleSearch = (e) => {
         const query = e.target.value;
         setSearchQuery(query);
@@ -713,11 +819,11 @@ export default function Page() {
     const applyFilters = useCallback(() => {
         let filtered = [...songs];
 
-        if (filterGenre !== 'all') {
-            filtered = filtered.filter(song => song.genre === filterGenre);
+        if (filterGenres.length > 0) {
+            filtered = filtered.filter(song => filterGenres.includes(song.genre));
         }
-        if (filterArtist !== 'all') {
-            filtered = filtered.filter(song => song.artist === filterArtist);
+        if (filterArtists.length > 0) {
+            filtered = filtered.filter(song => filterArtists.includes(song.artist));
         }
         if (searchQuery) {
             filtered = filtered.filter(song =>
@@ -726,13 +832,38 @@ export default function Page() {
                 (song.album?.toLowerCase() || '').includes(searchQuery.toLowerCase())
             );
         }
+        filtered = filtered.filter(song =>
+            song.plays >= filterPopularity[0] && song.plays <= filterPopularity[1]
+        );
 
         setFilteredSongs(filtered);
-    }, [songs, filterGenre, filterArtist, searchQuery]);
+    }, [songs, filterGenres, filterArtists, searchQuery, filterPopularity]);
 
     useEffect(() => {
         applyFilters();
     }, [applyFilters]);
+
+    const toggleGenreFilter = (genre) => {
+        setFilterGenres(prev =>
+            prev.includes(genre)
+                ? prev.filter(g => g !== genre)
+                : [...prev, genre]
+        );
+    };
+
+    const toggleArtistFilter = (artist) => {
+        setFilterArtists(prev =>
+            prev.includes(artist)
+                ? prev.filter(a => a !== artist)
+                : [...prev, artist]
+        );
+    };
+
+    const handlePopularityChange = (e) => {
+        const value = Number(e.target.value);
+        setFilterPopularity([0, value]);
+    };
+
     const addSongToPlaylist = async (playlistId) => {
         if (!selectedSongForPlaylist) return;
 
@@ -785,7 +916,21 @@ export default function Page() {
     const deleteArtist = (artistName) => {
         if (window.confirm(`Are you sure you want to delete ${artistName} and all their songs?`)) {
             setSongs(prev => prev.filter(song => song.artist !== artistName));
+            setFilteredSongs(prev => prev.filter(song => song.artist !== artistName));
             setArtists(prev => prev.filter(artist => artist.name !== artistName));
+            setAllArtists(prev => prev.filter(artist => artist !== artistName));
+        }
+    };
+
+    const deleteUser = async (userId) => {
+        if (!window.confirm('Are you sure you want to delete this user?')) return;
+
+        try {
+            await axios.delete(`${BACKEND_URL}/api/users/${userId}`);
+            setUsers(prev => prev.filter(user => user._id !== userId));
+        } catch (err) {
+            console.error('Failed to delete user:', err);
+            setUsersError('Failed to delete user');
         }
     };
 
@@ -848,11 +993,18 @@ export default function Page() {
                             <Search className="search-icon" />
                             <input
                                 type="text"
-                                placeholder="Search songs, artists, albums..."
+                                placeholder="Search songs, artists, albums... or use voice search"
                                 value={searchQuery}
                                 onChange={handleSearch}
                                 className="search-input"
                             />
+                            <button
+                                onClick={isListening ? stopVoiceSearch : startVoiceSearch}
+                                className={`voice-search-btn ${isListening ? 'listening' : ''}`}
+                                title={isListening ? 'Stop voice search' : 'Start voice search'}
+                            >
+                                <Mic className="mic-icon" />
+                            </button>
                         </div>
                     </div>
                     <div className="header-right">
@@ -911,7 +1063,6 @@ export default function Page() {
                                 </div>
                             ))}
                         </div>
-
                     </div>
                 </aside>
                 <main className="main-content">
@@ -1008,18 +1159,47 @@ export default function Page() {
                             <h2 className="page-title">Search & Browse</h2>
                             <div className="filter-section">
                                 <div className="filter-group">
-                                    <label className="filter-label">Genre:</label>
-                                    <select value={filterGenre} onChange={(e) => setFilterGenre(e.target.value)} className="filter-select">
-                                        <option value="all">All Genres</option>
-                                        <option value="Music">Music</option>
-                                    </select>
+                                    <label className="filter-label">Genres:</label>
+                                    <div className="filter-checkboxes">
+                                        {AVAILABLE_GENRES.map(genre => (
+                                            <label key={genre} className="checkbox-label">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={filterGenres.includes(genre)}
+                                                    onChange={() => toggleGenreFilter(genre)}
+                                                />
+                                                {genre}
+                                            </label>
+                                        ))}
+                                    </div>
                                 </div>
                                 <div className="filter-group">
-                                    <label className="filter-label">Artist:</label>
-                                    <select value={filterArtist} onChange={(e) => setFilterArtist(e.target.value)} className="filter-select">
-                                        <option value="all">All Artists</option>
-                                        {artists.map((artist) => <option key={artist.id} value={artist.name}>{artist.name}</option>)}
-                                    </select>
+                                    <label className="filter-label">Artists:</label>
+                                    <div className="filter-checkboxes">
+                                        {allArtists.map(artist => (
+                                            <label key={artist} className="checkbox-label">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={filterArtists.includes(artist)}
+                                                    onChange={() => toggleArtistFilter(artist)}
+                                                />
+                                                {artist}
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="filter-group">
+                                    <label className="filter-label">Popularity (Plays):</label>
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="10000000"
+                                        step="10000"
+                                        value={filterPopularity[1]}
+                                        onChange={handlePopularityChange}
+                                        className="filter-slider"
+                                    />
+                                    <span>{filterPopularity[1].toLocaleString()} plays</span>
                                 </div>
                             </div>
                             {loading ? <p>Loading...</p> : error ? <p className="error-text">{error}</p> : filteredSongs.length > 0 ? (
@@ -1037,7 +1217,7 @@ export default function Page() {
                                             <div className="search-info" onClick={() => selectSong(song)}>
                                                 <h4 className="search-title">{song.title}</h4>
                                                 <p className="search-artist">{song.artist} • {song.album}</p>
-                                                <p className="search-genre">{song.genre}</p>
+                                                <p className="search-genre">{song.genre} • {song.plays.toLocaleString()} plays</p>
                                             </div>
                                             <div className="search-actions">
                                                 <span className="search-duration">{song.duration}</span>
@@ -1093,7 +1273,6 @@ export default function Page() {
                             )}
                             {loading ? <p>Loading...</p> : error ? <p className="error-text">{error}</p> : (
                                 <div className="playlists-grid">
-
                                     {playlists.map(playlist => (
                                         <div
                                             key={playlist._id || playlist.id}
@@ -1123,7 +1302,6 @@ export default function Page() {
                                             <p className="playlist-card-count">{playlist.songs.length} songs</p>
                                         </div>
                                     ))}
-
                                 </div>
                             )}
                         </div>
@@ -1149,9 +1327,48 @@ export default function Page() {
                                                 <Play className="play-icon" /> Play All
                                             </button>
                                         )}
+                                        {isAdmin && (
+                                            <div className="playlist-actions">
+                                                <button
+                                                    onClick={() => startEditPlaylist(selectedPlaylist)}
+                                                    className="edit-btn"
+                                                >
+                                                    Edit
+                                                </button>
+                                                <button
+                                                    onClick={() => deletePlaylist(selectedPlaylist._id || selectedPlaylist.id)}
+                                                    className="delete-btn"
+                                                >
+                                                    Delete
+                                                </button>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             </div>
+                            {editingPlaylist && (editingPlaylist._id || editingPlaylist.id) === (selectedPlaylist._id || selectedPlaylist.id) ? (
+                                <div className="edit-playlist-form">
+                                    <h3 className="form-title">Edit Playlist</h3>
+                                    <div className="form-controls">
+                                        <input
+                                            type="text"
+                                            placeholder="Playlist name"
+                                            value={editingPlaylist.name}
+                                            onChange={(e) => setEditingPlaylist({ ...editingPlaylist, name: e.target.value })}
+                                            className="playlist-input"
+                                        />
+                                        <input
+                                            type="text"
+                                            placeholder="Cover URL"
+                                            value={editingPlaylist.cover || DEFAULT_COVER}
+                                            onChange={(e) => setEditingPlaylist({ ...editingPlaylist, cover: e.target.value })}
+                                            className="playlist-input"
+                                        />
+                                        <button onClick={saveEditPlaylist} className="create-btn">Save</button>
+                                        <button onClick={() => setEditingPlaylist(null)} className="cancel-btn">Cancel</button>
+                                    </div>
+                                </div>
+                            ) : null}
                             <div className="playlist-songs-list">
                                 {selectedPlaylist.songs.length === 0 ? (
                                     <div className="empty-playlist">
@@ -1184,6 +1401,17 @@ export default function Page() {
                                                 className={`heart-icon ${likedSongs.has(song.id) ? 'liked' : ''}`}
                                                 onClick={(e) => { e.stopPropagation(); toggleLike(song.id); }}
                                             />
+                                            {isAdmin && (
+                                                <button
+                                                    className="remove-song-btn"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        removeSongFromPlaylist(selectedPlaylist._id || selectedPlaylist.id, song.id);
+                                                    }}
+                                                >
+                                                    Remove
+                                                </button>
+                                            )}
                                         </div>
                                     ))
                                 )}
@@ -1256,6 +1484,12 @@ export default function Page() {
                                                 <div className="user-right">
                                                     <span className={`role-badge ${user.role}`}>{user.role}</span>
                                                     <span className="join-date">{formatDate(user.joinDate)}</span>
+                                                    <button
+                                                        className="delete-btn"
+                                                        onClick={() => deleteUser(user._id)}
+                                                    >
+                                                        Delete
+                                                    </button>
                                                     <button className="user-menu"><MoreVertical className="menu-icon" /></button>
                                                 </div>
                                             </div>
@@ -1295,7 +1529,9 @@ export default function Page() {
                                                 onChange={(e) => setEditingSong({ ...editingSong, genre: e.target.value })}
                                                 className="form-select"
                                             >
-                                                <option value="Music">Music</option>
+                                                {AVAILABLE_GENRES.map(genre => (
+                                                    <option key={genre} value={genre}>{genre}</option>
+                                                ))}
                                             </select>
                                         </div>
                                         <div className="form-actions">
@@ -1341,6 +1577,75 @@ export default function Page() {
                                     ))}
                                 </div>
                             </div>
+                            <div className="admin-panel">
+                                <h3 className="panel-title">Playlists Management</h3>
+                                {editingPlaylist ? (
+                                    <div className="edit-playlist-form">
+                                        <h4 className="form-title">Edit Playlist</h4>
+                                        <div className="form-grid">
+                                            <input
+                                                type="text"
+                                                placeholder="Playlist Name"
+                                                value={editingPlaylist.name}
+                                                onChange={(e) => setEditingPlaylist({ ...editingPlaylist, name: e.target.value })}
+                                                className="form-input"
+                                            />
+                                            <input
+                                                type="text"
+                                                placeholder="Cover URL"
+                                                value={editingPlaylist.cover || DEFAULT_COVER}
+                                                onChange={(e) => setEditingPlaylist({ ...editingPlaylist, cover: e.target.value })}
+                                                className="form-input"
+                                            />
+                                        </div>
+                                        <div className="form-actions">
+                                            <button onClick={saveEditPlaylist} className="save-btn">Save Changes</button>
+                                            <button onClick={() => setEditingPlaylist(null)} className="cancel-btn">Cancel</button>
+                                        </div>
+                                    </div>
+                                ) : null}
+                                <div className="playlists-grid">
+                                    {playlists.map(playlist => (
+                                        <div key={playlist._id || playlist.id} className="playlist-card">
+                                            <Image
+                                                src={playlist.cover || DEFAULT_COVER}
+                                                alt={playlist.name}
+                                                className="playlist-card-cover"
+                                                width={300}
+                                                height={300}
+                                                loading="lazy"
+                                            />
+                                            <div className="playlist-card-overlay">
+                                                <button
+                                                    className="playlist-play-btn"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        playAllSongs(playlist.songs);
+                                                    }}
+                                                >
+                                                    <Play className="play-icon" />
+                                                </button>
+                                            </div>
+                                            <h3 className="playlist-card-name">{playlist.name}</h3>
+                                            <p className="playlist-card-count">{playlist.songs.length} songs</p>
+                                            <div className="playlist-actions">
+                                                <button
+                                                    onClick={() => startEditPlaylist(playlist)}
+                                                    className="edit-btn"
+                                                >
+                                                    Edit
+                                                </button>
+                                                <button
+                                                    onClick={() => deletePlaylist(playlist._id || playlist.id)}
+                                                    className="delete-btn"
+                                                >
+                                                    Delete
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
                         </div>
                     )}
                 </main>
@@ -1370,7 +1675,6 @@ export default function Page() {
                                 </button>
                             ))}
                         </div>
-
                         <button onClick={() => setShowAddToPlaylist(false)} className="modal-close-btn">Close</button>
                     </div>
                 </div>
@@ -1428,7 +1732,6 @@ export default function Page() {
                                 />
                                 <span className="volume-value">{volume}%</span>
                             </div>
-
                         </div>
                     </div>
                     <div className="progress-section">
@@ -1438,9 +1741,15 @@ export default function Page() {
                             <span>{formatTime(currentTime)}</span>
                             <span>{formatTime(duration)}</span>
                         </div>
-                        <div className="progress-bar" onClick={handleSeek}>
-                            <div className="progress-fill" style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }}></div>
-                        </div>
+                        <input
+                            type="range"
+                            min="0"
+                            max={duration || 100}
+                            value={currentTime}
+                            onChange={handleSeek}
+                            className="progress-bar"
+                            style={{ width: '100%' }}
+                        />
                     </div>
                 </div>
             )}
