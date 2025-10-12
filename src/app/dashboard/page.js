@@ -698,16 +698,8 @@ export default function Page() {
                 playerInstance.addListener('ready', ({ device_id }) => {
                     console.log('Spotify Player ready with Device ID', device_id);
                     setDeviceId(device_id);
+                    setSpotifyPlayer(playerInstance);
                     setPlayerReady(true);
-                    // Transfer playback to this device on ready
-                    apiCallWithBackoff(() =>
-                        axios.put(
-                            'https://api.spotify.com/v1/me/player',
-                            { device_ids: [device_id], play: false },
-                            { headers: { Authorization: `Bearer ${accessToken}` } }
-                        )
-                    ).then(() => console.log('Playback transferred to web player'))
-                        .catch(err => console.error('Failed to transfer playback:', err));
                 });
                 playerInstance.addListener('not_ready', ({ device_id }) => {
                     console.log('Device ID has gone offline', device_id);
@@ -731,7 +723,7 @@ export default function Page() {
                             title: track.name,
                             artist: track.artists.map(a => a.name).join(', '),
                             album: track.album.name,
-                            duration: new Date(track.duration).toISOString().substr(14, 5),
+                            duration: new Date(track.duration_ms).toISOString().substr(14, 5),
                             cover: track.album.images[0]?.url || 'default-cover',
                             genre: 'Unknown',
                             plays: 0,
@@ -810,15 +802,6 @@ export default function Page() {
                 // Spotify Premium playback
                 if (isPremium && playerReady && deviceId && currentSong.spotify_uri) {
                     try {
-                        // Transfer playback before playing (in case not active)
-                        await apiCallWithBackoff(() =>
-                            axios.put(
-                                'https://api.spotify.com/v1/me/player',
-                                { device_ids: [deviceId], play: false },
-                                { headers: { Authorization: `Bearer ${accessToken}` } }
-                            )
-                        );
-
                         await apiCallWithBackoff(() =>
                             axios.put(
                                 `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
@@ -1798,152 +1781,152 @@ export default function Page() {
                                             />
                                             <select
                                                 value={editingSong.genre}
-                                                onChange={(e) => setEditingSong({ ...editingSong, genre: e.target.value })}
-                                                className="form-select"
-                                            >
-                                                <option value="Pop">Pop</option><option value="Electronic">Electronic</option><option value="Acoustic">Acoustic</option>
-                                                <option value="Hip-Hop">Hip-Hop</option><option value="Rock">Rock</option><option value="Jazz">Jazz</option>
-                                                <option value="Classical">Classical</option><option value="Country">Country</option>
-                                            </select>
-                                        </div>
-                                        <div className="form-actions">
-                                            <button onClick={saveEditSong} className="save-btn">Save Changes</button>
-                                            <button onClick={() => setEditingSong(null)} className="cancel-btn">Cancel</button>
-                                        </div>
-                                    </div>
-                                ) : null}
-                                <div className="songs-list">
-                                    {songs.map((song) => (
-                                        <div key={song.id} className="admin-song-item">
-                                            <Image
-                                                src={song.cover}
-                                                alt={song.title}
-                                                className="admin-song-cover"
-                                                width={300}
-                                                height={300}
-                                                loading="lazy"
-                                            />
-                                            <div className="admin-song-info">
-                                                <h4 className="admin-song-title">{song.title}</h4>
-                                                <p className="admin-song-artist">{song.artist} • {song.album}</p>
-                                                <p className="admin-song-genre">{song.genre} • {song.plays.toLocaleString()} plays</p>
-                                            </div>
-                                            <div className="admin-song-actions">
-                                                <button onClick={() => startEditSong(song)} className="edit-btn">Edit</button>
-                                                <button onClick={() => deleteSong(song.id)} className="delete-btn">Delete</button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                            <div className="admin-panel">
-                                <h3 className="panel-title">Artists Management</h3>
-                                <div className="artists-grid">
-                                    {artists.map((artist) => (
-                                        <div key={artist.id} className="artist-card">
-                                            <div className="artist-icon-circle"><User className="artist-icon" /></div>
-                                            <h4 className="artist-name">{artist.name}</h4>
-                                            <p className="artist-stats">{artist.songs} songs • {artist.albums} albums</p>
-                                            <button onClick={() => deleteArtist(artist.name)} className="delete-artist-btn">Remove</button>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-                    )}
-                </main>
+                                                onChange={(e) => setEditingSong({ ...editingSong, genre:e.target.value })}
+className="form-select"
+    >
+    <option value="Pop">Pop</option><option value="Electronic">Electronic</option><option value="Acoustic">Acoustic</option>
+<option value="Hip-Hop">Hip-Hop</option><option value="Rock">Rock</option><option value="Jazz">Jazz</option>
+<option value="Classical">Classical</option><option value="Country">Country</option>
+</select>
+</div>
+<div className="form-actions">
+    <button onClick={saveEditSong} className="save-btn">Save Changes</button>
+    <button onClick={() => setEditingSong(null)} className="cancel-btn">Cancel</button>
+</div>
+</div>
+) : null}
+<div className="songs-list">
+    {songs.map((song) => (
+        <div key={song.id} className="admin-song-item">
+            <Image
+                src={song.cover}
+                alt={song.title}
+                className="admin-song-cover"
+                width={300}
+                height={300}
+                loading="lazy"
+            />
+            <div className="admin-song-info">
+                <h4 className="admin-song-title">{song.title}</h4>
+                <p className="admin-song-artist">{song.artist} • {song.album}</p>
+                <p className="admin-song-genre">{song.genre} • {song.plays.toLocaleString()} plays</p>
             </div>
-            {showAddToPlaylist && (
-                <div className="modal-overlay" onClick={() => setShowAddToPlaylist(false)}>
-                    <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-                        <h3 className="modal-title">Add to Playlist</h3>
-                        <p className="modal-subtitle">Select a playlist for {selectedSongForPlaylist?.title}</p>
-                        <div className="modal-playlist-list">
-                            {playlists.map((playlist) => (
-                                <button key={playlist.id} onClick={() => addSongToPlaylist(playlist.id)} className="modal-playlist-item">
-                                    <Image
-                                        src={playlist.cover}
-                                        alt={playlist.name}
-                                        className="modal-playlist-cover"
-                                        width={300}
-                                        height={300}
-                                        loading="lazy"
-                                    />
-                                    <span className="modal-playlist-name">{playlist.name}</span>
-                                    <span className="modal-playlist-count">{playlist.songs.length} songs</span>
-                                </button>
-                            ))}
-                        </div>
-                        <button onClick={() => setShowAddToPlaylist(false)} className="modal-close-btn">Close</button>
-                    </div>
-                </div>
-            )}
-            {currentSong && (
-                <div className="music-player">
-                    <div className="player-content">
-                        <div className="player-left">
-                            <Image
-                                src={currentSong.cover}
-                                alt={currentSong.title}
-                                className="player-cover"
-                                width={300}
-                                height={300}
-                                loading="lazy"
-                            />
-                            <div className="player-info">
-                                <h4 className="player-title">{currentSong.title}</h4>
-                                <p className="player-artist">{currentSong.artist}</p>
-                                {(!isPremium || !currentSong.spotify_uri) && currentSong.preview_url && <p className="player-note">30-second preview</p>}
-                            </div>
-                        </div>
-                        <div className="player-controls">
-                            <button className={`control-btn ${shuffle ? 'active' : ''}`} onClick={toggleShuffle}>
-                                <Shuffle className="control-icon" />
-                            </button>
-                            <button className="control-btn" onClick={playPrevious}>
-                                <SkipBack className="control-icon" />
-                            </button>
-                            <button onClick={togglePlay} className="play-btn">
-                                {isPlaying ? <Pause className="play-icon" /> : <Play className="play-icon" />}
-                            </button>
-                            <button className="control-btn" onClick={playNext}>
-                                <SkipForward className="control-icon" />
-                            </button>
-                            <button className={`control-btn ${repeat !== 'off' ? 'active' : ''}`} onClick={toggleRepeat}>
-                                <Repeat className="control-icon" />
-                                {repeat === 'one' && <span className="repeat-indicator">1</span>}
-                            </button>
-                        </div>
-                        <div className="player-right">
-                            <Heart
-                                className={`heart-btn ${likedSongs.has(currentSong.id) ? 'liked' : ''}`}
-                                onClick={() => toggleLike(currentSong.id)}
-                            />
-                            <div className="volume-controls">
-                                <Volume2 className="volume-icon" />
-                                <input
-                                    type="range"
-                                    min="0"
-                                    max="100"
-                                    value={volume}
-                                    onChange={(e) => setVolume(e.target.value)}
-                                    className="volume-slider"
-                                />
-                            </div>
-                        </div>
-                    </div>
-                    <div className="progress-section">
-                        {error && <p className="player-error">{error}</p>}
-                        <div className="progress-time">
-                            <span>{formatTime(currentTime)}</span>
-                            <span>{currentSong.duration}</span>
-                        </div>
-                        <div className="progress-bar" onClick={handleSeek}>
-                            <div className="progress-fill" style={{ width: `${(currentTime / duration) * 100}%` }}></div>
-                        </div>
-                    </div>
-                </div>
-            )}
+            <div className="admin-song-actions">
+                <button onClick={() => startEditSong(song)} className="edit-btn">Edit</button>
+                <button onClick={() => deleteSong(song.id)} className="delete-btn">Delete</button>
+            </div>
         </div>
-    );
+    ))}
+</div>
+</div>
+<div className="admin-panel">
+    <h3 className="panel-title">Artists Management</h3>
+    <div className="artists-grid">
+        {artists.map((artist) => (
+            <div key={artist.id} className="artist-card">
+                <div className="artist-icon-circle"><User className="artist-icon" /></div>
+                <h4 className="artist-name">{artist.name}</h4>
+                <p className="artist-stats">{artist.songs} songs • {artist.albums} albums</p>
+                <button onClick={() => deleteArtist(artist.name)} className="delete-artist-btn">Remove</button>
+            </div>
+        ))}
+    </div>
+</div>
+</div>
+)}
+</main>
+</div>
+{showAddToPlaylist && (
+    <div className="modal-overlay" onClick={() => setShowAddToPlaylist(false)}>
+        <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">Add to Playlist</h3>
+            <p className="modal-subtitle">Select a playlist for {selectedSongForPlaylist?.title}</p>
+            <div className="modal-playlist-list">
+                {playlists.map((playlist) => (
+                    <button key={playlist.id} onClick={() => addSongToPlaylist(playlist.id)} className="modal-playlist-item">
+                        <Image
+                            src={playlist.cover}
+                            alt={playlist.name}
+                            className="modal-playlist-cover"
+                            width={300}
+                            height={300}
+                            loading="lazy"
+                        />
+                        <span className="modal-playlist-name">{playlist.name}</span>
+                        <span className="modal-playlist-count">{playlist.songs.length} songs</span>
+                    </button>
+                ))}
+            </div>
+            <button onClick={() => setShowAddToPlaylist(false)} className="modal-close-btn">Close</button>
+        </div>
+    </div>
+)}
+{currentSong && (
+    <div className="music-player">
+        <div className="player-content">
+            <div className="player-left">
+                <Image
+                    src={currentSong.cover}
+                    alt={currentSong.title}
+                    className="player-cover"
+                    width={300}
+                    height={300}
+                    loading="lazy"
+                />
+                <div className="player-info">
+                    <h4 className="player-title">{currentSong.title}</h4>
+                    <p className="player-artist">{currentSong.artist}</p>
+                    {(!isPremium || !currentSong.spotify_uri) && currentSong.preview_url && <p className="player-note">30-second preview</p>}
+                </div>
+            </div>
+            <div className="player-controls">
+                <button className={`control-btn ${shuffle ? 'active' : ''}`} onClick={toggleShuffle}>
+                    <Shuffle className="control-icon" />
+                </button>
+                <button className="control-btn" onClick={playPrevious}>
+                    <SkipBack className="control-icon" />
+                </button>
+                <button onClick={togglePlay} className="play-btn">
+                    {isPlaying ? <Pause className="play-icon" /> : <Play className="play-icon" />}
+                </button>
+                <button className="control-btn" onClick={playNext}>
+                    <SkipForward className="control-icon" />
+                </button>
+                <button className={`control-btn ${repeat !== 'off' ? 'active' : ''}`} onClick={toggleRepeat}>
+                    <Repeat className="control-icon" />
+                    {repeat === 'one' && <span className="repeat-indicator">1</span>}
+                </button>
+            </div>
+            <div className="player-right">
+                <Heart
+                    className={`heart-btn ${likedSongs.has(currentSong.id) ? 'liked' : ''}`}
+                    onClick={() => toggleLike(currentSong.id)}
+                />
+                <div className="volume-controls">
+                    <Volume2 className="volume-icon" />
+                    <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={volume}
+                        onChange={(e) => setVolume(e.target.value)}
+                        className="volume-slider"
+                    />
+                </div>
+            </div>
+        </div>
+        <div className="progress-section">
+            {error && <p className="player-error">{error}</p>}
+            <div className="progress-time">
+                <span>{formatTime(currentTime)}</span>
+                <span>{currentSong.duration}</span>
+            </div>
+            <div className="progress-bar" onClick={handleSeek}>
+                <div className="progress-fill" style={{ width: `${(currentTime / duration) * 100}%` }}></div>
+            </div>
+        </div>
+    </div>
+)}
+</div>
+);
 }
