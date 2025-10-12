@@ -33,18 +33,11 @@ export default function Home() {
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(false);
     const [turnstileToken, setTurnstileToken] = useState(null);
-    const audioRef = useRef(null);
     const videoRef = useRef(null);
     const fullPageVideoRef = useRef(null);
     const turnstileRef = useRef(null);
 
     useEffect(() => {
-        if (audioRef.current) {
-            audioRef.current.volume = 0.3;
-            audioRef.current.play().catch(() => {
-                console.log('Audio autoplay prevented');
-            });
-        }
         if (videoRef.current) {
             videoRef.current.play().catch(() => {
                 console.log('Video autoplay prevented (form background)');
@@ -65,13 +58,6 @@ export default function Home() {
             document.body.removeChild(script);
         };
     }, []);
-
-    const toggleMute = () => {
-        if (audioRef.current) {
-            audioRef.current.muted = !isMuted;
-            setIsMuted(!isMuted);
-        }
-    };
 
     const changeToLogin = () => {
         setActiveForm('login');
@@ -253,19 +239,6 @@ export default function Home() {
             >
                 <source src={fullPageBackgroundVideo} type="video/mp4" />
             </video>
-
-            <audio ref={audioRef} loop>
-                <source src="/neon-lights-287828.mp3" />
-            </audio>
-
-            <button
-                onClick={toggleMute}
-                className="music-toggle"
-                aria-label={isMuted ? 'Unmute' : 'Mute'}
-            >
-                {isMuted ? <VolumeX size={24} /> : <Volume2 size={24} />}
-            </button>
-
             <div className="towers-background">
                 <div className="tower tower-1"></div>
                 <div className="tower tower-2"></div>

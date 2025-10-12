@@ -75,7 +75,7 @@ export default function Page() {
     const [deviceId, setDeviceId] = useState(null);
     const [playerReady, setPlayerReady] = useState(false);
     const searchTimerRef = useRef(null);
-
+    const isLoadingRef = useRef(false);
     const CLIENT_ID = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID;
     const REDIRECT_URI = process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI;
     const AUTH_ENDPOINT = 'https://accounts.spotify.com/authorize';
@@ -426,49 +426,58 @@ export default function Page() {
         return false;
     }, [isPremium, playerReady]);
 
-    const selectSong = useCallback(
-        debounce(async (song, songList = null) => {
-            console.log('🎵 Selecting song:', song.title, {
-                hasPreview: !!song.preview_url,
-                hasUri: !!song.spotify_uri,
-            });
+    const selectSong = useCallback(async (song, songList = null) => {
+        // Prevent multiple simultaneous song selections
+        if (isLoadingRef.current) {
+            console.log("Already loading a song, ignoring duplicate call");
+            return;
+        }
 
-            if (!isSongPlayable(song)) {
-                setError(`No playable content available for "${song.title}"`);
-                setCurrentSong(song);
-                setIsPlaying(false);
-                return;
+        console.log("Selecting song:", song.title, "hasPreview:", !!song.previewurl, "hasUri:", !!song.spotifyuri);
+
+        if (!isSongPlayable(song)) {
+            setError(`No playable content available for ${song.title}`);
+            setCurrentSong(song);
+            setIsPlaying(false);
+            return;
+        }
+
+        isLoadingRef.current = true;
+
+        setQueue((prevQueue) => {
+            if (songList && songList.length > 0) {
+                const validSongs = songList.filter((s) => isSongPlayable(s));
+                if (validSongs.length === 0) {
+                    setError("No playable songs in the provided list");
+                    isLoadingRef.current = false;
+                    return prevQueue;
+                }
+                const index = validSongs.findIndex((s) => s.id === song.id);
+                setCurrentIndex(index >= 0 ? index : 0);
+                return validSongs;
+            } else if (!prevQueue.some((s) => s.id === song.id)) {
+                const validSongs = (filteredSongs.length > 0 ? filteredSongs : songs).filter((s) =>
+                    isSongPlayable(s)
+                );
+                const index = validSongs.findIndex((s) => s.id === song.id);
+                setCurrentIndex(index >= 0 ? index : 0);
+                return validSongs;
             }
 
-            setQueue((prevQueue) => {
-                if (songList && songList.length > 0) {
-                    const validSongs = songList.filter((s) => isSongPlayable(s));
-                    if (validSongs.length === 0) {
-                        setError('No playable songs in the provided list');
-                        return prevQueue;
-                    }
-                    const index = validSongs.findIndex((s) => s.id === song.id);
-                    setCurrentIndex(index >= 0 ? index : 0);
-                    return validSongs;
-                } else if (!prevQueue.some((s) => s.id === song.id)) {
-                    const validSongs = (filteredSongs.length > 0 ? filteredSongs : songs).filter((s) => isSongPlayable(s));
-                    const index = validSongs.findIndex((s) => s.id === song.id);
-                    setCurrentIndex(index >= 0 ? index : 0);
-                    return validSongs;
-                }
-                const index = prevQueue.findIndex((s) => s.id === song.id);
-                if (index >= 0) {
-                    setCurrentIndex(index);
-                }
-                return prevQueue;
-            });
+            const index = prevQueue.findIndex((s) => s.id === song.id);
+            if (index >= 0) setCurrentIndex(index);
+            return prevQueue;
+        });
 
-            setCurrentSong(song);
-            setIsPlaying(true);
-            setError(null);
-        }, 300),
-        [filteredSongs, songs, isSongPlayable]
-    );
+        setCurrentSong(song);
+        setIsPlaying(true);
+        setError(null);
+
+        // Reset the loading flag after a short delay
+        setTimeout(() => {
+            isLoadingRef.current = false;
+        }, 500);
+    }, [filteredSongs, songs, isSongPlayable]);
 
     const playNext = useCallback(() => {
         setQueue(currentQueue => {
@@ -779,110 +788,129 @@ export default function Page() {
         let retryTimeout = null;
 
         const playSong = async () => {
+            // CRITICAL FIX: Check and set in one atomic operation
+            if (isLoadingRef.current) {
+                console.log("Already loading song, skipping duplicate playback attempt");
+                return;
+            }
+            isLoadingRef.current = true;
+
             try {
                 setIsLoadingSong(true);
                 setError(null);
 
-                if (isPremium && playerReady && deviceId && currentSong.spotify_uri) {
+                // Spotify Premium playback
+                if (isPremium && playerReady && deviceId && currentSong.spotifyuri) {
                     try {
                         await apiCallWithBackoff(() =>
                             axios.put(
                                 `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
-                                { uris: [currentSong.spotify_uri] },
+                                { uris: [currentSong.spotifyuri] },
                                 { headers: { Authorization: `Bearer ${accessToken}` } }
                             )
                         );
-                        console.log('✅ Playing via Spotify SDK');
+                        console.log("Playing via Spotify SDK");
+
+                        if (!isCancelled) {
+                            setRecentlyPlayed((prev) => {
+                                const newPlayed = [currentSong, ...prev.filter((s) => s.id !== currentSong.id)];
+                                return newPlayed.slice(0, 5);
+                            });
+                        }
                         return;
                     } catch (sdkError) {
                         if (sdkError.response?.status === 429) {
-                            const retryAfter = parseInt(sdkError.response.headers['retry-after'] || '10', 10) * 1000;
+                            const retryAfter = parseInt(sdkError.response.headers["retry-after"] || "10", 10) * 1000;
                             console.warn(`Rate limited. Retrying after ${retryAfter}ms...`);
                             if (!isCancelled) {
                                 retryTimeout = setTimeout(playSong, retryAfter + Math.random() * 100);
                             }
                             return;
                         }
-                        console.warn('⚠️ SDK failed, trying preview:', sdkError.message);
+                        console.warn("SDK failed, trying preview:", sdkError.message);
                     }
                 }
 
-                if (audioRef.current && currentSong.preview_url) {
-                    console.log('🎵 Attempting preview playback...');
+                // Fallback to preview playback
+                if (audioRef.current && currentSong.previewurl) {
+                    console.log("Attempting preview playback...");
                     const audio = audioRef.current;
 
                     audio.pause();
                     audio.currentTime = 0;
-                    audio.src = currentSong.preview_url;
+                    audio.src = currentSong.previewurl;
 
                     await new Promise((resolve, reject) => {
-                        const timeout = setTimeout(() => reject(new Error('Load timeout')), 10000);
+                        const timeout = setTimeout(() => reject(new Error("Load timeout")), 10000);
 
                         audio.onloadedmetadata = () => {
                             clearTimeout(timeout);
                             resolve();
                         };
+
                         audio.onerror = (e) => {
                             clearTimeout(timeout);
-                            reject(new Error('Audio load failed'));
+                            reject(new Error("Audio load failed"));
                         };
+
                         audio.load();
                     });
 
                     if (!isCancelled && isPlaying) {
                         await audio.play();
-                        console.log('✅ Preview playing');
+                        console.log("Preview playing");
                         setError(null);
+                        setRecentlyPlayed((prev) => {
+                            const newPlayed = [currentSong, ...prev.filter((s) => s.id !== currentSong.id)];
+                            return newPlayed.slice(0, 5);
+                        });
                     }
-
-                    setRecentlyPlayed((prev) => {
-                        const newPlayed = [currentSong, ...prev.filter((s) => s.id !== currentSong.id)];
-                        return newPlayed.slice(0, 5);
-                    });
-
                     return;
                 }
 
+                // No playback method available
                 if (!isCancelled) {
-                    if (isPremium && currentSong.spotify_uri && !playerReady) {
-                        setError('Player is initializing. Please wait.');
-                    } else if (!currentSong.preview_url && !currentSong.spotify_uri) {
-                        setError(`No playable content for "${currentSong.title}"`);
-                    } else if (currentSong.spotify_uri && !currentSong.preview_url && !isPremium) {
-                        setError(`"${currentSong.title}" requires Spotify Premium`);
+                    if (isPremium && currentSong.spotifyuri && !playerReady) {
+                        setError("Player is initializing. Please wait.");
+                    } else if (!currentSong.previewurl && !currentSong.spotifyuri) {
+                        setError(`No playable content for ${currentSong.title}`);
+                    } else if (currentSong.spotifyuri && !currentSong.previewurl && !isPremium) {
+                        setError(`${currentSong.title} requires Spotify Premium`);
                     } else {
-                        console.error('Playback failed despite available content');
-                        setError(`Failed to play "${currentSong.title}"`);
+                        console.error("Playback failed despite available content");
+                        setError(`Failed to play ${currentSong.title}`);
                     }
                     setIsPlaying(false);
                 }
             } catch (err) {
                 if (!isCancelled) {
-                    if (err.name === 'AbortError') {
-                        console.log('Playback was interrupted');
-                    } else if (err.name === 'NotAllowedError') {
-                        setError('Playback blocked. Please click play to start.');
+                    if (err.name === "AbortError") {
+                        console.log("Playback was interrupted");
+                    } else if (err.name === "NotAllowedError") {
+                        setError("Playback blocked. Please click play to start.");
                         setIsPlaying(false);
                     } else if (err.response?.status === 429) {
-                        const retryAfter = parseInt(err.response.headers['retry-after'] || '10', 10) * 1000;
+                        const retryAfter = parseInt(err.response.headers["retry-after"] || "10", 10) * 1000;
                         console.warn(`Rate limited. Retrying after ${retryAfter}ms...`);
                         retryTimeout = setTimeout(playSong, retryAfter + Math.random() * 100);
                     } else {
-                        setError('Failed to play: ' + err.message);
+                        setError(`Failed to play: ${err.message}`);
                         setIsPlaying(false);
                     }
                 }
             } finally {
                 if (!isCancelled) {
                     setIsLoadingSong(false);
+                    isLoadingRef.current = false; // CRITICAL: Reset here too
                 }
             }
         };
 
-        playSong();
+        playSong(); // Always call, the guard is inside
 
         return () => {
             isCancelled = true;
+            isLoadingRef.current = false; // Reset on cleanup
             if (audioRef.current) {
                 audioRef.current.pause();
             }
@@ -890,7 +918,7 @@ export default function Page() {
                 clearTimeout(retryTimeout);
             }
         };
-    }, [currentSong, isPremium, playerReady, deviceId, accessToken, isPlaying]);
+    }, [currentSong?.id, isPremium, playerReady, deviceId, accessToken, isPlaying]);
 
     useEffect(() => {
         if (!audioRef.current || isPremium) return;
