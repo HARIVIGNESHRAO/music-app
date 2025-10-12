@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
-// Move staticSongs outside component to prevent recreation
+// Static songs data
 const staticSongs = [
     { id: 1, title: "Midnight Dreams", artist: "Luna Martinez", album: "Nocturnal Vibes", duration: "3:24", cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center", genre: "Pop", plays: 1234567, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3", spotify_uri: null },
     { id: 2, title: "Electric Pulse", artist: "Neon Collective", album: "Digital Horizons", duration: "4:12", cover: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&h=300&fit=crop&crop=center", genre: "Electronic", plays: 987654, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3", spotify_uri: null },
@@ -64,6 +64,7 @@ export default function Page() {
     const [spotifyPlayer, setSpotifyPlayer] = useState(null);
     const [deviceId, setDeviceId] = useState(null);
     const [playerReady, setPlayerReady] = useState(false);
+    const searchTimerRef = useRef(null);
 
     const CLIENT_ID = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID;
     const REDIRECT_URI = process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI;
@@ -72,6 +73,48 @@ export default function Page() {
     const SCOPES = 'user-read-private user-read-email user-top-read playlist-read-private playlist-modify-public streaming user-read-playback-state user-modify-playback-state';
     const CODE_CHALLENGE_METHOD = 'S256';
     const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://backendserver-edb4bafdgxcwg7d5.centralindia-01.azurewebsites.net';
+
+    const CACHE_KEY_TOP_TRACKS = 'spotify_top_tracks';
+    const CACHE_KEY_PLAYLISTS = 'spotify_playlists';
+    const CACHE_EXPIRY_MS = 60 * 60 * 1000; // 1 hour
+
+    // Utility for API calls with exponential backoff
+    const apiCallWithBackoff = async (requestFn, maxRetries = 3) => {
+        let apiCallCount = JSON.parse(window.localStorage.getItem('apiCallCount') || '0') + 1;
+        window.localStorage.setItem('apiCallCount', apiCallCount);
+        console.log(`API call #${apiCallCount}: ${requestFn.toString().slice(0, 50)}...`);
+
+        for (let i = 0; i < maxRetries; i++) {
+            try {
+                return await requestFn();
+            } catch (err) {
+                if (err.response?.status === 429) {
+                    const retryAfter = parseInt(err.response.headers['retry-after'] || '10', 10) * 1000;
+                    console.log(`Rate limited. Retrying after ${retryAfter}ms...`);
+                    await new Promise(resolve => setTimeout(resolve, retryAfter + Math.random() * 100));
+                    continue;
+                }
+                throw err;
+            }
+        }
+        throw new Error('Max retries reached');
+    };
+
+    // Cache utilities
+    const getCachedData = (key) => {
+        const cached = window.localStorage.getItem(key);
+        if (cached) {
+            const { data, timestamp } = JSON.parse(cached);
+            if (Date.now() - timestamp < CACHE_EXPIRY_MS) {
+                return data;
+            }
+        }
+        return null;
+    };
+
+    const setCachedData = (key, data) => {
+        window.localStorage.setItem(key, JSON.stringify({ data, timestamp: Date.now() }));
+    };
 
     const generateCodeVerifier = () => {
         const array = new Uint8Array(32);
@@ -151,36 +194,239 @@ export default function Page() {
 
         setRecommendations(recommendedSongs);
     }, [recentlyPlayed, likedSongs]);
-// Helper to check if song is playable
+
+    const fetchTopTracks = useCallback(async (token) => {
+        try {
+            setLoading(true);
+            setError(null);
+
+            const cachedTracks = getCachedData(CACHE_KEY_TOP_TRACKS);
+            if (cachedTracks) {
+                setSongs(cachedTracks);
+                generateRecommendations(cachedTracks);
+                setLoading(false);
+                return;
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 300));
+            const response = await apiCallWithBackoff(() =>
+                axios.get(
+                    'https://api.spotify.com/v1/me/top/tracks?time_range=short_term&limit=10&fields=items(id,name,artists(name),album(name,images),duration_ms,preview_url,uri,popularity)',
+                    {
+                        headers: { Authorization: `Bearer ${token}` },
+                    }
+                )
+            );
+
+            const mappedSongs = response.data.items.map(track => ({
+                id: track.id,
+                title: track.name,
+                artist: track.artists.map(a => a.name).join(', '),
+                album: track.album.name,
+                duration: new Date(track.duration_ms).toISOString().substr(14, 5),
+                cover: track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
+                genre: 'Unknown',
+                plays: track.popularity * 10000,
+                preview_url: track.preview_url || null,
+                spotify_uri: track.uri,
+            }));
+
+            setSongs(mappedSongs);
+            setCachedData(CACHE_KEY_TOP_TRACKS, mappedSongs);
+            generateRecommendations(mappedSongs);
+        } catch (err) {
+            console.error('Failed to fetch tracks:', err);
+            setError(err.response?.status === 429 ? 'Rate limit exceeded. Please wait and try again.' : 'Failed to fetch tracks');
+        } finally {
+            setLoading(false);
+        }
+    }, [generateRecommendations]);
+
+    const fetchUserPlaylists = useCallback(async (token) => {
+        try {
+            setLoading(true);
+            setError(null);
+
+            const cachedPlaylists = getCachedData(CACHE_KEY_PLAYLISTS);
+            if (cachedPlaylists) {
+                setPlaylists(cachedPlaylists);
+                setLoading(false);
+                return;
+            }
+
+            const playlistsResponse = await apiCallWithBackoff(() =>
+                axios.get(
+                    'https://api.spotify.com/v1/me/playlists?limit=5&fields=items(id,name,tracks.href,images)',
+                    {
+                        headers: { Authorization: `Bearer ${token}` },
+                    }
+                )
+            );
+
+            const playlistsWithSongs = [];
+            const MAX_PLAYLISTS = 5;
+            for (const playlist of playlistsResponse.data.items.slice(0, MAX_PLAYLISTS)) {
+                await new Promise(resolve => setTimeout(resolve, 500));
+                try {
+                    const tracksResponse = await apiCallWithBackoff(() =>
+                        axios.get(
+                            `${playlist.tracks.href}?fields=items(track(id,name,artists(name),album(name,images),duration_ms,preview_url,uri))`,
+                            {
+                                headers: { Authorization: `Bearer ${token}` },
+                            }
+                        )
+                    );
+                    const playlistSongs = tracksResponse.data.items
+                        .filter(item => item.track && item.track.id)
+                        .map(item => ({
+                            id: item.track.id,
+                            title: item.track.name,
+                            artist: item.track.artists.map(a => a.name).join(', '),
+                            album: item.track.album.name,
+                            duration: new Date(item.track.duration_ms).toISOString().substr(14, 5),
+                            cover: item.track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
+                            genre: 'Unknown',
+                            plays: 0,
+                            preview_url: item.track.preview_url || null,
+                            spotify_uri: item.track.uri,
+                        }));
+                    playlistsWithSongs.push({
+                        id: playlist.id,
+                        name: playlist.name,
+                        songs: playlistSongs,
+                        cover:
+                            playlist.images?.[0]?.url ||
+                            playlistSongs[0]?.cover ||
+                            'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
+                    });
+                } catch (err) {
+                    console.error(`Error fetching tracks for playlist ${playlist.name}:`, err);
+                    if (err.response?.status === 429) continue;
+                    playlistsWithSongs.push({
+                        id: playlist.id,
+                        name: playlist.name,
+                        songs: [],
+                        cover: playlist.images?.[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
+                    });
+                }
+            }
+            setPlaylists(playlistsWithSongs);
+            setCachedData(CACHE_KEY_PLAYLISTS, playlistsWithSongs);
+        } catch (err) {
+            console.error('Failed to fetch playlists:', err);
+            setError(err.response?.status === 429 ? 'Rate limit exceeded. Please wait and try again.' : 'Failed to fetch playlists');
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    const searchSongs = useCallback(async (query) => {
+        if (searchTimerRef.current) {
+            clearTimeout(searchTimerRef.current);
+        }
+
+        if (!accessToken || !query) {
+            const filtered = staticSongs.filter(song =>
+                song.title.toLowerCase().includes(query.toLowerCase()) ||
+                song.artist.toLowerCase().includes(query.toLowerCase()) ||
+                song.album.toLowerCase().includes(query.toLowerCase())
+            );
+            setFilteredSongs(filtered);
+            return;
+        }
+
+        searchTimerRef.current = setTimeout(async () => {
+            try {
+                setLoading(true);
+                setError(null);
+                const response = await apiCallWithBackoff(() =>
+                    axios.get(
+                        `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10&fields=tracks(items(id,name,artists(name),album(name,images),duration_ms,preview_url,uri,popularity))`,
+                        {
+                            headers: { Authorization: `Bearer ${accessToken}` },
+                        }
+                    )
+                );
+                const mappedSongs = response.data.tracks.items.map(track => ({
+                    id: track.id,
+                    title: track.name,
+                    artist: track.artists.map(a => a.name).join(', '),
+                    album: track.album.name,
+                    duration: new Date(track.duration_ms).toISOString().substr(14, 5),
+                    cover: track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
+                    genre: 'Unknown',
+                    plays: track.popularity * 10000,
+                    preview_url: track.preview_url || null,
+                    spotify_uri: track.uri,
+                }));
+                setFilteredSongs(mappedSongs);
+            } catch (err) {
+                console.error('Search failed:', err);
+                setError(err.response?.status === 429 ? 'Too many searches. Please wait a moment.' : 'Search failed');
+            } finally {
+                setLoading(false);
+            }
+        }, 800);
+    }, [accessToken]);
+
+    const createPlaylist = async () => {
+        if (!newPlaylistName.trim()) return;
+
+        if (accessToken && currentUser?.id) {
+            try {
+                const { data } = await apiCallWithBackoff(() =>
+                    axios.post(
+                        `https://api.spotify.com/v1/users/${currentUser.id}/playlists`,
+                        { name: newPlaylistName, public: true },
+                        { headers: { Authorization: `Bearer ${accessToken}` } }
+                    )
+                );
+                setPlaylists(prev => [...prev, {
+                    id: data.id,
+                    name: data.name,
+                    songs: [],
+                    cover: data.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center'
+                }]);
+                setNewPlaylistName('');
+                setShowCreatePlaylist(false);
+            } catch (err) {
+                console.error('Failed to create playlist:', err);
+                setError(err.response?.status === 429 ? 'Rate limit exceeded. Please wait and try again.' : 'Failed to create playlist');
+            }
+        } else {
+            const newPlaylist = {
+                id: Date.now(),
+                name: newPlaylistName,
+                songs: [],
+                cover: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
+            };
+            setPlaylists(prev => [...prev, newPlaylist]);
+            setNewPlaylistName('');
+            setShowCreatePlaylist(false);
+        }
+    };
+
     const isSongPlayable = useCallback((song) => {
         if (!song) return false;
-
-        // Static songs always have preview_url
         if (song.preview_url) return true;
-
-        // Spotify songs need URI and premium for full playback
         if (song.spotify_uri && isPremium && playerReady) return true;
-
         return false;
     }, [isPremium, playerReady]);
 
-    // Memoize selectSong to use in useEffect dependencies
     const selectSong = useCallback(async (song, songList = null) => {
         console.log('🎵 Selecting song:', song.title, {
             hasPreview: !!song.preview_url,
             hasUri: !!song.spotify_uri
         });
 
-        // CRITICAL: Clear error immediately
         setError(null);
-        setIsPlaying(false); // Reset playing state first
+        setIsPlaying(false);
 
         if (!song.preview_url && !song.spotify_uri) {
             setError(`No playable content available for "${song.title}"`);
             setCurrentSong(song);
             return;
         }
-
 
         if (songList && songList.length > 0) {
             const validSongs = songList.filter(s => s.preview_url || s.spotify_uri);
@@ -209,7 +455,6 @@ export default function Page() {
         setError(null);
     }, [filteredSongs, songs]);
 
-    // Memoize playNext to use in useEffect dependencies
     const playNext = useCallback(() => {
         setQueue(currentQueue => {
             if (currentQueue.length === 0) return currentQueue;
@@ -262,6 +507,151 @@ export default function Page() {
         setCurrentIndex(prevIndex);
         selectSong(queue[prevIndex]);
     }, [queue, currentIndex, currentTime, repeat, isPremium, spotifyPlayer, deviceId, selectSong]);
+
+    const fetchUsers = useCallback(async () => {
+        try {
+            setUsersLoading(true);
+            setUsersError(null);
+            const { data } = await axios.get(`${BACKEND_URL}/api/users`);
+            setUsers(data);
+        } catch (err) {
+            console.error('Failed to fetch users:', err);
+            setUsersError('Failed to load users from server');
+        } finally {
+            setUsersLoading(false);
+        }
+    }, [BACKEND_URL]);
+
+    const fetchUserProfile = useCallback(async (token) => {
+        try {
+            setLoading(true);
+            setError(null);
+
+            console.log('🔐 Fetching user profile...');
+
+            const { data } = await axios.get('https://api.spotify.com/v1/me', {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+
+            const user = {
+                id: data.id,
+                name: data.display_name,
+                email: data.email,
+                avatar: data.images?.[0]?.url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center',
+                role: data.email === 'admin@music.com' ? 'admin' : 'user',
+                product: data.product || 'free'
+            };
+
+            setCurrentUser(user);
+            setIsAdmin(user.role === 'admin');
+            setIsPremium(user.product === 'premium');
+            window.localStorage.setItem('user', JSON.stringify(user));
+
+            console.log('✅ Profile loaded:', user.name);
+
+            setSongs(staticSongs);
+            setFilteredSongs(staticSongs);
+            generateRecommendations(staticSongs);
+
+            const uniqueArtists = [...new Set(staticSongs.map(song => song.artist))];
+            setArtists(uniqueArtists.map((name, idx) => ({
+                id: idx + 1,
+                name,
+                songs: staticSongs.filter(s => s.artist === name).length,
+                albums: new Set(staticSongs.filter(s => s.artist === name).map(s => s.album)).size
+            })));
+
+            setPlaylists([
+                { id: 1, name: "My Favorites", songs: [staticSongs[0], staticSongs[2]], cover: staticSongs[0].cover },
+                { id: 2, name: "Workout Mix", songs: [staticSongs[1], staticSongs[3]], cover: staticSongs[1].cover },
+                { id: 3, name: "Chill Vibes", songs: [staticSongs[2], staticSongs[4], staticSongs[5]], cover: staticSongs[2].cover }
+            ]);
+
+            console.log('⏳ Spotify tracks available on demand');
+
+        } catch (err) {
+            console.error('❌ Profile fetch error:', err);
+
+            if (err.response?.status === 429) {
+                const retryAfter = err.response.headers['retry-after'] || '10';
+                setError(`Rate limited. Please wait ${retryAfter} seconds and refresh.`);
+            } else {
+                setError('Failed to fetch profile: ' + (err.response?.data?.error?.message || err.message));
+            }
+        } finally {
+            setLoading(false);
+        }
+    }, [generateRecommendations]);
+
+    const loadSpotifyData = useCallback(async () => {
+        if (!accessToken) return;
+
+        setLoading(true);
+        setError(null);
+
+        try {
+            console.log('📥 Loading Spotify tracks...');
+            await fetchTopTracks(accessToken);
+
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            console.log('📥 Loading playlists...');
+            await fetchUserPlaylists(accessToken);
+
+            console.log('✅ Spotify data loaded');
+            setError('Spotify library loaded successfully!');
+            setTimeout(() => setError(null), 3000);
+
+        } catch (err) {
+            console.error('❌ Failed to load Spotify data:', err);
+            if (err.response?.status === 429) {
+                setError('Rate limit exceeded. Please try again in 1 minute.');
+            } else {
+                setError('Failed to load Spotify data');
+            }
+        } finally {
+            setLoading(false);
+        }
+    }, [accessToken, fetchTopTracks, fetchUserPlaylists]);
+
+    useEffect(() => {
+        const storedUser = window.localStorage.getItem('user');
+        if (storedUser) {
+            const user = JSON.parse(storedUser);
+            setCurrentUser(user);
+            setIsAdmin(user.role === 'admin');
+            setIsPremium(user.product === 'premium');
+            setSongs(staticSongs);
+            setFilteredSongs(staticSongs);
+
+            const uniqueArtists = [...new Set(staticSongs.map(song => song.artist))];
+            setArtists(uniqueArtists.map((name, idx) => ({
+                id: idx + 1,
+                name,
+                songs: staticSongs.filter(s => s.artist === name).length,
+                albums: new Set(staticSongs.filter(s => s.artist === name).map(s => s.album)).size
+            })));
+
+            setPlaylists([
+                { id: 1, name: "My Favorites", songs: [staticSongs[0], staticSongs[2]], cover: staticSongs[0].cover },
+                { id: 2, name: "Workout Mix", songs: [staticSongs[1], staticSongs[3]], cover: staticSongs[1].cover },
+                { id: 3, name: "Chill Vibes", songs: [staticSongs[2], staticSongs[4], staticSongs[5]], cover: staticSongs[2].cover }
+            ]);
+
+            generateRecommendations(staticSongs);
+        }
+
+        const storedToken = window.localStorage.getItem('spotify_token');
+        if (storedToken) {
+            setAccessToken(storedToken);
+            fetchUserProfile(storedToken);
+        }
+    }, [fetchUserProfile, generateRecommendations]);
+
+    useEffect(() => {
+        if (activeTab === 'admin' && isAdmin && users.length === 0) {
+            fetchUsers();
+        }
+    }, [activeTab, isAdmin, users.length, fetchUsers]);
 
     useEffect(() => {
         if (!accessToken || !isPremium) return;
@@ -340,268 +730,6 @@ export default function Page() {
         };
     }, [accessToken, isPremium, volume]);
 
-    const fetchUsers = useCallback(async () => {
-        try {
-            setUsersLoading(true);
-            setUsersError(null);
-            const { data } = await axios.get(`${BACKEND_URL}/api/users`);
-            setUsers(data);
-        } catch (err) {
-            console.error('Failed to fetch users:', err);
-            setUsersError('Failed to load users from server');
-        } finally {
-            setUsersLoading(false);
-        }
-    }, [BACKEND_URL]);
-
-    const fetchTopTracks = useCallback(async (token) => {
-        try {
-            // FIXED: Add small delay before request
-            await new Promise(resolve => setTimeout(resolve, 300));
-
-            const { data } = await axios.get('https://api.spotify.com/v1/me/top/tracks?time_range=short_term&limit=20', {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-
-            const mappedSongs = data.items.map(track => ({
-                id: track.id,
-                title: track.name,
-                artist: track.artists.map(a => a.name).join(', '),
-                album: track.album.name,
-                duration: new Date(track.duration_ms).toISOString().substr(14, 5),
-                cover: track.album.images[0]?.url || 'default-cover',
-                genre: 'Unknown',
-                plays: track.popularity * 10000,
-                preview_url: track.preview_url || null,
-                spotify_uri: track.uri
-            }));
-
-            setSongs(mappedSongs);
-            generateRecommendations(mappedSongs);
-        } catch (err) {
-            console.error('Failed to fetch tracks:', err);
-            if (err.response?.status === 429) {
-                setError('Rate limit exceeded. Please wait a moment and refresh.');
-            } else {
-                setError('Failed to fetch tracks');
-            }
-        }
-    }, [generateRecommendations]);
-
-
-    const fetchUserPlaylists = useCallback(async (token) => {
-        try {
-            // FIXED: Add delay before request
-            await new Promise(resolve => setTimeout(resolve, 300));
-
-            const { data } = await axios.get('https://api.spotify.com/v1/me/playlists?limit=10', {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-
-            // FIXED: Process playlists sequentially with delays to avoid rate limiting
-            const playlistsWithSongs = [];
-            for (const playlist of data.items) {
-                try {
-                    // Add delay between each playlist fetch
-                    await new Promise(resolve => setTimeout(resolve, 200));
-
-                    const tracksData = await axios.get(playlist.tracks.href, {
-                        headers: { Authorization: `Bearer ${token}` }
-                    });
-
-                    const playlistSongs = tracksData.data.items
-                        .filter(item => item.track && item.track.id)
-                        .map(item => ({
-                            id: item.track.id,
-                            title: item.track.name,
-                            artist: item.track.artists.map(a => a.name).join(', '),
-                            album: item.track.album.name,
-                            duration: new Date(item.track.duration_ms).toISOString().substr(14, 5),
-                            cover: item.track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
-                            genre: 'Unknown',
-                            plays: 0,
-                            preview_url: item.track.preview_url || null,
-                            spotify_uri: item.track.uri
-                        }));
-
-                    const coverImage = playlist.images?.[0]?.url ||
-                        playlistSongs[0]?.cover ||
-                        'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center';
-
-                    playlistsWithSongs.push({
-                        id: playlist.id,
-                        name: playlist.name,
-                        songs: playlistSongs,
-                        cover: coverImage
-                    });
-                } catch (err) {
-                    console.error('Error fetching playlist tracks:', err);
-                    if (err.response?.status === 429) {
-                        console.log('Rate limited on playlist fetch, skipping...');
-                        continue; // Skip this playlist
-                    }
-
-                    const coverImage = playlist.images?.[0]?.url ||
-                        'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center';
-                    playlistsWithSongs.push({
-                        id: playlist.id,
-                        name: playlist.name,
-                        songs: [],
-                        cover: coverImage
-                    });
-                }
-            }
-
-            setPlaylists(playlistsWithSongs);
-        } catch (err) {
-            console.error('Failed to fetch playlists:', err);
-            if (err.response?.status === 429) {
-                setError('Rate limit exceeded. Please wait and try again.');
-            } else {
-                setError('Failed to fetch playlists');
-            }
-        }
-    }, []);
-
-
-    const fetchUserProfile = useCallback(async (token) => {
-        try {
-            setLoading(true);
-            setError(null);
-
-            console.log('🔐 Fetching user profile...');
-
-            const { data } = await axios.get('https://api.spotify.com/v1/me', {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-
-            const user = {
-                id: data.id,
-                name: data.display_name,
-                email: data.email,
-                avatar: data.images?.[0]?.url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center',
-                role: data.email === 'admin@music.com' ? 'admin' : 'user',
-                product: data.product || 'free'
-            };
-
-            setCurrentUser(user);
-            setIsAdmin(user.role === 'admin');
-            setIsPremium(user.product === 'premium');
-            window.localStorage.setItem('user', JSON.stringify(user));
-
-            console.log('✅ Profile loaded:', user.name);
-
-            // CRITICAL: Don't load Spotify data immediately
-            // Use static songs instead
-            setSongs(staticSongs);
-            setFilteredSongs(staticSongs);
-            generateRecommendations(staticSongs);
-
-            const uniqueArtists = [...new Set(staticSongs.map(song => song.artist))];
-            setArtists(uniqueArtists.map((name, idx) => ({
-                id: idx + 1,
-                name,
-                songs: staticSongs.filter(s => s.artist === name).length,
-                albums: new Set(staticSongs.filter(s => s.artist === name).map(s => s.album)).size
-            })));
-
-            setPlaylists([
-                { id: 1, name: "My Favorites", songs: [staticSongs[0], staticSongs[2]], cover: staticSongs[0].cover },
-                { id: 2, name: "Workout Mix", songs: [staticSongs[1], staticSongs[3]], cover: staticSongs[1].cover },
-                { id: 3, name: "Chill Vibes", songs: [staticSongs[2], staticSongs[4], staticSongs[5]], cover: staticSongs[2].cover }
-            ]);
-
-            // OPTIONAL: Load Spotify data later with button click
-            console.log('⏳ Spotify tracks available on demand');
-
-        } catch (err) {
-            console.error('❌ Profile fetch error:', err);
-
-            if (err.response?.status === 429) {
-                const retryAfter = err.response.headers['retry-after'] || '10';
-                setError(`Rate limited. Please wait ${retryAfter} seconds and refresh.`);
-            } else {
-                setError('Failed to fetch profile: ' + (err.response?.data?.error?.message || err.message));
-            }
-        } finally {
-            setLoading(false);
-        }
-    }, [generateRecommendations]);
-    const loadSpotifyData = useCallback(async () => {
-        if (!accessToken) return;
-
-        setLoading(true);
-        setError(null);
-
-        try {
-            console.log('📥 Loading Spotify tracks...');
-
-            // Load tracks with delay
-            await fetchTopTracks(accessToken);
-
-            // Wait 2 seconds
-            await new Promise(resolve => setTimeout(resolve, 2000));
-
-            console.log('📥 Loading playlists...');
-            await fetchUserPlaylists(accessToken);
-
-            console.log('✅ Spotify data loaded');
-            setError('Spotify library loaded successfully!');
-            setTimeout(() => setError(null), 3000);
-
-        } catch (err) {
-            console.error('❌ Failed to load Spotify data:', err);
-            if (err.response?.status === 429) {
-                setError('Rate limited. Please try again in 1 minute.');
-            } else {
-                setError('Failed to load Spotify data');
-            }
-        } finally {
-            setLoading(false);
-        }
-    }, [accessToken, fetchTopTracks, fetchUserPlaylists]);
-
-
-    useEffect(() => {
-        const storedUser = window.localStorage.getItem('user');
-        if (storedUser) {
-            const user = JSON.parse(storedUser);
-            setCurrentUser(user);
-            setIsAdmin(user.role === 'admin');
-            setIsPremium(user.product === 'premium');
-            setSongs(staticSongs);
-            setFilteredSongs(staticSongs);
-
-            const uniqueArtists = [...new Set(staticSongs.map(song => song.artist))];
-            setArtists(uniqueArtists.map((name, idx) => ({
-                id: idx + 1,
-                name,
-                songs: staticSongs.filter(s => s.artist === name).length,
-                albums: new Set(staticSongs.filter(s => s.artist === name).map(s => s.album)).size
-            })));
-
-            setPlaylists([
-                { id: 1, name: "My Favorites", songs: [staticSongs[0], staticSongs[2]], cover: staticSongs[0].cover },
-                { id: 2, name: "Workout Mix", songs: [staticSongs[1], staticSongs[3]], cover: staticSongs[1].cover },
-                { id: 3, name: "Chill Vibes", songs: [staticSongs[2], staticSongs[4], staticSongs[5]], cover: staticSongs[2].cover }
-            ]);
-
-            generateRecommendations(staticSongs);
-        }
-
-        const storedToken = window.localStorage.getItem('spotify_token');
-        if (storedToken) {
-            setAccessToken(storedToken);
-            fetchUserProfile(storedToken);
-        }
-    }, [fetchUserProfile, generateRecommendations]);
-
-    useEffect(() => {
-        if (activeTab === 'admin' && isAdmin && users.length === 0) {
-            fetchUsers();
-        }
-    }, [activeTab, isAdmin, users.length, fetchUsers]);
-
     useEffect(() => {
         if (audioRef.current) {
             audioRef.current.volume = volume / 100;
@@ -631,17 +759,16 @@ export default function Page() {
                             { headers: { Authorization: `Bearer ${accessToken}` } }
                         );
                         console.log('✅ Playing via Spotify SDK');
-                        return; // Exit if successful
+                        return;
                     } catch (sdkError) {
                         console.warn('⚠️ SDK failed, trying preview:', sdkError.message);
-                        // Fall through to preview_url below
                     }
                 }
- else if (audioRef.current && currentSong.preview_url) {
+
+                if (audioRef.current && currentSong.preview_url) {
                     console.log('🎵 Attempting preview playback...');
                     const audio = audioRef.current;
 
-                    // Stop any previous playback
                     audio.pause();
                     audio.currentTime = 0;
                     audio.src = currentSong.preview_url;
@@ -663,8 +790,6 @@ export default function Page() {
                     if (!isCancelled && isPlaying) {
                         await audio.play();
                         console.log('✅ Preview playing');
-
-                        // IMPORTANT: Clear error on successful playback
                         setError(null);
                     }
 
@@ -673,30 +798,23 @@ export default function Page() {
                         return newPlayed.slice(0, 5);
                     });
 
-                    return; // Exit successfully
+                    return;
                 }
-                else {
-                // FIXED: Only show error if this specific song truly has no playback option
+
                 if (!isCancelled) {
                     if (isPremium && currentSong.spotify_uri && !playerReady) {
                         setError(`Player initializing... Please wait.`);
                     } else if (!currentSong.preview_url && !currentSong.spotify_uri) {
-                        // Truly no content available
                         setError(`No playable content available for "${currentSong.title}"`);
                     } else if (currentSong.spotify_uri && !currentSong.preview_url && !isPremium) {
-                        // Has Spotify URI but no preview, and user is not premium
                         setError(`"${currentSong.title}" requires Spotify Premium. No preview available.`);
                     } else {
-                        // Has preview but something else failed
                         console.error('Playback failed despite available content');
                         setError(`Failed to play "${currentSong.title}". Please try again.`);
                     }
                     setIsPlaying(false);
                 }
-            }
-
-
-        } catch (err) {
+            } catch (err) {
                 if (!isCancelled) {
                     if (err.name === 'AbortError') {
                         console.log('Playback was interrupted');
@@ -742,7 +860,6 @@ export default function Page() {
         }
     }, [isPlaying, isLoadingSong, isPremium]);
 
-    // FIXED: Added all missing dependencies
     useEffect(() => {
         const audio = audioRef.current;
         if (!audio || isPremium) return;
@@ -758,63 +875,7 @@ export default function Page() {
 
         audio.addEventListener('ended', handleEnded);
         return () => audio.removeEventListener('ended', handleEnded);
-    }, [repeat, isPremium, playNext]); // Fixed: added playNext dependency
-
-    // Add debounce timer at the top of your component
-    const searchTimerRef = useRef(null);
-
-    const searchSongs = async (query) => {
-        // Clear existing timer
-        if (searchTimerRef.current) {
-            clearTimeout(searchTimerRef.current);
-        }
-
-        if (!accessToken || !query) {
-            const filtered = staticSongs.filter(song =>
-                song.title.toLowerCase().includes(query.toLowerCase()) ||
-                song.artist.toLowerCase().includes(query.toLowerCase()) ||
-                song.album.toLowerCase().includes(query.toLowerCase())
-            );
-            setFilteredSongs(filtered);
-            return;
-        }
-
-        // FIXED: Debounce search to avoid rate limiting
-        searchTimerRef.current = setTimeout(async () => {
-            try {
-                setLoading(true);
-                const { data } = await axios.get(
-                    `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=20`,
-                    { headers: { Authorization: `Bearer ${accessToken}` } }
-                );
-
-                const mappedSongs = data.tracks.items.map(track => ({
-                    id: track.id,
-                    title: track.name,
-                    artist: track.artists.map(a => a.name).join(', '),
-                    album: track.album.name,
-                    duration: new Date(track.duration_ms).toISOString().substr(14, 5),
-                    cover: track.album.images[0]?.url || 'default-cover',
-                    genre: 'Unknown',
-                    plays: track.popularity * 10000,
-                    preview_url: track.preview_url || null,
-                    spotify_uri: track.uri
-                }));
-
-                setFilteredSongs(mappedSongs);
-            } catch (err) {
-                console.error('Search failed:', err);
-                if (err.response?.status === 429) {
-                    setError('Too many searches. Please wait a moment.');
-                } else {
-                    setError('Search failed');
-                }
-            } finally {
-                setLoading(false);
-            }
-        }, 500); // Wait 500ms after user stops typing
-    };
-
+    }, [repeat, isPremium, playNext]);
 
     const handleSpotifyLogin = async () => {
         const codeVerifier = generateCodeVerifier();
@@ -824,34 +885,32 @@ export default function Page() {
         window.location.href = authUrl;
     };
 
-        const handleLogout = () => {
-            setAccessToken(null);
-            setCurrentUser(null);
-            setIsAdmin(false);
-            setIsPremium(false);
-            setCurrentSong(null);
-            setIsPlaying(false);
-            setActiveTab('home');
-            setSongs([]);
-            setFilteredSongs([]);
-            setPlaylists([]);
-            setUsers([]);
-            setQueue([]);
-            setCurrentIndex(0);
-            setRecentlyPlayed([]);
-            setSpotifyPlayer(null);
-            setDeviceId(null);
-            setPlayerReady(false); // ADD THIS LINE
-            window.localStorage.removeItem('spotify_token');
-            window.localStorage.removeItem('spotify_code_verifier');
-            window.localStorage.removeItem('user');
-            router.push('/login');
-        };
+    const handleLogout = () => {
+        setAccessToken(null);
+        setCurrentUser(null);
+        setIsAdmin(false);
+        setIsPremium(false);
+        setCurrentSong(null);
+        setIsPlaying(false);
+        setActiveTab('home');
+        setSongs([]);
+        setFilteredSongs([]);
+        setPlaylists([]);
+        setUsers([]);
+        setQueue([]);
+        setCurrentIndex(0);
+        setRecentlyPlayed([]);
+        setSpotifyPlayer(null);
+        setDeviceId(null);
+        setPlayerReady(false);
+        window.localStorage.removeItem('spotify_token');
+        window.localStorage.removeItem('spotify_code_verifier');
+        window.localStorage.removeItem('user');
+        router.push('/login');
+    };
 
-
-        const togglePlay = () => {
-            if (isPremium && spotifyPlayer && playerReady) {
-
+    const togglePlay = () => {
+        if (isPremium && spotifyPlayer && playerReady) {
             if (isPlaying) {
                 spotifyPlayer.pause();
             } else {
@@ -915,43 +974,6 @@ export default function Page() {
         const mins = Math.floor(seconds / 60);
         const secs = Math.floor(seconds % 60);
         return `${mins}:${secs.toString().padStart(2, '0')}`;
-    };
-
-    const createPlaylist = async () => {
-        if (!newPlaylistName.trim()) return;
-
-        if (accessToken && currentUser?.id) {
-            try {
-                const { data } = await axios.post(
-                    `https://api.spotify.com/v1/users/${currentUser.id}/playlists`,
-                    { name: newPlaylistName, public: true },
-                    { headers: { Authorization: `Bearer ${accessToken}` } }
-                );
-
-                setPlaylists(prev => [...prev, {
-                    id: data.id,
-                    name: data.name,
-                    songs: [],
-                    cover: data.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center'
-                }]);
-
-                setNewPlaylistName('');
-                setShowCreatePlaylist(false);
-            } catch (err) {
-                console.error('Failed to create playlist:', err);
-                setError('Failed to create playlist');
-            }
-        } else {
-            const newPlaylist = {
-                id: Date.now(),
-                name: newPlaylistName,
-                songs: [],
-                cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center"
-            };
-            setPlaylists(prev => [...prev, newPlaylist]);
-            setNewPlaylistName('');
-            setShowCreatePlaylist(false);
-        }
     };
 
     const handleSearch = (e) => {
@@ -1052,7 +1074,6 @@ export default function Page() {
         return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
     };
 
-    // JSX remains the same as in your file...
     if (!currentUser) {
         return (
             <div className="login-container">
@@ -1097,8 +1118,7 @@ export default function Page() {
                     setError('Error loading audio file');
                 }}
             />
-
-<header className="header">
+            <header className="header">
                 <div className="header-content">
                     <div className="header-left">
                         <Music className="header-logo" />
@@ -1114,6 +1134,7 @@ export default function Page() {
                                 onChange={handleSearch}
                                 className="search-input"
                             />
+                            {loading && <span className="search-loading">Searching...</span>}
                         </div>
                     </div>
                     <div className="header-right">
@@ -1177,7 +1198,6 @@ export default function Page() {
                                 <h2 className="welcome-title">Welcome back, {currentUser.username || currentUser.name}!</h2>
                                 {loading ? <p>Loading...</p> : error ? <p className="error-text">{error}</p> : (
                                     <>
-                                        {/* Spotify Library Loader */}
                                         {accessToken && currentUser && (
                                             <div style={{
                                                 padding: '20px',
@@ -1233,7 +1253,6 @@ export default function Page() {
                                                 </p>
                                             </div>
                                         )}
-
                                         <div className="featured-songs">
                                             {songs.map((song) => (
                                                 <div key={song.id} className="song-card" onClick={() => selectSong(song)}>
@@ -1719,29 +1738,29 @@ export default function Page() {
                             />
                             <div className="volume-controls">
                                 <Volume2 className="volume-icon" />
-                                <input
-                                    type="range"
-                                    min="0"
-                                    max="100"
-                                    value={volume}
-                                    onChange={(e) => setVolume(e.target.value)}
-                                    className="volume-slider"
-                                />
-                            </div>
-                        </div>
-                    </div>
-                    <div className="progress-section">
-                        {error && <p className="player-error">{error}</p>}
-                        <div className="progress-time">
-                            <span>{formatTime(currentTime)}</span>
-                            <span>{currentSong.duration}</span>
-                        </div>
-                        <div className="progress-bar" onClick={handleSeek}>
-                            <div className="progress-fill" style={{ width: `${(currentTime / duration) * 100}%` }}></div>
-                        </div>
-                    </div>
-                </div>
-            )}
-        </div>
-    );
+<input
+type="range"
+min="0"
+max="100"
+value={volume}
+onChange={(e) => setVolume(e.target.value)}
+className="volume-slider"
+    />
+    </div>
+</div>
+</div>
+<div className="progress-section">
+    {error && <p className="player-error">{error}</p>}
+    <div className="progress-time">
+        <span>{formatTime(currentTime)}</span>
+        <span>{currentSong.duration}</span>
+    </div>
+    <div className="progress-bar" onClick={handleSeek}>
+        <div className="progress-fill" style={{ width: `${(currentTime / duration) * 100}%` }}></div>
+    </div>
+</div>
+</div>
+)}
+</div>
+);
 }
