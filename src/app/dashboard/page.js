@@ -87,7 +87,7 @@ export default function Page() {
     const CACHE_KEY_TOP_TRACKS = 'spotify_top_tracks';
     const CACHE_KEY_PLAYLISTS = 'spotify_playlists';
     const CACHE_EXPIRY_MS = 60 * 60 * 1000; // 1 hour
-
+    const profileLoadedRef = useRef(false);
     // Utility for API calls with exponential backoff
     const apiCallWithBackoff = async (requestFn, maxRetries = 3) => {
         let apiCallCount = JSON.parse(window.localStorage.getItem('apiCallCount') || '0') + 1;
@@ -536,13 +536,17 @@ export default function Page() {
             setUsersLoading(false);
         }
     }, [BACKEND_URL]);
-
     const fetchUserProfile = useCallback(async (token) => {
+        // Prevent multiple calls
+        if (profileLoadedRef.current) {
+            console.log('Profile already loaded, skipping...');
+            return;
+        }
+
         try {
             setLoading(true);
             setError(null);
-
-            console.log('🔐 Fetching user profile...');
+            console.log('Fetching user profile...');
 
             const { data } = await axios.get('https://api.spotify.com/v1/me', {
                 headers: { Authorization: `Bearer ${token}` }
@@ -562,8 +566,12 @@ export default function Page() {
             setIsPremium(user.product === 'premium');
             window.localStorage.setItem('user', JSON.stringify(user));
 
-            console.log('✅ Profile loaded:', user.name);
+            // Mark profile as loaded
+            profileLoadedRef.current = true;
 
+            console.log('Profile loaded:', user.name);
+
+            // Initialize with static songs
             setSongs(staticSongs);
             setFilteredSongs(staticSongs);
             generateRecommendations(staticSongs);
@@ -577,18 +585,19 @@ export default function Page() {
             })));
 
             setPlaylists([
-                { id: 1, name: "My Favorites", songs: [staticSongs[0], staticSongs[2]], cover: staticSongs[0].cover },
-                { id: 2, name: "Workout Mix", songs: [staticSongs[1], staticSongs[3]], cover: staticSongs[1].cover },
-                { id: 3, name: "Chill Vibes", songs: [staticSongs[2], staticSongs[4], staticSongs[5]], cover: staticSongs[2].cover }
+                { id: 1, name: 'My Favorites', songs: [staticSongs[0], staticSongs[2]], cover: staticSongs[0].cover },
+                { id: 2, name: 'Workout Mix', songs: [staticSongs[1], staticSongs[3]], cover: staticSongs[1].cover },
+                { id: 3, name: 'Chill Vibes', songs: [staticSongs[2], staticSongs[4], staticSongs[5]], cover: staticSongs[2].cover }
             ]);
 
-            console.log('⏳ Spotify tracks available on demand');
-
+            console.log('Spotify tracks available on demand');
         } catch (err) {
-            console.error('❌ Profile fetch error:', err);
-            setError(err.response?.status === 429
-                ? 'Too many requests. Please wait and try again.'
-                : 'Failed to fetch profile: ' + (err.response?.data?.error?.message || err.message));
+            console.error('Profile fetch error:', err);
+            setError(
+                err.response?.status === 429
+                    ? 'Too many requests. Please wait and try again.'
+                    : `Failed to fetch profile: ${err.response?.data?.error?.message || err.message}`
+            );
         } finally {
             setLoading(false);
         }
@@ -628,6 +637,8 @@ export default function Page() {
             setCurrentUser(user);
             setIsAdmin(user.role === 'admin');
             setIsPremium(user.product === 'premium');
+            profileLoadedRef.current = true; // Mark as loaded from cache
+
             setSongs(staticSongs);
             setFilteredSongs(staticSongs);
 
@@ -640,16 +651,16 @@ export default function Page() {
             })));
 
             setPlaylists([
-                { id: 1, name: "My Favorites", songs: [staticSongs[0], staticSongs[2]], cover: staticSongs[0].cover },
-                { id: 2, name: "Workout Mix", songs: [staticSongs[1], staticSongs[3]], cover: staticSongs[1].cover },
-                { id: 3, name: "Chill Vibes", songs: [staticSongs[2], staticSongs[4], staticSongs[5]], cover: staticSongs[2].cover }
+                { id: 1, name: 'My Favorites', songs: [staticSongs[0], staticSongs[2]], cover: staticSongs[0].cover },
+                { id: 2, name: 'Workout Mix', songs: [staticSongs[1], staticSongs[3]], cover: staticSongs[1].cover },
+                { id: 3, name: 'Chill Vibes', songs: [staticSongs[2], staticSongs[4], staticSongs[5]], cover: staticSongs[2].cover }
             ]);
 
             generateRecommendations(staticSongs);
         }
 
         const storedToken = window.localStorage.getItem('spotify_token');
-        if (storedToken) {
+        if (storedToken && !profileLoadedRef.current) {
             setAccessToken(storedToken);
             fetchUserProfile(storedToken);
         }
@@ -959,6 +970,10 @@ export default function Page() {
         setSpotifyPlayer(null);
         setDeviceId(null);
         setPlayerReady(false);
+
+        // Reset the profile loaded flag
+        profileLoadedRef.current = false;
+
         window.localStorage.removeItem('spotify_token');
         window.localStorage.removeItem('spotify_code_verifier');
         window.localStorage.removeItem('user');
@@ -1082,6 +1097,7 @@ export default function Page() {
     const openPlaylist = (playlist) => {
         setSelectedPlaylist(playlist);
         setActiveTab('playlist-detail');
+        // DO NOT call fetchUserProfile here
     };
 
     const deleteSong = (songId) => {
