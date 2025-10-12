@@ -433,7 +433,7 @@ export default function Page() {
             return;
         }
 
-        console.log("Selecting song:", song.title, "hasPreview:", !!song.previewurl, "hasUri:", !!song.spotifyuri);
+        console.log("Selecting song:", song.title, "hasPreview:", !!song.preview_url, "hasUri:", !!song.spotify_uri);
 
         if (!isSongPlayable(song)) {
             setError(`No playable content available for ${song.title}`);
@@ -800,12 +800,12 @@ export default function Page() {
                 setError(null);
 
                 // Spotify Premium playback
-                if (isPremium && playerReady && deviceId && currentSong.spotifyuri) {
+                if (isPremium && playerReady && deviceId && currentSong.spotify_uri) {
                     try {
                         await apiCallWithBackoff(() =>
                             axios.put(
                                 `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
-                                { uris: [currentSong.spotifyuri] },
+                                { uris: [currentSong.spotify_uri] },
                                 { headers: { Authorization: `Bearer ${accessToken}` } }
                             )
                         );
@@ -832,13 +832,13 @@ export default function Page() {
                 }
 
                 // Fallback to preview playback
-                if (audioRef.current && currentSong.previewurl) {
+                if (audioRef.current && currentSong.preview_url) {
                     console.log("Attempting preview playback...");
                     const audio = audioRef.current;
 
                     audio.pause();
                     audio.currentTime = 0;
-                    audio.src = currentSong.previewurl;
+                    audio.src = currentSong.preview_url;
 
                     await new Promise((resolve, reject) => {
                         const timeout = setTimeout(() => reject(new Error("Load timeout")), 10000);
@@ -870,11 +870,11 @@ export default function Page() {
 
                 // No playback method available
                 if (!isCancelled) {
-                    if (isPremium && currentSong.spotifyuri && !playerReady) {
+                    if (isPremium && currentSong.spotify_uri && !playerReady) {
                         setError("Player is initializing. Please wait.");
-                    } else if (!currentSong.previewurl && !currentSong.spotifyuri) {
+                    } else if (!currentSong.preview_url && !currentSong.spotify_uri) {
                         setError(`No playable content for ${currentSong.title}`);
-                    } else if (currentSong.spotifyuri && !currentSong.previewurl && !isPremium) {
+                    } else if (currentSong.spotify_uri && !currentSong.preview_url && !isPremium) {
                         setError(`${currentSong.title} requires Spotify Premium`);
                     } else {
                         console.error("Playback failed despite available content");
