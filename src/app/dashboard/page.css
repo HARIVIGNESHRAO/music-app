@@ -2290,3 +2290,15 @@ body {
     color: #ff4d4d;
     text-align: center;
 }
+.player-error {
+    color: #e74c3c;
+    font-size: 14px;
+    margin: 10px 0;
+    text-align: center;
+}
+
+.search-loading {
+    color: #3498db;
+    font-size: 12px;
+    margin-left: 10px;
+}

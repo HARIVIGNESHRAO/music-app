@@ -91,13 +91,13 @@ export default function Page() {
                 if (err.response?.status === 429) {
                     const retryAfter = parseInt(err.response.headers['retry-after'] || '10', 10) * 1000;
                     console.log(`Rate limited. Retrying after ${retryAfter}ms...`);
-                    await new Promise(resolve => setTimeout(resolve, retryAfter + Math.random() * 100));
+                    await new Promise((resolve) => setTimeout(resolve, retryAfter + Math.random() * 100));
                     continue;
                 }
                 throw err;
             }
         }
-        throw new Error('Max retries reached');
+        throw new Error('Max retries reached for API call');
     };
 
     // Cache utilities
@@ -158,7 +158,14 @@ export default function Page() {
             const magnitudeB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
             return magnitudeA && magnitudeB ? dotProduct / (magnitudeA * magnitudeB) : 0;
         };
-
+// Utility to debounce functions
+        const debounce = (func, wait) => {
+            let timeout;
+            return (...args) => {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func(...args), wait);
+            };
+        };
         const songVectors = allSongs.map(song => ({
             song,
             vector: createFeatureVector(song)
@@ -413,47 +420,52 @@ export default function Page() {
         return false;
     }, [isPremium, playerReady]);
 
-    const selectSong = useCallback(async (song, songList = null) => {
-        console.log('🎵 Selecting song:', song.title, {
-            hasPreview: !!song.preview_url,
-            hasUri: !!song.spotify_uri
-        });
+    const selectSong = useCallback(
+        debounce(async (song, songList = null) => {
+            console.log('🎵 Selecting song:', song.title, {
+                hasPreview: !!song.preview_url,
+                hasUri: !!song.spotify_uri,
+            });
 
-        setError(null);
-        setIsPlaying(false);
+            if (!isSongPlayable(song)) {
+                setError(`No playable content available for "${song.title}"`);
+                setCurrentSong(song);
+                setIsPlaying(false);
+                return;
+            }
 
-        if (!song.preview_url && !song.spotify_uri) {
-            setError(`No playable content available for "${song.title}"`);
-            setCurrentSong(song);
-            return;
-        }
-
-        if (songList && songList.length > 0) {
-            const validSongs = songList.filter(s => s.preview_url || s.spotify_uri);
-            setQueue(validSongs);
-            const index = validSongs.findIndex(s => s.id === song.id);
-            setCurrentIndex(index >= 0 ? index : 0);
-        } else {
-            setQueue(prev => {
-                if (prev.length === 0) {
-                    const validSongs = (filteredSongs.length > 0 ? filteredSongs : songs).filter(s => s.preview_url || s.spotify_uri);
-                    const index = validSongs.findIndex(s => s.id === song.id);
+            // Update queue only if necessary
+            setQueue((prevQueue) => {
+                if (songList && songList.length > 0) {
+                    const validSongs = songList.filter((s) => isSongPlayable(s));
+                    if (validSongs.length === 0) {
+                        setError('No playable songs in the provided list');
+                        return prevQueue;
+                    }
+                    const index = validSongs.findIndex((s) => s.id === song.id);
                     setCurrentIndex(index >= 0 ? index : 0);
                     return validSongs;
-                } else {
-                    const index = prev.findIndex(s => s.id === song.id);
-                    if (index >= 0) {
-                        setCurrentIndex(index);
-                    }
-                    return prev;
+                } else if (!prevQueue.some((s) => s.id === song.id)) {
+                    // Only update queue if the song isn't already in it
+                    const validSongs = (filteredSongs.length > 0 ? filteredSongs : songs).filter((s) => isSongPlayable(s));
+                    const index = validSongs.findIndex((s) => s.id === song.id);
+                    setCurrentIndex(index >= 0 ? index : 0);
+                    return validSongs;
                 }
+                // If song is already in queue, just update the index
+                const index = prevQueue.findIndex((s) => s.id === song.id);
+                if (index >= 0) {
+                    setCurrentIndex(index);
+                }
+                return prevQueue;
             });
-        }
 
-        setCurrentSong(song);
-        setIsPlaying(true);
-        setError(null);
-    }, [filteredSongs, songs]);
+            setCurrentSong(song);
+            setIsPlaying(true);
+            setError(null);
+        }, 300), // Debounce for 300ms
+        [filteredSongs, songs, isSongPlayable]
+    );
 
     const playNext = useCallback(() => {
         setQueue(currentQueue => {
@@ -745,6 +757,7 @@ export default function Page() {
         if (!currentSong) return;
 
         let isCancelled = false;
+        let retryTimeout = null;
 
         const playSong = async () => {
             try {
@@ -753,14 +766,24 @@ export default function Page() {
 
                 if (isPremium && playerReady && deviceId && currentSong.spotify_uri) {
                     try {
-                        await axios.put(
-                            `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
-                            { uris: [currentSong.spotify_uri] },
-                            { headers: { Authorization: `Bearer ${accessToken}` } }
+                        await apiCallWithBackoff(() =>
+                            axios.put(
+                                `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
+                                { uris: [currentSong.spotify_uri] },
+                                { headers: { Authorization: `Bearer ${accessToken}` } }
+                            )
                         );
                         console.log('✅ Playing via Spotify SDK');
                         return;
                     } catch (sdkError) {
+                        if (sdkError.response?.status === 429) {
+                            const retryAfter = parseInt(sdkError.response.headers['retry-after'] || '10', 10) * 1000;
+                            console.warn(`Rate limited. Retrying after ${retryAfter}ms...`);
+                            if (!isCancelled) {
+                                retryTimeout = setTimeout(playSong, retryAfter + Math.random() * 100);
+                            }
+                            return;
+                        }
                         console.warn('⚠️ SDK failed, trying preview:', sdkError.message);
                     }
                 }
@@ -793,8 +816,8 @@ export default function Page() {
                         setError(null);
                     }
 
-                    setRecentlyPlayed(prev => {
-                        const newPlayed = [currentSong, ...prev.filter(s => s.id !== currentSong.id)];
+                    setRecentlyPlayed((prev) => {
+                        const newPlayed = [currentSong, ...prev.filter((s) => s.id !== currentSong.id)];
                         return newPlayed.slice(0, 5);
                     });
 
@@ -821,6 +844,10 @@ export default function Page() {
                     } else if (err.name === 'NotAllowedError') {
                         setError('Playback blocked. Please click play to start.');
                         setIsPlaying(false);
+                    } else if (err.response?.status === 429) {
+                        const retryAfter = parseInt(err.response.headers['retry-after'] || '10', 10) * 1000;
+                        console.warn(`Rate limited. Retrying after ${retryAfter}ms...`);
+                        retryTimeout = setTimeout(playSong, retryAfter + Math.random() * 100);
                     } else {
                         setError('Failed to play: ' + err.message);
                         setIsPlaying(false);
@@ -840,9 +867,11 @@ export default function Page() {
             if (audioRef.current) {
                 audioRef.current.pause();
             }
+            if (retryTimeout) {
+                clearTimeout(retryTimeout);
+            }
         };
-    }, [currentSong, isPremium, spotifyPlayer, deviceId, accessToken, isPlaying]);
-
+    }, [currentSong, isPremium, playerReady, deviceId, accessToken, isPlaying]);
     useEffect(() => {
         if (!audioRef.current || isPremium) return;
 
@@ -1032,6 +1061,8 @@ export default function Page() {
         setActiveTab('playlist-detail');
     };
 
+
+
     const deleteSong = (songId) => {
         if (window.confirm('Are you sure you want to delete this song?')) {
             setSongs(prev => prev.filter(song => song.id !== songId));
@@ -1057,11 +1088,14 @@ export default function Page() {
     };
 
     const playAllSongs = (songList) => {
-        if (songList.length === 0) return;
+        if (songList.length === 0) {
+            setError('No songs in this playlist');
+            return;
+        }
 
-        const validSongs = songList.filter(s => s.preview_url || s.spotify_uri);
+        const validSongs = songList.filter((s) => isSongPlayable(s));
         if (validSongs.length === 0) {
-            setError('No playable songs in this list');
+            setError('No playable songs in this playlist');
             return;
         }
 
@@ -1484,7 +1518,11 @@ export default function Page() {
                                     </div>
                                 ) : (
                                     selectedPlaylist.songs.map((song, index) => (
-                                        <div key={song.id} className="playlist-song-item" onClick={() => selectSong(song, selectedPlaylist.songs)}>
+                                        <div
+                                            key={song.id}
+                                            className="playlist-song-item"
+                                            onClick={() => selectSong(song, selectedPlaylist.songs)}
+                                        >
                                             <span className="song-number">{index + 1}</span>
                                             <Image
                                                 src={song.cover}
@@ -1505,7 +1543,10 @@ export default function Page() {
                                             </button>
                                             <Heart
                                                 className={`heart-icon ${likedSongs.has(song.id) ? 'liked' : ''}`}
-                                                onClick={(e) => { e.stopPropagation(); toggleLike(song.id); }}
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    toggleLike(song.id);
+                                                }}
                                             />
                                         </div>
                                     ))
