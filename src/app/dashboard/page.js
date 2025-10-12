@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import Image from 'next/image';
+import Link from 'next/link';
 import './page.css';
 import {
     Play, Pause, SkipBack, SkipForward, Volume2, Heart, Search, Home, Music, User,
@@ -10,7 +11,7 @@ import {
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
-// Static songs data
+// Static songs data (centralized)
 const staticSongs = [
     { id: 1, title: "Midnight Dreams", artist: "Luna Martinez", album: "Nocturnal Vibes", duration: "3:24", cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center", genre: "Pop", plays: 1234567, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3", spotify_uri: null },
     { id: 2, title: "Electric Pulse", artist: "Neon Collective", album: "Digital Horizons", duration: "4:12", cover: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&h=300&fit=crop&crop=center", genre: "Electronic", plays: 987654, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3", spotify_uri: null },
@@ -21,6 +22,15 @@ const staticSongs = [
     { id: 7, title: "Classical Morning", artist: "Orchestra Symphony", album: "Dawn Collection", duration: "6:45", cover: "https://images.unsplash.com/photo-1507838153414-b4b713384a76?w=300&h=300&fit=crop&crop=center", genre: "Classical", plays: 432109, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3", spotify_uri: null },
     { id: 8, title: "Country Roads", artist: "Nashville Stars", album: "Southern Tales", duration: "3:56", cover: "https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=300&h=300&fit=crop&crop=center", genre: "Country", plays: 321098, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3", spotify_uri: null }
 ];
+
+// Utility to debounce functions
+const debounce = (func, wait) => {
+    let timeout;
+    return (...args) => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func(...args), wait);
+    };
+};
 
 export default function Page() {
     const router = useRouter();
@@ -90,8 +100,8 @@ export default function Page() {
             } catch (err) {
                 if (err.response?.status === 429) {
                     const retryAfter = parseInt(err.response.headers['retry-after'] || '10', 10) * 1000;
-                    console.log(`Rate limited. Retrying after ${retryAfter}ms...`);
-                    await new Promise((resolve) => setTimeout(resolve, retryAfter + Math.random() * 100));
+                    console.warn(`Rate limited. Retrying after ${retryAfter}ms...`);
+                    await new Promise(resolve => setTimeout(resolve, retryAfter + Math.random() * 100));
                     continue;
                 }
                 throw err;
@@ -158,14 +168,7 @@ export default function Page() {
             const magnitudeB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
             return magnitudeA && magnitudeB ? dotProduct / (magnitudeA * magnitudeB) : 0;
         };
-// Utility to debounce functions
-        const debounce = (func, wait) => {
-            let timeout;
-            return (...args) => {
-                clearTimeout(timeout);
-                timeout = setTimeout(() => func(...args), wait);
-            };
-        };
+
         const songVectors = allSongs.map(song => ({
             song,
             vector: createFeatureVector(song)
@@ -211,7 +214,6 @@ export default function Page() {
             if (cachedTracks) {
                 setSongs(cachedTracks);
                 generateRecommendations(cachedTracks);
-                setLoading(false);
                 return;
             }
 
@@ -257,7 +259,6 @@ export default function Page() {
             const cachedPlaylists = getCachedData(CACHE_KEY_PLAYLISTS);
             if (cachedPlaylists) {
                 setPlaylists(cachedPlaylists);
-                setLoading(false);
                 return;
             }
 
@@ -377,7 +378,10 @@ export default function Page() {
     }, [accessToken]);
 
     const createPlaylist = async () => {
-        if (!newPlaylistName.trim()) return;
+        if (!newPlaylistName.trim()) {
+            setError('Playlist name cannot be empty');
+            return;
+        }
 
         if (accessToken && currentUser?.id) {
             try {
@@ -396,6 +400,7 @@ export default function Page() {
                 }]);
                 setNewPlaylistName('');
                 setShowCreatePlaylist(false);
+                setError(null);
             } catch (err) {
                 console.error('Failed to create playlist:', err);
                 setError(err.response?.status === 429 ? 'Rate limit exceeded. Please wait and try again.' : 'Failed to create playlist');
@@ -410,6 +415,7 @@ export default function Page() {
             setPlaylists(prev => [...prev, newPlaylist]);
             setNewPlaylistName('');
             setShowCreatePlaylist(false);
+            setError(null);
         }
     };
 
@@ -434,7 +440,6 @@ export default function Page() {
                 return;
             }
 
-            // Update queue only if necessary
             setQueue((prevQueue) => {
                 if (songList && songList.length > 0) {
                     const validSongs = songList.filter((s) => isSongPlayable(s));
@@ -446,13 +451,11 @@ export default function Page() {
                     setCurrentIndex(index >= 0 ? index : 0);
                     return validSongs;
                 } else if (!prevQueue.some((s) => s.id === song.id)) {
-                    // Only update queue if the song isn't already in it
                     const validSongs = (filteredSongs.length > 0 ? filteredSongs : songs).filter((s) => isSongPlayable(s));
                     const index = validSongs.findIndex((s) => s.id === song.id);
                     setCurrentIndex(index >= 0 ? index : 0);
                     return validSongs;
                 }
-                // If song is already in queue, just update the index
                 const index = prevQueue.findIndex((s) => s.id === song.id);
                 if (index >= 0) {
                     setCurrentIndex(index);
@@ -463,7 +466,7 @@ export default function Page() {
             setCurrentSong(song);
             setIsPlaying(true);
             setError(null);
-        }, 300), // Debounce for 300ms
+        }, 300),
         [filteredSongs, songs, isSongPlayable]
     );
 
@@ -583,13 +586,9 @@ export default function Page() {
 
         } catch (err) {
             console.error('❌ Profile fetch error:', err);
-
-            if (err.response?.status === 429) {
-                const retryAfter = err.response.headers['retry-after'] || '10';
-                setError(`Rate limited. Please wait ${retryAfter} seconds and refresh.`);
-            } else {
-                setError('Failed to fetch profile: ' + (err.response?.data?.error?.message || err.message));
-            }
+            setError(err.response?.status === 429
+                ? 'Too many requests. Please wait and try again.'
+                : 'Failed to fetch profile: ' + (err.response?.data?.error?.message || err.message));
         } finally {
             setLoading(false);
         }
@@ -609,17 +608,14 @@ export default function Page() {
             console.log('📥 Loading playlists...');
             await fetchUserPlaylists(accessToken);
 
-            console.log('✅ Spotify data loaded');
             setError('Spotify library loaded successfully!');
             setTimeout(() => setError(null), 3000);
 
         } catch (err) {
             console.error('❌ Failed to load Spotify data:', err);
-            if (err.response?.status === 429) {
-                setError('Rate limit exceeded. Please try again in 1 minute.');
-            } else {
-                setError('Failed to load Spotify data');
-            }
+            setError(err.response?.status === 429
+                ? 'Too many requests. Please try again in a moment.'
+                : 'Failed to load Spotify data');
         } finally {
             setLoading(false);
         }
@@ -690,7 +686,10 @@ export default function Page() {
                     setDeviceId(null);
                     setPlayerReady(false);
                 });
-
+                playerInstance.addListener('initialization_error', ({ message }) => {
+                    console.error('Spotify Player initialization error:', message);
+                    setError('Failed to initialize Spotify player');
+                });
                 playerInstance.addListener('player_state_changed', (state) => {
                     if (!state) return;
                     setIsPlaying(!state.paused);
@@ -718,7 +717,12 @@ export default function Page() {
                     }
                 });
 
-                playerInstance.connect();
+                playerInstance.connect().catch(err => {
+                    console.error('Spotify Player connection error:', err);
+                    setError('Failed to connect Spotify player');
+                });
+            } else {
+                setError('Spotify Web Playback SDK not loaded');
             }
         };
 
@@ -726,6 +730,10 @@ export default function Page() {
             scriptElement = document.createElement('script');
             scriptElement.src = 'https://sdk.scdn.co/spotify-player.js';
             scriptElement.async = true;
+            scriptElement.onerror = () => {
+                console.error('Failed to load Spotify SDK script');
+                setError('Failed to load Spotify player');
+            };
             document.body.appendChild(scriptElement);
             window.onSpotifyWebPlaybackSDKReady = initializePlayer;
         } else {
@@ -826,14 +834,14 @@ export default function Page() {
 
                 if (!isCancelled) {
                     if (isPremium && currentSong.spotify_uri && !playerReady) {
-                        setError(`Player initializing... Please wait.`);
+                        setError('Player is initializing. Please wait.');
                     } else if (!currentSong.preview_url && !currentSong.spotify_uri) {
-                        setError(`No playable content available for "${currentSong.title}"`);
+                        setError(`No playable content for "${currentSong.title}"`);
                     } else if (currentSong.spotify_uri && !currentSong.preview_url && !isPremium) {
-                        setError(`"${currentSong.title}" requires Spotify Premium. No preview available.`);
+                        setError(`"${currentSong.title}" requires Spotify Premium`);
                     } else {
                         console.error('Playback failed despite available content');
-                        setError(`Failed to play "${currentSong.title}". Please try again.`);
+                        setError(`Failed to play "${currentSong.title}"`);
                     }
                     setIsPlaying(false);
                 }
@@ -872,21 +880,40 @@ export default function Page() {
             }
         };
     }, [currentSong, isPremium, playerReady, deviceId, accessToken, isPlaying]);
+
     useEffect(() => {
         if (!audioRef.current || isPremium) return;
 
         const audio = audioRef.current;
 
+        const handleTimeUpdate = () => setCurrentTime(audio.currentTime || 0);
+        const handleLoadedMetadata = () => setDuration(audio.duration || 30);
+        const handleError = (e) => {
+            console.error('Audio error:', e);
+            setError('Error loading audio file');
+        };
+
+        audio.addEventListener('timeupdate', handleTimeUpdate);
+        audio.addEventListener('loadedmetadata', handleLoadedMetadata);
+        audio.addEventListener('error', handleError);
+
         if (isPlaying && !isLoadingSong) {
             audio.play().catch(err => {
                 if (err.name !== 'AbortError') {
                     console.error('Play error:', err);
+                    setError('Playback error. Please try again.');
                     setIsPlaying(false);
                 }
             });
         } else {
             audio.pause();
         }
+
+        return () => {
+            audio.removeEventListener('timeupdate', handleTimeUpdate);
+            audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+            audio.removeEventListener('error', handleError);
+        };
     }, [isPlaying, isLoadingSong, isPremium]);
 
     useEffect(() => {
@@ -896,7 +923,7 @@ export default function Page() {
         const handleEnded = () => {
             if (repeat === 'one') {
                 audio.currentTime = 0;
-                audio.play().catch(console.error);
+                audio.play().catch(err => console.error('Replay error:', err));
             } else {
                 playNext();
             }
@@ -985,7 +1012,7 @@ export default function Page() {
                 setCurrentTime(seekTime / 1000);
             } catch (err) {
                 console.error('Failed to seek:', err);
-                setError('Failed to seek: ' + err.message);
+                setError('Failed to seek track');
             }
         } else if (audioRef.current && duration) {
             const progressBar = e.currentTarget;
@@ -1008,11 +1035,7 @@ export default function Page() {
     const handleSearch = (e) => {
         const query = e.target.value;
         setSearchQuery(query);
-        if (query) {
-            searchSongs(query);
-        } else {
-            setFilteredSongs(songs);
-        }
+        searchSongs(query);
     };
 
     const applyFilters = useCallback(() => {
@@ -1061,12 +1084,14 @@ export default function Page() {
         setActiveTab('playlist-detail');
     };
 
-
-
     const deleteSong = (songId) => {
         if (window.confirm('Are you sure you want to delete this song?')) {
             setSongs(prev => prev.filter(song => song.id !== songId));
             setFilteredSongs(prev => prev.filter(song => song.id !== songId));
+            setPlaylists(prev => prev.map(playlist => ({
+                ...playlist,
+                songs: playlist.songs.filter(song => song.id !== songId)
+            })));
         }
     };
 
@@ -1077,13 +1102,22 @@ export default function Page() {
 
         setSongs(prev => prev.map(song => song.id === editingSong.id ? editingSong : song));
         setFilteredSongs(prev => prev.map(song => song.id === editingSong.id ? editingSong : song));
+        setPlaylists(prev => prev.map(playlist => ({
+            ...playlist,
+            songs: playlist.songs.map(song => song.id === editingSong.id ? editingSong : song)
+        })));
         setEditingSong(null);
     };
 
     const deleteArtist = (artistName) => {
         if (window.confirm(`Are you sure you want to delete ${artistName} and all their songs?`)) {
             setSongs(prev => prev.filter(song => song.artist !== artistName));
+            setFilteredSongs(prev => prev.filter(song => song.artist !== artistName));
             setArtists(prev => prev.filter(artist => artist.name !== artistName));
+            setPlaylists(prev => prev.map(playlist => ({
+                ...playlist,
+                songs: playlist.songs.filter(song => song.artist !== artistName)
+            })));
         }
     };
 
@@ -1123,15 +1157,15 @@ export default function Page() {
                         <button onClick={handleSpotifyLogin} className="login-btn spotify-btn">
                             Login with Spotify
                         </button>
-                        <button onClick={() => router.push('/login')} className="login-btn user-btn">
-                            Login as User
-                        </button>
-                        <button onClick={() => router.push('/login')} className="login-btn admin-btn">
-                            Login as Admin
-                        </button>
+                        <Link href="/login?type=user">
+                            <button className="login-btn user-btn">Login as User</button>
+                        </Link>
+                        <Link href="/login?type=admin">
+                            <button className="login-btn admin-btn">Login as Admin</button>
+                        </Link>
                     </div>
                     {loading && <p>Loading...</p>}
-                    {error && <p className="error-text">Error: {error}</p>}
+                    {error && <p className="error-text">{error}</p>}
                 </div>
             </div>
         );
@@ -1207,7 +1241,14 @@ export default function Page() {
                         <h3 className="quick-title">Quick Playlists</h3>
                         <div className="playlist-list">
                             {playlists.slice(0, 3).map((playlist) => (
-                                <div key={playlist.id} className="playlist-item" onClick={() => openPlaylist(playlist)}>
+                                <div
+                                    key={playlist.id}
+                                    className="playlist-item"
+                                    onClick={() => openPlaylist(playlist)}
+                                    role="button"
+                                    tabIndex={0}
+                                    onKeyDown={(e) => e.key === 'Enter' && openPlaylist(playlist)}
+                                >
                                     <Image
                                         src={playlist.cover}
                                         alt={playlist.name}
@@ -1289,7 +1330,14 @@ export default function Page() {
                                         )}
                                         <div className="featured-songs">
                                             {songs.map((song) => (
-                                                <div key={song.id} className="song-card" onClick={() => selectSong(song)}>
+                                                <div
+                                                    key={song.id}
+                                                    className="song-card"
+                                                    onClick={() => selectSong(song)}
+                                                    role="button"
+                                                    tabIndex={0}
+                                                    onKeyDown={(e) => e.key === 'Enter' && selectSong(song)}
+                                                >
                                                     <div className="song-cover-container">
                                                         <Image
                                                             src={song.cover}
@@ -1314,7 +1362,14 @@ export default function Page() {
                                             <h3 className="section-title">Recently Played</h3>
                                             <div className="recent-list">
                                                 {recentlyPlayed.slice(0, 3).map((song) => (
-                                                    <div key={song.id} className="recent-item" onClick={() => selectSong(song)}>
+                                                    <div
+                                                        key={song.id}
+                                                        className="recent-item"
+                                                        onClick={() => selectSong(song)}
+                                                        role="button"
+                                                        tabIndex={0}
+                                                        onKeyDown={(e) => e.key === 'Enter' && selectSong(song)}
+                                                    >
                                                         <Image
                                                             src={song.cover}
                                                             alt={song.title}
@@ -1341,7 +1396,14 @@ export default function Page() {
                                             <h3 className="section-title">Recommended For You</h3>
                                             <div className="featured-songs">
                                                 {recommendations.map((song) => (
-                                                    <div key={song.id} className="song-card" onClick={() => selectSong(song)}>
+                                                    <div
+                                                        key={song.id}
+                                                        className="song-card"
+                                                        onClick={() => selectSong(song)}
+                                                        role="button"
+                                                        tabIndex={0}
+                                                        onKeyDown={(e) => e.key === 'Enter' && selectSong(song)}
+                                                    >
                                                         <div className="song-cover-container">
                                                             <Image
                                                                 src={song.cover}
@@ -1393,7 +1455,13 @@ export default function Page() {
                             {loading ? <p>Loading...</p> : error ? <p className="error-text">{error}</p> : filteredSongs.length > 0 ? (
                                 <div className="search-results">
                                     {filteredSongs.map((song) => (
-                                        <div key={song.id} className="search-item">
+                                        <div
+                                            key={song.id}
+                                            className="search-item"
+                                            role="button"
+                                            tabIndex={0}
+                                            onKeyDown={(e) => e.key === 'Enter' && selectSong(song)}
+                                        >
                                             <Image
                                                 src={song.cover}
                                                 alt={song.title}
@@ -1463,7 +1531,14 @@ export default function Page() {
                             {loading ? <p>Loading...</p> : error ? <p className="error-text">{error}</p> : (
                                 <div className="playlists-grid">
                                     {playlists.map((playlist) => (
-                                        <div key={playlist.id} className="playlist-card" onClick={() => openPlaylist(playlist)}>
+                                        <div
+                                            key={playlist.id}
+                                            className="playlist-card"
+                                            onClick={() => openPlaylist(playlist)}
+                                            role="button"
+                                            tabIndex={0}
+                                            onKeyDown={(e) => e.key === 'Enter' && openPlaylist(playlist)}
+                                        >
                                             <Image
                                                 src={playlist.cover}
                                                 alt={playlist.name}
@@ -1473,7 +1548,10 @@ export default function Page() {
                                                 loading="lazy"
                                             />
                                             <div className="playlist-card-overlay">
-                                                <button className="playlist-play-btn" onClick={(e) => { e.stopPropagation(); playAllSongs(playlist.songs); }}>
+                                                <button
+                                                    className="playlist-play-btn"
+                                                    onClick={(e) => { e.stopPropagation(); playAllSongs(playlist.songs); }}
+                                                >
                                                     <Play className="play-icon" />
                                                 </button>
                                             </div>
@@ -1522,6 +1600,9 @@ export default function Page() {
                                             key={song.id}
                                             className="playlist-song-item"
                                             onClick={() => selectSong(song, selectedPlaylist.songs)}
+                                            role="button"
+                                            tabIndex={0}
+                                            onKeyDown={(e) => e.key === 'Enter' && selectSong(song, selectedPlaylist.songs)}
                                         >
                                             <span className="song-number">{index + 1}</span>
                                             <Image
@@ -1656,151 +1737,151 @@ export default function Page() {
                                             />
                                             <select
                                                 value={editingSong.genre}
-                                                onChange={(e) => setEditingSong({ ...editingSong, genre: e.target.value })}
-                                                className="form-select"
-                                            >
-                                                <option value="Pop">Pop</option><option value="Electronic">Electronic</option><option value="Acoustic">Acoustic</option>
-                                                <option value="Hip-Hop">Hip-Hop</option><option value="Rock">Rock</option><option value="Jazz">Jazz</option>
-                                                <option value="Classical">Classical</option><option value="Country">Country</option>
-                                            </select>
-                                        </div>
-                                        <div className="form-actions">
-                                            <button onClick={saveEditSong} className="save-btn">Save Changes</button>
-                                            <button onClick={() => setEditingSong(null)} className="cancel-btn">Cancel</button>
-                                        </div>
-                                    </div>
-                                ) : null}
-                                <div className="songs-list">
-                                    {songs.map((song) => (
-                                        <div key={song.id} className="admin-song-item">
-                                            <Image
-                                                src={song.cover}
-                                                alt={song.title}
-                                                className="admin-song-cover"
-                                                width={300}
-                                                height={300}
-                                                loading="lazy"
-                                            />
-                                            <div className="admin-song-info">
-                                                <h4 className="admin-song-title">{song.title}</h4>
-                                                <p className="admin-song-artist">{song.artist} • {song.album}</p>
-                                                <p className="admin-song-genre">{song.genre} • {song.plays.toLocaleString()} plays</p>
-                                            </div>
-                                            <div className="admin-song-actions">
-                                                <button onClick={() => startEditSong(song)} className="edit-btn">Edit</button>
-                                                <button onClick={() => deleteSong(song.id)} className="delete-btn">Delete</button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                            <div className="admin-panel">
-                                <h3 className="panel-title">Artists Management</h3>
-                                <div className="artists-grid">
-                                    {artists.map((artist) => (
-                                        <div key={artist.id} className="artist-card">
-                                            <div className="artist-icon-circle"><User className="artist-icon" /></div>
-                                            <h4 className="artist-name">{artist.name}</h4>
-                                            <p className="artist-stats">{artist.songs} songs • {artist.albums} albums</p>
-                                            <button onClick={() => deleteArtist(artist.name)} className="delete-artist-btn">Remove</button>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-                    )}
-                </main>
+                                                onChange={(e) => setEditingSong({ ...editingSong, genre:e.target.value })}
+className="form-select"
+    >
+    <option value="Pop">Pop</option><option value="Electronic">Electronic</option><option value="Acoustic">Acoustic</option>
+<option value="Hip-Hop">Hip-Hop</option><option value="Rock">Rock</option><option value="Jazz">Jazz</option>
+<option value="Classical">Classical</option><option value="Country">Country</option>
+</select>
+</div>
+<div className="form-actions">
+    <button onClick={saveEditSong} className="save-btn">Save Changes</button>
+    <button onClick={() => setEditingSong(null)} className="cancel-btn">Cancel</button>
+</div>
+</div>
+) : null}
+<div className="songs-list">
+    {songs.map((song) => (
+        <div key={song.id} className="admin-song-item">
+            <Image
+                src={song.cover}
+                alt={song.title}
+                className="admin-song-cover"
+                width={300}
+                height={300}
+                loading="lazy"
+            />
+            <div className="admin-song-info">
+                <h4 className="admin-song-title">{song.title}</h4>
+                <p className="admin-song-artist">{song.artist} • {song.album}</p>
+                <p className="admin-song-genre">{song.genre} • {song.plays.toLocaleString()} plays</p>
             </div>
-            {showAddToPlaylist && (
-                <div className="modal-overlay" onClick={() => setShowAddToPlaylist(false)}>
-                    <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-                        <h3 className="modal-title">Add to Playlist</h3>
-                        <p className="modal-subtitle">Select a playlist for {selectedSongForPlaylist?.title}</p>
-                        <div className="modal-playlist-list">
-                            {playlists.map((playlist) => (
-                                <button key={playlist.id} onClick={() => addSongToPlaylist(playlist.id)} className="modal-playlist-item">
-                                    <Image
-                                        src={playlist.cover}
-                                        alt={playlist.name}
-                                        className="modal-playlist-cover"
-                                        width={300}
-                                        height={300}
-                                        loading="lazy"
-                                    />
-                                    <span className="modal-playlist-name">{playlist.name}</span>
-                                    <span className="modal-playlist-count">{playlist.songs.length} songs</span>
-                                </button>
-                            ))}
-                        </div>
-                        <button onClick={() => setShowAddToPlaylist(false)} className="modal-close-btn">Close</button>
-                    </div>
+            <div className="admin-song-actions">
+                <button onClick={() => startEditSong(song)} className="edit-btn">Edit</button>
+                <button onClick={() => deleteSong(song.id)} className="delete-btn">Delete</button>
+            </div>
+        </div>
+    ))}
+</div>
+</div>
+<div className="admin-panel">
+    <h3 className="panel-title">Artists Management</h3>
+    <div className="artists-grid">
+        {artists.map((artist) => (
+            <div key={artist.id} className="artist-card">
+                <div className="artist-icon-circle"><User className="artist-icon" /></div>
+                <h4 className="artist-name">{artist.name}</h4>
+                <p className="artist-stats">{artist.songs} songs • {artist.albums} albums</p>
+                <button onClick={() => deleteArtist(artist.name)} className="delete-artist-btn">Remove</button>
+            </div>
+        ))}
+    </div>
+</div>
+</div>
+)}
+</main>
+</div>
+{showAddToPlaylist && (
+    <div className="modal-overlay" onClick={() => setShowAddToPlaylist(false)}>
+        <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">Add to Playlist</h3>
+            <p className="modal-subtitle">Select a playlist for {selectedSongForPlaylist?.title}</p>
+            <div className="modal-playlist-list">
+                {playlists.map((playlist) => (
+                    <button key={playlist.id} onClick={() => addSongToPlaylist(playlist.id)} className="modal-playlist-item">
+                        <Image
+                            src={playlist.cover}
+                            alt={playlist.name}
+                            className="modal-playlist-cover"
+                            width={300}
+                            height={300}
+                            loading="lazy"
+                        />
+                        <span className="modal-playlist-name">{playlist.name}</span>
+                        <span className="modal-playlist-count">{playlist.songs.length} songs</span>
+                    </button>
+                ))}
+            </div>
+            <button onClick={() => setShowAddToPlaylist(false)} className="modal-close-btn">Close</button>
+        </div>
+    </div>
+)}
+{currentSong && (
+    <div className="music-player">
+        <div className="player-content">
+            <div className="player-left">
+                <Image
+                    src={currentSong.cover}
+                    alt={currentSong.title}
+                    className="player-cover"
+                    width={300}
+                    height={300}
+                    loading="lazy"
+                />
+                <div className="player-info">
+                    <h4 className="player-title">{currentSong.title}</h4>
+                    <p className="player-artist">{currentSong.artist}</p>
+                    {(!isPremium || !currentSong.spotify_uri) && currentSong.preview_url && <p className="player-note">30-second preview</p>}
                 </div>
-            )}
-            {currentSong && (
-                <div className="music-player">
-                    <div className="player-content">
-                        <div className="player-left">
-                            <Image
-                                src={currentSong.cover}
-                                alt={currentSong.title}
-                                className="player-cover"
-                                width={300}
-                                height={300}
-                                loading="lazy"
-                            />
-                            <div className="player-info">
-                                <h4 className="player-title">{currentSong.title}</h4>
-                                <p className="player-artist">{currentSong.artist}</p>
-                                {(!isPremium || !currentSong.spotify_uri) && currentSong.preview_url && <p className="player-note">30-second preview</p>}
-                            </div>
-                        </div>
-                        <div className="player-controls">
-                            <button className={`control-btn ${shuffle ? 'active' : ''}`} onClick={toggleShuffle}>
-                                <Shuffle className="control-icon" />
-                            </button>
-                            <button className="control-btn" onClick={playPrevious}>
-                                <SkipBack className="control-icon" />
-                            </button>
-                            <button onClick={togglePlay} className="play-btn">
-                                {isPlaying ? <Pause className="play-icon" /> : <Play className="play-icon" />}
-                            </button>
-                            <button className="control-btn" onClick={playNext}>
-                                <SkipForward className="control-icon" />
-                            </button>
-                            <button className={`control-btn ${repeat !== 'off' ? 'active' : ''}`} onClick={toggleRepeat}>
-                                <Repeat className="control-icon" />
-                                {repeat === 'one' && <span className="repeat-indicator">1</span>}
-                            </button>
-                        </div>
-                        <div className="player-right">
-                            <Heart
-                                className={`heart-btn ${likedSongs.has(currentSong.id) ? 'liked' : ''}`}
-                                onClick={() => toggleLike(currentSong.id)}
-                            />
-                            <div className="volume-controls">
-                                <Volume2 className="volume-icon" />
-<input
-type="range"
-min="0"
-max="100"
-value={volume}
-onChange={(e) => setVolume(e.target.value)}
-className="volume-slider"
-    />
+            </div>
+            <div className="player-controls">
+                <button className={`control-btn ${shuffle ? 'active' : ''}`} onClick={toggleShuffle}>
+                    <Shuffle className="control-icon" />
+                </button>
+                <button className="control-btn" onClick={playPrevious}>
+                    <SkipBack className="control-icon" />
+                </button>
+                <button onClick={togglePlay} className="play-btn">
+                    {isPlaying ? <Pause className="play-icon" /> : <Play className="play-icon" />}
+                </button>
+                <button className="control-btn" onClick={playNext}>
+                    <SkipForward className="control-icon" />
+                </button>
+                <button className={`control-btn ${repeat !== 'off' ? 'active' : ''}`} onClick={toggleRepeat}>
+                    <Repeat className="control-icon" />
+                    {repeat === 'one' && <span className="repeat-indicator">1</span>}
+                </button>
+            </div>
+            <div className="player-right">
+                <Heart
+                    className={`heart-btn ${likedSongs.has(currentSong.id) ? 'liked' : ''}`}
+                    onClick={() => toggleLike(currentSong.id)}
+                />
+                <div className="volume-controls">
+                    <Volume2 className="volume-icon" />
+                    <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={volume}
+                        onChange={(e) => setVolume(e.target.value)}
+                        className="volume-slider"
+                    />
+                </div>
+            </div>
+        </div>
+        <div className="progress-section">
+            {error && <p className="player-error">{error}</p>}
+            <div className="progress-time">
+                <span>{formatTime(currentTime)}</span>
+                <span>{currentSong.duration}</span>
+            </div>
+            <div className="progress-bar" onClick={handleSeek}>
+                <div className="progress-fill" style={{ width: `${(currentTime / duration) * 100}%` }}></div>
+            </div>
+        </div>
     </div>
-</div>
-</div>
-<div className="progress-section">
-    {error && <p className="player-error">{error}</p>}
-    <div className="progress-time">
-        <span>{formatTime(currentTime)}</span>
-        <span>{currentSong.duration}</span>
-    </div>
-    <div className="progress-bar" onClick={handleSeek}>
-        <div className="progress-fill" style={{ width: `${(currentTime / duration) * 100}%` }}></div>
-    </div>
-</div>
-</div>
 )}
 </div>
 );
