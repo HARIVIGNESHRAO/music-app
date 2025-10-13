@@ -54,7 +54,11 @@ export default function Page() {
     const searchTimerRef = useRef(null);
     const isLoadingRef = useRef(false);
     const profileLoadedRef = useRef(false);
-
+    const [queue, setQueue] = useState([]);
+    const [currentIndex, setCurrentIndex] = useState(0);
+    const [shuffle, setShuffle] = useState(false);
+    const [repeat, setRepeat] = useState('off');
+    const [isLoadingSong, setIsLoadingSong] = useState(false);
     const CLIENT_ID = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID;
     const REDIRECT_URI = process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI;
     const AUTH_ENDPOINT = 'https://accounts.spotify.com/authorize';
