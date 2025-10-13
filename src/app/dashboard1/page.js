@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import Image from 'next/image';
 import Link from 'next/link';
-import './page.css';
+//import './page.css';
 import {
     Play, Pause, SkipBack, SkipForward, Volume2, Heart, Search, Home, Music, User,
     Plus, Shuffle, Repeat, MoreVertical, TrendingUp, Users, BarChart3, Shield
