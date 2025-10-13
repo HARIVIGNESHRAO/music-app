@@ -661,10 +661,13 @@ export default function Page() {
         const cacheKey = query.toLowerCase();
         const cached = searchCache[cacheKey];
 
+        // Check cache first
         if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
             setFilteredSongs(cached.data);
+            setLoading(false);
             return;
         }
+
         if (searchTimerRef.current) {
             clearTimeout(searchTimerRef.current);
         }
@@ -678,6 +681,8 @@ export default function Page() {
         searchTimerRef.current = setTimeout(async () => {
             try {
                 setLoading(true);
+                setError(null); // Clear previous errors
+
                 const response = await axios.get('https://www.googleapis.com/youtube/v3/search', {
                     params: {
                         part: 'snippet',
@@ -688,6 +693,13 @@ export default function Page() {
                         key: API_KEY
                     }
                 });
+
+                if (!response.data.items || response.data.items.length === 0) {
+                    setFilteredSongs([]);
+                    setError('No results found');
+                    setLoading(false);
+                    return;
+                }
 
                 const videoIds = response.data.items.map(item => item.id.videoId).join(',');
 
@@ -715,17 +727,38 @@ export default function Page() {
                 });
 
                 setFilteredSongs(mappedSongs);
+
+                // ✅ SAVE TO CACHE
+                setSearchCache(prev => ({
+                    ...prev,
+                    [cacheKey]: {
+                        data: mappedSongs,
+                        timestamp: Date.now()
+                    }
+                }));
+
                 generateRecommendations([...songs, ...mappedSongs]);
+
                 const uniqueArtists = [...new Set(mappedSongs.map(song => song.artist))];
                 setAllArtists(prev => [...new Set([...prev, ...uniqueArtists])]);
+
             } catch (err) {
                 console.error('Search failed:', err);
-                setError('Search failed on YouTube');
+
+                // Better error handling
+                if (err.response?.status === 403) {
+                    setError('YouTube quota exceeded. Please try again later.');
+                } else if (err.response?.status === 400) {
+                    setError('Invalid search query. Please try different keywords.');
+                } else {
+                    setError('Search failed. Please check your connection.');
+                }
             } finally {
                 setLoading(false);
             }
         }, 500);
     };
+
 
     const handleLogout = () => {
         setCurrentUser(null);
