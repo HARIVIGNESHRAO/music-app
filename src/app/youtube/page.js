@@ -54,7 +54,8 @@ export default function Page() {
     const playerRef = useRef(null);
     const searchTimerRef = useRef(null);
     const recognitionRef = useRef(null);
-
+    const [searchCache, setSearchCache] = useState({});
+    const CACHE_DURATION = 3600000; // 1 hour
     const API_KEY = 'AIzaSyAcs7P-US-RJHsYj7CAtAZ0q1OZODISQmE';
     const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://backendserver-edb4bafdgxcwg7d5.centralindia-01.azurewebsites.net';
     const DEFAULT_COVER = 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center';
@@ -558,7 +559,7 @@ export default function Page() {
             const response = await axios.get('https://www.googleapis.com/youtube/v3/search', {
                 params: {
                     part: 'snippet',
-                    maxResults: 20,
+                    maxResults: 5,
                     order: 'viewCount',
                     type: 'video',
                     videoCategoryId: '10',
@@ -593,6 +594,14 @@ export default function Page() {
 
             setSongs(mappedSongs);
             setFilteredSongs(mappedSongs);
+            setSearchCache(prev => ({
+                ...prev,
+                [cacheKey]: {
+                    data: mappedSongs,
+                    timestamp: Date.now()
+                }
+            }));
+
             generateRecommendations([...mappedSongs, ...filteredSongs]);
 
             const uniqueArtists = [...new Set(mappedSongs.map(song => song.artist))];
@@ -632,9 +641,9 @@ export default function Page() {
             const user = JSON.parse(storedUser);
             setCurrentUser(user);
             setIsAdmin(user.role === 'admin');
-            fetchPopularSongs();
+            //fetchPopularSongs();
         }
-    }, [fetchPopularSongs]);
+    }, []);
 
     useEffect(() => {
         if (songs.length > 0 || filteredSongs.length > 0) {
@@ -649,6 +658,13 @@ export default function Page() {
     }, [activeTab, isAdmin, users.length, fetchUsers]);
 
     const searchSongs = (query) => {
+        const cacheKey = query.toLowerCase();
+        const cached = searchCache[cacheKey];
+
+        if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
+            setFilteredSongs(cached.data);
+            return;
+        }
         if (searchTimerRef.current) {
             clearTimeout(searchTimerRef.current);
         }
@@ -666,7 +682,7 @@ export default function Page() {
                     params: {
                         part: 'snippet',
                         q: query,
-                        maxResults: 20,
+                        maxResults: 10,
                         type: 'video',
                         videoCategoryId: '10',
                         key: API_KEY
