@@ -10,7 +10,7 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const TURNSTILE_SECRET_KEY = '0x4AAAAAAB4cfnEQeR8gN6MDwHfgMITz77c';
 const GOOGLE_CLIENT_ID = '423273358250-5sh66sd211creanihac75uaith2vhh1e.apps.googleusercontent.com';
-
+const crypto = require('crypto');
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 // Middleware
@@ -35,9 +35,16 @@ const userSchema = new mongoose.Schema({
 });
 
 const User = mongoose.model('User', userSchema);
+// Share Schema
+const shareSchema = new mongoose.Schema({
+    playlistId: { type: mongoose.Schema.Types.ObjectId, ref: 'Playlist', required: true },
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    token: { type: String, required: true, unique: true },
+    expiresAt: { type: Date, required: true },
+    createdAt: { type: Date, default: Date.now }
+});
 
-// Seed Admin User
-// Playlist Schema
+const Share = mongoose.model('Share', shareSchema);
 const playlistSchema = new mongoose.Schema({
     name: { type: String, required: true },
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
@@ -175,6 +182,79 @@ app.post('/api/google-login', async (req, res) => {
         res.status(500).json({ message: 'Server error', error: err.message });
     }
 });
+app.post('/api/playlists/:id/share', async (req, res) => {
+    try {
+        const { userId } = req.body;
+        const { id: playlistId } = req.params;
+
+        // Validate input
+        if (!userId || !playlistId) {
+            return res.status(400).json({ message: 'userId and playlistId are required' });
+        }
+
+        // Verify the playlist exists and belongs to the user
+        const playlist = await Playlist.findById(playlistId);
+        if (!playlist) {
+            return res.status(404).json({ message: 'Playlist not found' });
+        }
+        if (playlist.userId.toString() !== userId) {
+            return res.status(403).json({ message: 'Unauthorized: You do not own this playlist' });
+        }
+
+        // Generate a unique token
+        const shareToken = crypto.randomBytes(16).toString('hex');
+        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24-hour expiration
+
+        // Save the share record
+        const shareRecord = new Share({
+            playlistId,
+            userId,
+            token: shareToken,
+            expiresAt
+        });
+        await shareRecord.save();
+
+        res.status(200).json({ shareToken });
+    } catch (err) {
+        console.error('Generate share token error:', err);
+        res.status(500).json({ message: 'Server error', error: err.message });
+    }
+});
+// Retrieve a shared playlist
+app.get('/api/shared/playlist/:id', async (req, res) => {
+    try {
+        const { id: playlistId } = req.params;
+        const { token } = req.query;
+
+        // Validate input
+        if (!playlistId || !token) {
+            return res.status(400).json({ message: 'playlistId and token are required' });
+        }
+
+        // Find the share record
+        const shareRecord = await Share.findOne({ playlistId, token });
+        if (!shareRecord) {
+            return res.status(403).json({ message: 'Invalid or expired share link' });
+        }
+
+        // Check if the token has expired
+        if (shareRecord.expiresAt < new Date()) {
+            await Share.deleteOne({ _id: shareRecord._id }); // Clean up expired token
+            return res.status(403).json({ message: 'Share link has expired' });
+        }
+
+        // Fetch the playlist
+        const playlist = await Playlist.findById(playlistId);
+        if (!playlist) {
+            return res.status(404).json({ message: 'Playlist not found' });
+        }
+
+        res.status(200).json(playlist);
+    } catch (err) {
+        console.error('Fetch shared playlist error:', err);
+        res.status(500).json({ message: 'Server error', error: err.message });
+    }
+});
 // Get user's playlists
 app.get('/api/playlists/:userId', async (req, res) => {
     try {
@@ -287,18 +367,24 @@ app.delete('/api/playlists/:playlistId', async (req, res) => {
 });
 
 // Update playlist name
-app.patch('/api/playlists/:playlistId', async (req, res) => {
+// Update playlist name and cover
+app.put('/api/playlists/:playlistId', async (req, res) => {
     try {
         const { playlistId } = req.params;
-        const { name } = req.body;
+        const { name, cover } = req.body;
 
         if (!name) {
             return res.status(400).json({ message: 'Playlist name required' });
         }
 
+        const updateData = { name, updatedAt: Date.now() };
+        if (cover) {
+            updateData.cover = cover;
+        }
+
         const playlist = await Playlist.findByIdAndUpdate(
             playlistId,
-            { name, updatedAt: Date.now() },
+            updateData,
             { new: true }
         );
 
@@ -312,7 +398,6 @@ app.patch('/api/playlists/:playlistId', async (req, res) => {
         res.status(500).json({ message: 'Server error', error: err.message });
     }
 });
-
 // Signup Endpoint
 app.post('/api/signup', async (req, res) => {
     const { username, email, password } = req.body;

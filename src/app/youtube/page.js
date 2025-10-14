@@ -361,7 +361,12 @@ export default function Page() {
 
         try {
             const response = await axios.get(`${BACKEND_URL}/api/playlists/${currentUser.id}`);
-            setPlaylists(response.data);
+            const playlistsData = response.data.map(playlist => ({
+                ...playlist,
+                id: playlist._id
+            }));
+            console.log('Fetched playlists:', playlistsData);
+            setPlaylists(playlistsData);
         } catch (err) {
             console.error('Failed to fetch playlists:', err);
             setError('Failed to load playlists');
@@ -468,27 +473,35 @@ export default function Page() {
         }
     };
     const handleSharePlaylist = async (playlist) => {
-        setSharePlaylist(playlist);
+        if (!playlist || !playlist.id) {
+            console.error('Invalid playlist:', playlist);
+            setError('Cannot share playlist: Invalid playlist data');
+            return;
+        }
+        if (!currentUser?.id) {
+            console.error('Invalid user:', currentUser);
+            setError('Cannot share playlist: User not logged in');
+            return;
+        }
 
-        // Generate shareable link
+        setSharePlaylist(playlist);
         const baseUrl = window.location.origin;
         const playlistUrl = `${baseUrl}/shared/playlist/${playlist.id}`;
         setShareUrl(playlistUrl);
         setShowShareModal(true);
 
-        // Optional: Create a backend share token for more security
+        console.log('Sharing playlist:', playlist.id, 'User ID:', currentUser.id);
+
         try {
             const response = await axios.post(`${BACKEND_URL}/api/playlists/${playlist.id}/share`, {
                 userId: currentUser.id
             });
-
-            // Use the generated token
             const shareToken = response.data.shareToken;
             const secureUrl = `${baseUrl}/shared/playlist/${playlist.id}?token=${shareToken}`;
             setShareUrl(secureUrl);
         } catch (err) {
-            console.error('Failed to generate share token:', err);
-            // Fallback to basic URL
+            console.error('Failed to generate share token:', err.response?.data || err.message);
+            setError(err.response?.data?.message || 'Failed to generate share link. Please try again.');
         }
     };
 
@@ -1450,37 +1463,53 @@ export default function Page() {
                                 <div className="playlists-grid">
                                     {playlists.map(playlist => (
                                         <div
-                                            key={playlist._id || playlist.id}
-                                            className="playlist-card"
-                                            onClick={() => openPlaylist(playlist)}
+                                            key={playlist.id || playlist._id} // Use id if available, fallback to _id
+                                            className="playlist-card-wrapper"
                                         >
-                                            <Image
-                                                src={playlist.cover || DEFAULT_COVER}
-                                                alt={playlist.name}
-                                                className="playlist-card-cover"
-                                                width={300}
-                                                height={300}
-                                                loading="lazy"
-                                            />
-                                            <div className="playlist-card-overlay">
-                                                <button
-                                                    className="playlist-play-btn"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        playAllSongs(playlist.songs);
-                                                    }}
-                                                >
-                                                    <Play className="play-icon" />
-                                                </button>
+                                            <div
+                                                className="playlist-card"
+                                                onClick={() => openPlaylist(playlist)}
+                                            >
+                                                <Image
+                                                    src={playlist.cover || DEFAULT_COVER}
+                                                    alt={playlist.name}
+                                                    className="playlist-card-cover"
+                                                    width={300}
+                                                    height={300}
+                                                    loading="lazy"
+                                                />
+                                                <div className="playlist-card-overlay">
+                                                    <button
+                                                        className="playlist-play-btn"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            playAllSongs(playlist.songs);
+                                                        }}
+                                                    >
+                                                        <Play className="play-icon" />
+                                                    </button>
+                                                </div>
+                                                <h3 className="playlist-card-name">{playlist.name}</h3>
+                                                <p className="playlist-card-count">{playlist.songs.length} songs</p>
                                             </div>
-                                            <h3 className="playlist-card-name">{playlist.name}</h3>
-                                            <p className="playlist-card-count">{playlist.songs.length} songs</p>
+                                            <button
+                                                className="share-playlist-btn"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    console.log('Clicked share for playlist:', playlist);
+                                                    handleSharePlaylist(playlist);
+                                                }}
+                                                title="Share playlist"
+                                            >
+                                                <Share2 className="share-icon" /> Share
+                                            </button>
                                         </div>
                                     ))}
                                 </div>
                             )}
                         </div>
                     )}
+
                     {activeTab === 'playlist-detail' && selectedPlaylist && (
                         <div className="playlist-detail-content">
                             <div className="playlist-detail-header">
@@ -1781,32 +1810,35 @@ export default function Page() {
                                 ) : null}
                                 <div className="playlists-grid">
                                     {playlists.map(playlist => (
-                                        <div key={playlist._id || playlist.id} className="playlist-card">
-                                            <Image
-                                                src={playlist.cover || DEFAULT_COVER}
-                                                alt={playlist.name}
-                                                className="playlist-card-cover"
-                                                width={300}
-                                                height={300}
-                                                loading="lazy"
-                                            />
-                                            <div className="playlist-card-overlay">
-                                                <button
-                                                    className="playlist-play-btn"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        playAllSongs(playlist.songs);
-                                                    }}
-                                                >
-                                                    <Play className="play-icon" />
-                                                </button>
+                                        <div key={playlist.id || playlist._id} className="playlist-card">
+                                            <div onClick={() => openPlaylist(playlist)}>
+                                                <Image
+                                                    src={playlist.cover || DEFAULT_COVER}
+                                                    alt={playlist.name}
+                                                    className="playlist-card-cover"
+                                                    width={300}
+                                                    height={300}
+                                                    loading="lazy"
+                                                />
+                                                <div className="playlist-card-overlay">
+                                                    <button
+                                                        className="playlist-play-btn"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            playAllSongs(playlist.songs);
+                                                        }}
+                                                    >
+                                                        <Play className="play-icon" />
+                                                    </button>
+                                                </div>
+                                                <h3 className="playlist-card-name">{playlist.name}</h3>
+                                                <p className="playlist-card-count">{playlist.songs.length} songs</p>
                                             </div>
-                                            <h3 className="playlist-card-name">{playlist.name}</h3>
-                                            <p className="playlist-card-count">{playlist.songs.length} songs</p>
                                             <button
                                                 className="share-playlist-btn"
                                                 onClick={(e) => {
                                                     e.stopPropagation();
+                                                    console.log('Clicked share for playlist (admin):', playlist);
                                                     handleSharePlaylist(playlist);
                                                 }}
                                                 title="Share playlist"
@@ -1821,22 +1853,12 @@ export default function Page() {
                                                     Edit
                                                 </button>
                                                 <button
-                                                    onClick={() => deletePlaylist(playlist._id || playlist.id)}
+                                                    onClick={() => deletePlaylist(playlist.id || playlist._id)}
                                                     className="delete-btn"
                                                 >
                                                     Delete
                                                 </button>
                                             </div>
-                                            <button
-                                                className="share-playlist-btn"
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    handleSharePlaylist(playlist);
-                                                }}
-                                                title="Share playlist"
-                                            >
-                                                <Share2 className="share-icon" /> Share
-                                            </button>
                                         </div>
                                     ))}
                                 </div>
