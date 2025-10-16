@@ -6,7 +6,7 @@ import Image from 'next/image';
 import './page.css';
 import {
     Play, Pause, SkipBack, SkipForward, Volume2, Heart, Search, Home, Music, User,
-    Plus, Shuffle, Repeat, MoreVertical, TrendingUp, Users, BarChart3, Shield, Mic,Share2
+    Plus, Shuffle, Repeat, MoreVertical, TrendingUp, Users, BarChart3, Shield, Mic, Share2
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
@@ -37,7 +37,7 @@ export default function Page() {
     const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);
     const [selectedSongForPlaylist, setSelectedSongForPlaylist] = useState(null);
     const [editingSong, setEditingSong] = useState(null);
-    const [editingPlaylist, setEditingPlaylist] = useState(null); // New state for editing playlists
+    const [editingPlaylist, setEditingPlaylist] = useState(null);
     const [artists, setArtists] = useState([]);
     const [users, setUsers] = useState([]);
     const [usersLoading, setUsersLoading] = useState(false);
@@ -108,11 +108,11 @@ export default function Page() {
         const combinedSongs = [...new Set([...allSongs, ...songs, ...filteredSongs].map(s => JSON.stringify(s)))].map(s => JSON.parse(s));
 
         const allGenres = [...new Set(combinedSongs.map(song => song.genre || 'Music'))];
-        const allArtists = [...new Set(combinedSongs.map(song => song.artist))];
+        const allArtistsLocal = [...new Set(combinedSongs.map(song => song.artist))];
 
         const createFeatureVector = (song) => {
             const genreVector = allGenres.map(genre => song.genre === genre ? 1 : 0);
-            const artistVector = allArtists.map(artist => song.artist === artist ? 1 : 0);
+            const artistVector = allArtistsLocal.map(artist => song.artist === artist ? 1 : 0);
             const maxPlays = Math.max(...combinedSongs.map(s => s.plays || 0), 1);
             const plays = (song.plays || 0) / maxPlays;
             const playFrequency = recentlyPlayed.filter(s => s.id === song.id).length / (recentlyPlayed.length || 1);
@@ -149,7 +149,7 @@ export default function Page() {
         const userVectors = userPreferenceSongs.map(song => createFeatureVector(song));
         const userVector = userVectors.reduce(
             (avg, vec) => avg.map((val, i) => val + vec[i] / userVectors.length),
-            new Array(allGenres.length + allArtists.length + 3).fill(0)
+            new Array(allGenres.length + allArtistsLocal.length + 3).fill(0)
         );
 
         const scores = songVectors.map(({ song, vector }) => ({
@@ -167,7 +167,6 @@ export default function Page() {
     }, [recentlyPlayed, likedSongs, songs, filteredSongs]);
 
     const startVoiceSearch = () => {
-        // Check browser support
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
         if (!SpeechRecognition) {
@@ -175,17 +174,14 @@ export default function Page() {
             return;
         }
 
-        // Check if already listening
         if (isListening && recognitionRef.current) {
             return;
         }
 
         try {
-            // Create new recognition instance
             const recognition = new SpeechRecognition();
             recognitionRef.current = recognition;
 
-            // Configure recognition
             recognition.continuous = false;
             recognition.interimResults = false;
             recognition.lang = 'en-US';
@@ -208,7 +204,6 @@ export default function Page() {
                 console.error('Voice recognition error:', event.error);
                 setIsListening(false);
 
-                // Provide specific error messages
                 switch (event.error) {
                     case 'not-allowed':
                         setError('Microphone access denied. Please enable microphone permissions.');
@@ -239,7 +234,6 @@ export default function Page() {
                 recognitionRef.current = null;
             };
 
-            // Start recognition
             recognition.start();
 
         } catch (err) {
@@ -248,7 +242,6 @@ export default function Page() {
             setIsListening(false);
         }
     };
-
 
     const stopVoiceSearch = () => {
         if (recognitionRef.current) {
@@ -363,7 +356,7 @@ export default function Page() {
             const response = await axios.get(`${BACKEND_URL}/api/playlists/${currentUser.id}`);
             const playlistsData = response.data.map(playlist => ({
                 ...playlist,
-                id: playlist._id
+                id: playlist._id || playlist.id
             }));
             console.log('Fetched playlists:', playlistsData);
             setPlaylists(playlistsData);
@@ -395,9 +388,9 @@ export default function Page() {
 
         try {
             await axios.delete(`${BACKEND_URL}/api/playlists/${playlistId}`);
-            setPlaylists(prev => prev.filter(p => (p._id || p.id) !== playlistId));
+            setPlaylists(prev => prev.filter(p => p.id !== playlistId)); // ✅ FIX: Use id directly
 
-            if ((selectedPlaylist?._id || selectedPlaylist?.id) === playlistId) {
+            if (selectedPlaylist?.id === playlistId) {
                 setSelectedPlaylist(null);
                 setActiveTab('playlists');
             }
@@ -415,12 +408,12 @@ export default function Page() {
 
             setPlaylists(prev =>
                 prev.map(playlist =>
-                    (playlist._id || playlist.id) === playlistId ? response.data.playlist : playlist
+                    playlist.id === playlistId ? { ...response.data.playlist, id:  response.data.playlist_id || response.data.playlist.id } : playlist
                 )
             );
 
-            if ((selectedPlaylist?._id || selectedPlaylist?.id) === playlistId) {
-                setSelectedPlaylist(response.data.playlist);
+            if (selectedPlaylist?.id === playlistId) {
+                setSelectedPlaylist({ ...response.data.playlist, id:  response.data.playlist.id });
             }
         } catch (err) {
             console.error('Failed to remove song:', err);
@@ -437,20 +430,20 @@ export default function Page() {
 
         try {
             const response = await axios.put(
-                `${BACKEND_URL}/api/playlists/${editingPlaylist._id || editingPlaylist.id}`,
+                `${BACKEND_URL}/api/playlists/${editingPlaylist.id}`,
                 { name: editingPlaylist.name, cover: editingPlaylist.cover || DEFAULT_COVER }
             );
 
             setPlaylists(prev =>
                 prev.map(playlist =>
-                    (playlist._id || playlist.id) === (editingPlaylist._id || editingPlaylist.id)
-                        ? response.data.playlist
+                    playlist.id === editingPlaylist.id
+                        ?  { ...response.data.playlist, id: response.data.playlist._id || response.data.playlist.id }
                         : playlist
                 )
             );
 
-            if ((selectedPlaylist?._id || selectedPlaylist?.id) === (editingPlaylist._id || editingPlaylist.id)) {
-                setSelectedPlaylist(response.data.playlist);
+            if (selectedPlaylist?.id === editingPlaylist.id) {
+                setSelectedPlaylist({ ...response.data.playlist, id:  response.data.playlist.id });
             }
 
             setEditingPlaylist(null);
@@ -472,6 +465,7 @@ export default function Page() {
             }
         }
     };
+
     const handleSharePlaylist = async (playlist) => {
         if (!playlist || !playlist.id) {
             console.error('Invalid playlist:', playlist);
@@ -511,7 +505,6 @@ export default function Page() {
             alert('Link copied to clipboard!');
         } catch (err) {
             console.error('Failed to copy:', err);
-            // Fallback for older browsers
             const textArea = document.createElement('textarea');
             textArea.value = text;
             document.body.appendChild(textArea);
@@ -527,7 +520,6 @@ export default function Page() {
         const url = encodeURIComponent(shareUrl);
 
         let shareLink = '';
-
         switch (platform) {
             case 'whatsapp':
                 shareLink = `https://wa.me/?text=${encodeURIComponent(text + ' ' + shareUrl)}`;
@@ -645,7 +637,7 @@ export default function Page() {
                 }
             }
         };
-    }, [handleStateChange]);
+    }, [handleStateChange, playNext, volume]);
 
     useEffect(() => {
         let interval;
@@ -691,6 +683,8 @@ export default function Page() {
     }, [youtubePlayer, volume]);
 
     const fetchPopularSongs = useCallback(async () => {
+        const cacheKey = "popular"; // ✅ FIX: Define cacheKey variable
+
         try {
             setLoading(true);
             setError(null);
@@ -758,7 +752,7 @@ export default function Page() {
         } finally {
             setLoading(false);
         }
-    }, [generateRecommendations, filteredSongs]);
+    }, [generateRecommendations, filteredSongs, API_KEY]);
 
     const fetchUsers = useCallback(async () => {
         try {
@@ -780,7 +774,6 @@ export default function Page() {
             const user = JSON.parse(storedUser);
             setCurrentUser(user);
             setIsAdmin(user.role === 'admin');
-            //fetchPopularSongs();
         }
     }, []);
 
@@ -800,7 +793,6 @@ export default function Page() {
         const cacheKey = query.toLowerCase();
         const cached = searchCache[cacheKey];
 
-        // Check cache first
         if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
             setFilteredSongs(cached.data);
             setLoading(false);
@@ -820,7 +812,7 @@ export default function Page() {
         searchTimerRef.current = setTimeout(async () => {
             try {
                 setLoading(true);
-                setError(null); // Clear previous errors
+                setError(null);
 
                 const response = await axios.get('https://www.googleapis.com/youtube/v3/search', {
                     params: {
@@ -867,7 +859,6 @@ export default function Page() {
 
                 setFilteredSongs(mappedSongs);
 
-                // ✅ SAVE TO CACHE
                 setSearchCache(prev => ({
                     ...prev,
                     [cacheKey]: {
@@ -884,7 +875,6 @@ export default function Page() {
             } catch (err) {
                 console.error('Search failed:', err);
 
-                // Better error handling
                 if (err.response?.status === 403) {
                     setError('YouTube quota exceeded. Please try again later.');
                 } else if (err.response?.status === 400) {
@@ -897,7 +887,6 @@ export default function Page() {
             }
         }, 500);
     };
-
 
     const handleLogout = () => {
         setCurrentUser(null);
@@ -989,7 +978,8 @@ export default function Page() {
                 cover: DEFAULT_COVER
             });
 
-            setPlaylists(prev => [...prev, response.data.playlist]);
+            const newPlaylist = { ...response.data.playlist, id: response.data.playlist._id || response.data.playlist.id };
+            setPlaylists(prev => [...prev, newPlaylist]);
             setNewPlaylistName('');
             setShowCreatePlaylist(false);
         } catch (err) {
@@ -1063,7 +1053,7 @@ export default function Page() {
 
             setPlaylists(prev =>
                 prev.map(playlist =>
-                    (playlist._id || playlist.id) === playlistId ? response.data.playlist : playlist
+                    playlist.id === playlistId ? { ...response.data.playlist, id:response.data.playlist._id || response.data.playlist.id} : playlist
                 )
             );
 
@@ -1169,6 +1159,7 @@ export default function Page() {
     return (
         <div className="app-container">
             <div ref={playerRef} style={{ display: 'none' }}></div>
+            <div ref={playerRef} style={{ display: 'none' }}></div>
 
             <header className="header">
                 <div className="header-content">
@@ -1232,7 +1223,7 @@ export default function Page() {
                         <div className="playlist-list">
                             {playlists.slice(0, 3).map(playlist => (
                                 <div
-                                    key={playlist._id || playlist.id}
+                                    key={playlist.id}
                                     className="playlist-item"
                                     onClick={() => openPlaylist(playlist)}
                                 >
@@ -1463,7 +1454,7 @@ export default function Page() {
                                 <div className="playlists-grid">
                                     {playlists.map(playlist => (
                                         <div
-                                            key={playlist.id || playlist._id} // Use id if available, fallback to _id
+                                            key={playlist.id } // Use id if available, fallback to _id
                                             className="playlist-card-wrapper"
                                         >
                                             <div
@@ -1540,7 +1531,7 @@ export default function Page() {
                                                     Edit
                                                 </button>
                                                 <button
-                                                    onClick={() => deletePlaylist(selectedPlaylist._id || selectedPlaylist.id)}
+                                                    onClick={() => deletePlaylist( selectedPlaylist.id)}
                                                     className="delete-btn"
                                                 >
                                                     Delete
@@ -1550,7 +1541,7 @@ export default function Page() {
                                     </div>
                                 </div>
                             </div>
-                            {editingPlaylist && (editingPlaylist._id || editingPlaylist.id) === (selectedPlaylist._id || selectedPlaylist.id) ? (
+                            {editingPlaylist && (editingPlaylist.id) === (selectedPlaylist.id) ? (
                                 <div className="edit-playlist-form">
                                     <h3 className="form-title">Edit Playlist</h3>
                                     <div className="form-controls">
@@ -1610,7 +1601,7 @@ export default function Page() {
                                                     className="remove-song-btn"
                                                     onClick={(e) => {
                                                         e.stopPropagation();
-                                                        removeSongFromPlaylist(selectedPlaylist._id || selectedPlaylist.id, song.id);
+                                                        removeSongFromPlaylist( selectedPlaylist.id, song.id);
                                                     }}
                                                 >
                                                     Remove
@@ -1810,7 +1801,7 @@ export default function Page() {
                                 ) : null}
                                 <div className="playlists-grid">
                                     {playlists.map(playlist => (
-                                        <div key={playlist.id || playlist._id} className="playlist-card">
+                                        <div key={playlist.id } className="playlist-card">
                                             <div onClick={() => openPlaylist(playlist)}>
                                                 <Image
                                                     src={playlist.cover || DEFAULT_COVER}
@@ -1853,7 +1844,7 @@ export default function Page() {
                                                     Edit
                                                 </button>
                                                 <button
-                                                    onClick={() => deletePlaylist(playlist.id || playlist._id)}
+                                                    onClick={() => deletePlaylist(playlist.id )}
                                                     className="delete-btn"
                                                 >
                                                     Delete
@@ -1875,8 +1866,8 @@ export default function Page() {
                         <div className="modal-playlist-list">
                             {playlists.map(playlist => (
                                 <button
-                                    key={playlist._id || playlist.id}
-                                    onClick={() => addSongToPlaylist(playlist._id || playlist.id)}
+                                    key={ playlist.id}
+                                    onClick={() => addSongToPlaylist( playlist.id)}
                                     className="modal-playlist-item"
                                 >
                                     <Image
