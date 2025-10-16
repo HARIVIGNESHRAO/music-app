@@ -1159,8 +1159,6 @@ export default function Page() {
     return (
         <div className="app-container">
             <div ref={playerRef} style={{ display: 'none' }}></div>
-            <div ref={playerRef} style={{ display: 'none' }}></div>
-
             <header className="header">
                 <div className="header-content">
                     <div className="header-left">
