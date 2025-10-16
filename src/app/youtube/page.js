@@ -567,7 +567,6 @@ export default function Page() {
     }, [repeat, playNext]);
 
     useEffect(() => {
-        // ✅ ADD THIS CHECK - Wait for playerRef to be ready
         if (!playerRef.current) {
             console.log('playerRef not ready yet');
             return;
@@ -580,17 +579,56 @@ export default function Page() {
             firstScript.parentNode.insertBefore(tag, firstScript);
 
             window.onYouTubeIframeAPIReady = () => {
-                // ✅ ADD CHECK HERE TOO
                 if (!playerRef.current) {
                     console.error('playerRef is null in onYouTubeIframeAPIReady');
                     return;
                 }
 
+                try {
+                    const player = new window.YT.Player(playerRef.current, {
+                        height: '0',
+                        width: '0',
+                        events: {
+                            onReady: (event) => {
+                                console.log('✅ YouTube Player is ready!'); // ✅ Add confirmation log
+                                setYoutubePlayer(event.target);
+                                try {
+                                    event.target.setVolume(volume);
+                                } catch (err) {
+                                    console.error('Failed to set initial volume:', err);
+                                }
+                            },
+                            onStateChange: handleStateChange,
+                            onError: (event) => {
+                                console.error('YouTube Player error:', event.data);
+                                if ([2, 5, 100, 101, 150].includes(event.data)) {
+                                    setError('This video cannot be played. Trying next...');
+                                    setTimeout(() => {
+                                        playNext();
+                                    }, 2000);
+                                }
+                                setIsPlaying(false);
+                            }
+                        }
+                    });
+                } catch (err) {
+                    console.error('Failed to create YouTube player:', err);
+                    setError('Failed to initialize player');
+                }
+            };
+        } else if (window.YT && window.YT.Player) {
+            if (!playerRef.current) {
+                console.error('playerRef is null when YT.Player already loaded');
+                return;
+            }
+
+            try {
                 const player = new window.YT.Player(playerRef.current, {
                     height: '0',
                     width: '0',
                     events: {
                         onReady: (event) => {
+                            console.log('✅ YouTube Player is ready!'); // ✅ Add confirmation log
                             setYoutubePlayer(event.target);
                             try {
                                 event.target.setVolume(volume);
@@ -611,39 +649,10 @@ export default function Page() {
                         }
                     }
                 });
-            };
-        } else if (window.YT && window.YT.Player) {
-            // ✅ ADD CHECK HERE TOO
-            if (!playerRef.current) {
-                console.error('playerRef is null when YT.Player already loaded');
-                return;
+            } catch (err) {
+                console.error('Failed to create YouTube player:', err);
+                setError('Failed to initialize player');
             }
-
-            const player = new window.YT.Player(playerRef.current, {
-                height: '0',
-                width: '0',
-                events: {
-                    onReady: (event) => {
-                        setYoutubePlayer(event.target);
-                        try {
-                            event.target.setVolume(volume);
-                        } catch (err) {
-                            console.error('Failed to set initial volume:', err);
-                        }
-                    },
-                    onStateChange: handleStateChange,
-                    onError: (event) => {
-                        console.error('YouTube Player error:', event.data);
-                        if ([2, 5, 100, 101, 150].includes(event.data)) {
-                            setError('This video cannot be played. Trying next...');
-                            setTimeout(() => {
-                                playNext();
-                            }, 2000);
-                        }
-                        setIsPlaying(false);
-                    }
-                }
-            });
         }
 
         return () => {
@@ -655,7 +664,8 @@ export default function Page() {
                 }
             }
         };
-    }, [handleStateChange, playNext, volume]); // ✅ Dependencies are correct
+    }, [handleStateChange, playNext, volume]); // Keep existing dependencies
+    // ✅ Dependencies are correct
 
 
     useEffect(() => {
@@ -675,14 +685,29 @@ export default function Page() {
     }, [volume, youtubePlayer]);
 
     useEffect(() => {
-        if (youtubePlayer && currentSong?.id) {
-            setIsLoadingSong(true);
-            youtubePlayer.loadVideoById(currentSong.id);
+        // ✅ ADD THIS CHECK - Don't try to load video if player isn't ready
+        if (!youtubePlayer || !currentSong?.id) {
+            console.log('Player not ready or no song selected');
+            return;
         }
-    }, [currentSong, youtubePlayer]);
+
+        setIsLoadingSong(true);
+
+        try {
+            youtubePlayer.loadVideoById(currentSong.id);
+        } catch (err) {
+            console.error('Error loading video:', err);
+            setError('Failed to load video');
+            setIsLoadingSong(false);
+        }
+    }, [currentSong, youtubePlayer]); // ✅ Make sure youtubePlayer is in dependencies
+
 
     const playSong = useCallback(async (song) => {
-        if (!youtubePlayer || !song) return;
+        if (!youtubePlayer || !song) {
+            console.log('Player not ready or no song provided');
+            return;
+        }
 
         setIsLoadingSong(true);
         setCurrentSong(song);
@@ -700,6 +725,7 @@ export default function Page() {
             setIsLoadingSong(false);
         }
     }, [youtubePlayer, volume]);
+
 
     const fetchPopularSongs = useCallback(async () => {
         const cacheKey = "popular"; // ✅ FIX: Define cacheKey variable
