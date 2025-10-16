@@ -6,7 +6,7 @@ import Image from 'next/image';
 import './page.css';
 import {
     Play, Pause, SkipBack, SkipForward, Volume2, Heart, Search, Home, Music, User,
-    Plus, Shuffle, Repeat, MoreVertical, TrendingUp, Users, BarChart3, Shield, Mic, Share2
+    Plus, Shuffle, Repeat, MoreVertical, TrendingUp, Users, BarChart3, Shield, Mic,Share2
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
@@ -37,7 +37,7 @@ export default function Page() {
     const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);
     const [selectedSongForPlaylist, setSelectedSongForPlaylist] = useState(null);
     const [editingSong, setEditingSong] = useState(null);
-    const [editingPlaylist, setEditingPlaylist] = useState(null);
+    const [editingPlaylist, setEditingPlaylist] = useState(null); // New state for editing playlists
     const [artists, setArtists] = useState([]);
     const [users, setUsers] = useState([]);
     const [usersLoading, setUsersLoading] = useState(false);
@@ -108,11 +108,11 @@ export default function Page() {
         const combinedSongs = [...new Set([...allSongs, ...songs, ...filteredSongs].map(s => JSON.stringify(s)))].map(s => JSON.parse(s));
 
         const allGenres = [...new Set(combinedSongs.map(song => song.genre || 'Music'))];
-        const allArtistsLocal = [...new Set(combinedSongs.map(song => song.artist))];
+        const allArtists = [...new Set(combinedSongs.map(song => song.artist))];
 
         const createFeatureVector = (song) => {
             const genreVector = allGenres.map(genre => song.genre === genre ? 1 : 0);
-            const artistVector = allArtistsLocal.map(artist => song.artist === artist ? 1 : 0);
+            const artistVector = allArtists.map(artist => song.artist === artist ? 1 : 0);
             const maxPlays = Math.max(...combinedSongs.map(s => s.plays || 0), 1);
             const plays = (song.plays || 0) / maxPlays;
             const playFrequency = recentlyPlayed.filter(s => s.id === song.id).length / (recentlyPlayed.length || 1);
@@ -149,7 +149,7 @@ export default function Page() {
         const userVectors = userPreferenceSongs.map(song => createFeatureVector(song));
         const userVector = userVectors.reduce(
             (avg, vec) => avg.map((val, i) => val + vec[i] / userVectors.length),
-            new Array(allGenres.length + allArtistsLocal.length + 3).fill(0)
+            new Array(allGenres.length + allArtists.length + 3).fill(0)
         );
 
         const scores = songVectors.map(({ song, vector }) => ({
@@ -167,6 +167,7 @@ export default function Page() {
     }, [recentlyPlayed, likedSongs, songs, filteredSongs]);
 
     const startVoiceSearch = () => {
+        // Check browser support
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
         if (!SpeechRecognition) {
@@ -174,14 +175,17 @@ export default function Page() {
             return;
         }
 
+        // Check if already listening
         if (isListening && recognitionRef.current) {
             return;
         }
 
         try {
+            // Create new recognition instance
             const recognition = new SpeechRecognition();
             recognitionRef.current = recognition;
 
+            // Configure recognition
             recognition.continuous = false;
             recognition.interimResults = false;
             recognition.lang = 'en-US';
@@ -204,6 +208,7 @@ export default function Page() {
                 console.error('Voice recognition error:', event.error);
                 setIsListening(false);
 
+                // Provide specific error messages
                 switch (event.error) {
                     case 'not-allowed':
                         setError('Microphone access denied. Please enable microphone permissions.');
@@ -234,6 +239,7 @@ export default function Page() {
                 recognitionRef.current = null;
             };
 
+            // Start recognition
             recognition.start();
 
         } catch (err) {
@@ -242,6 +248,7 @@ export default function Page() {
             setIsListening(false);
         }
     };
+
 
     const stopVoiceSearch = () => {
         if (recognitionRef.current) {
@@ -356,7 +363,7 @@ export default function Page() {
             const response = await axios.get(`${BACKEND_URL}/api/playlists/${currentUser.id}`);
             const playlistsData = response.data.map(playlist => ({
                 ...playlist,
-                id: playlist._id || playlist.id
+                id: playlist._id
             }));
             console.log('Fetched playlists:', playlistsData);
             setPlaylists(playlistsData);
@@ -388,9 +395,9 @@ export default function Page() {
 
         try {
             await axios.delete(`${BACKEND_URL}/api/playlists/${playlistId}`);
-            setPlaylists(prev => prev.filter(p => p.id !== playlistId)); // ✅ FIX: Use id directly
+            setPlaylists(prev => prev.filter(p => (p._id || p.id) !== playlistId));
 
-            if (selectedPlaylist?.id === playlistId) {
+            if ((selectedPlaylist?._id || selectedPlaylist?.id) === playlistId) {
                 setSelectedPlaylist(null);
                 setActiveTab('playlists');
             }
@@ -408,12 +415,12 @@ export default function Page() {
 
             setPlaylists(prev =>
                 prev.map(playlist =>
-                    playlist.id === playlistId ? { ...response.data.playlist, id:  response.data.playlist_id || response.data.playlist.id } : playlist
+                    (playlist._id || playlist.id) === playlistId ? response.data.playlist : playlist
                 )
             );
 
-            if (selectedPlaylist?.id === playlistId) {
-                setSelectedPlaylist({ ...response.data.playlist, id:  response.data.playlist.id });
+            if ((selectedPlaylist?._id || selectedPlaylist?.id) === playlistId) {
+                setSelectedPlaylist(response.data.playlist);
             }
         } catch (err) {
             console.error('Failed to remove song:', err);
@@ -430,20 +437,20 @@ export default function Page() {
 
         try {
             const response = await axios.put(
-                `${BACKEND_URL}/api/playlists/${editingPlaylist.id}`,
+                `${BACKEND_URL}/api/playlists/${editingPlaylist._id || editingPlaylist.id}`,
                 { name: editingPlaylist.name, cover: editingPlaylist.cover || DEFAULT_COVER }
             );
 
             setPlaylists(prev =>
                 prev.map(playlist =>
-                    playlist.id === editingPlaylist.id
-                        ?  { ...response.data.playlist, id: response.data.playlist._id || response.data.playlist.id }
+                    (playlist._id || playlist.id) === (editingPlaylist._id || editingPlaylist.id)
+                        ? response.data.playlist
                         : playlist
                 )
             );
 
-            if (selectedPlaylist?.id === editingPlaylist.id) {
-                setSelectedPlaylist({ ...response.data.playlist, id:  response.data.playlist.id });
+            if ((selectedPlaylist?._id || selectedPlaylist?.id) === (editingPlaylist._id || editingPlaylist.id)) {
+                setSelectedPlaylist(response.data.playlist);
             }
 
             setEditingPlaylist(null);
@@ -465,7 +472,6 @@ export default function Page() {
             }
         }
     };
-
     const handleSharePlaylist = async (playlist) => {
         if (!playlist || !playlist.id) {
             console.error('Invalid playlist:', playlist);
@@ -505,6 +511,7 @@ export default function Page() {
             alert('Link copied to clipboard!');
         } catch (err) {
             console.error('Failed to copy:', err);
+            // Fallback for older browsers
             const textArea = document.createElement('textarea');
             textArea.value = text;
             document.body.appendChild(textArea);
@@ -520,6 +527,7 @@ export default function Page() {
         const url = encodeURIComponent(shareUrl);
 
         let shareLink = '';
+
         switch (platform) {
             case 'whatsapp':
                 shareLink = `https://wa.me/?text=${encodeURIComponent(text + ' ' + shareUrl)}`;
@@ -567,11 +575,6 @@ export default function Page() {
     }, [repeat, playNext]);
 
     useEffect(() => {
-        if (!playerRef.current) {
-            console.log('playerRef not ready yet');
-            return;
-        }
-
         if (!window.YT) {
             const tag = document.createElement('script');
             tag.src = 'https://www.youtube.com/iframe_api';
@@ -579,58 +582,11 @@ export default function Page() {
             firstScript.parentNode.insertBefore(tag, firstScript);
 
             window.onYouTubeIframeAPIReady = () => {
-                if (!playerRef.current) {
-                    console.error('playerRef is null in onYouTubeIframeAPIReady');
-                    return;
-                }
-
-                try {
-                    const player = new window.YT.Player(playerRef.current, {
-                        height: '0',
-                        width: '0',
-                        events: {
-                            onReady: (event) => {
-                                console.log('✅ YouTube Player is ready!');
-                                setYoutubePlayer(event.target); // ✅ Store the player
-                                try {
-                                    event.target.setVolume(volume);
-                                } catch (err) {
-                                    console.error('Failed to set initial volume:', err);
-                                }
-                            },
-                            onStateChange: handleStateChange,
-                            onError: (event) => {
-                                console.error('YouTube Player error:', event.data);
-                                if ([2, 5, 100, 101, 150].includes(event.data)) {
-                                    setError('This video cannot be played. Trying next...');
-                                    setTimeout(() => {
-                                        playNext();
-                                    }, 2000);
-                                }
-                                setIsPlaying(false);
-                            }
-                        }
-                    });
-                    // ✅ DON'T store player here, only in onReady callback
-                } catch (err) {
-                    console.error('Failed to create YouTube player:', err);
-                    setError('Failed to initialize player');
-                }
-            };
-
-        } else if (window.YT && window.YT.Player) {
-            if (!playerRef.current) {
-                console.error('playerRef is null when YT.Player already loaded');
-                return;
-            }
-
-            try {
                 const player = new window.YT.Player(playerRef.current, {
                     height: '0',
                     width: '0',
                     events: {
                         onReady: (event) => {
-                            console.log('✅ YouTube Player is ready!'); // ✅ Add confirmation log
                             setYoutubePlayer(event.target);
                             try {
                                 event.target.setVolume(volume);
@@ -651,10 +607,33 @@ export default function Page() {
                         }
                     }
                 });
-            } catch (err) {
-                console.error('Failed to create YouTube player:', err);
-                setError('Failed to initialize player');
-            }
+            };
+        } else if (window.YT && window.YT.Player) {
+            const player = new window.YT.Player(playerRef.current, {
+                height: '0',
+                width: '0',
+                events: {
+                    onReady: (event) => {
+                        setYoutubePlayer(event.target);
+                        try {
+                            event.target.setVolume(volume);
+                        } catch (err) {
+                            console.error('Failed to set initial volume:', err);
+                        }
+                    },
+                    onStateChange: handleStateChange,
+                    onError: (event) => {
+                        console.error('YouTube Player error:', event.data);
+                        if ([2, 5, 100, 101, 150].includes(event.data)) {
+                            setError('This video cannot be played. Trying next...');
+                            setTimeout(() => {
+                                playNext();
+                            }, 2000);
+                        }
+                        setIsPlaying(false);
+                    }
+                }
+            });
         }
 
         return () => {
@@ -666,9 +645,7 @@ export default function Page() {
                 }
             }
         };
-    }, [handleStateChange, playNext, volume]); // Keep existing dependencies
-    // ✅ Dependencies are correct
-
+    }, [handleStateChange]);
 
     useEffect(() => {
         let interval;
@@ -687,49 +664,14 @@ export default function Page() {
     }, [volume, youtubePlayer]);
 
     useEffect(() => {
-        // Don't proceed if player isn't ready or no song selected
-        if (!youtubePlayer || !currentSong?.id) {
-            console.log('Player not ready or no song selected');
-            return;
-        }
-
-        // Add a small delay to ensure player is fully ready
-        const loadVideo = async () => {
+        if (youtubePlayer && currentSong?.id) {
             setIsLoadingSong(true);
-
-            try {
-                // Check if the player has the loadVideoById method
-                if (typeof youtubePlayer.loadVideoById !== 'function') {
-                    console.error('loadVideoById is not available on player');
-                    setIsLoadingSong(false);
-                    return;
-                }
-
-                // Load the video
-                youtubePlayer.loadVideoById(currentSong.id);
-                console.log('✅ Video loaded:', currentSong.title);
-
-            } catch (err) {
-                console.error('Failed to load video:', err);
-                setError('Failed to load video. Please try again.');
-                setIsLoadingSong(false);
-            }
-        };
-
-        // Small delay to ensure player state is ready
-        const timeout = setTimeout(() => {
-            loadVideo();
-        }, 100);
-
-        return () => clearTimeout(timeout);
+            youtubePlayer.loadVideoById(currentSong.id);
+        }
     }, [currentSong, youtubePlayer]);
 
-
     const playSong = useCallback(async (song) => {
-        if (!youtubePlayer || !song) {
-            console.log('Player not ready or no song provided');
-            return;
-        }
+        if (!youtubePlayer || !song) return;
 
         setIsLoadingSong(true);
         setCurrentSong(song);
@@ -748,10 +690,7 @@ export default function Page() {
         }
     }, [youtubePlayer, volume]);
 
-
     const fetchPopularSongs = useCallback(async () => {
-        const cacheKey = "popular"; // ✅ FIX: Define cacheKey variable
-
         try {
             setLoading(true);
             setError(null);
@@ -819,7 +758,7 @@ export default function Page() {
         } finally {
             setLoading(false);
         }
-    }, [generateRecommendations, filteredSongs, API_KEY]);
+    }, [generateRecommendations, filteredSongs]);
 
     const fetchUsers = useCallback(async () => {
         try {
@@ -841,6 +780,7 @@ export default function Page() {
             const user = JSON.parse(storedUser);
             setCurrentUser(user);
             setIsAdmin(user.role === 'admin');
+            //fetchPopularSongs();
         }
     }, []);
 
@@ -860,6 +800,7 @@ export default function Page() {
         const cacheKey = query.toLowerCase();
         const cached = searchCache[cacheKey];
 
+        // Check cache first
         if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
             setFilteredSongs(cached.data);
             setLoading(false);
@@ -879,7 +820,7 @@ export default function Page() {
         searchTimerRef.current = setTimeout(async () => {
             try {
                 setLoading(true);
-                setError(null);
+                setError(null); // Clear previous errors
 
                 const response = await axios.get('https://www.googleapis.com/youtube/v3/search', {
                     params: {
@@ -926,6 +867,7 @@ export default function Page() {
 
                 setFilteredSongs(mappedSongs);
 
+                // ✅ SAVE TO CACHE
                 setSearchCache(prev => ({
                     ...prev,
                     [cacheKey]: {
@@ -942,6 +884,7 @@ export default function Page() {
             } catch (err) {
                 console.error('Search failed:', err);
 
+                // Better error handling
                 if (err.response?.status === 403) {
                     setError('YouTube quota exceeded. Please try again later.');
                 } else if (err.response?.status === 400) {
@@ -954,6 +897,7 @@ export default function Page() {
             }
         }, 500);
     };
+
 
     const handleLogout = () => {
         setCurrentUser(null);
@@ -1045,8 +989,7 @@ export default function Page() {
                 cover: DEFAULT_COVER
             });
 
-            const newPlaylist = { ...response.data.playlist, id: response.data.playlist._id || response.data.playlist.id };
-            setPlaylists(prev => [...prev, newPlaylist]);
+            setPlaylists(prev => [...prev, response.data.playlist]);
             setNewPlaylistName('');
             setShowCreatePlaylist(false);
         } catch (err) {
@@ -1120,7 +1063,7 @@ export default function Page() {
 
             setPlaylists(prev =>
                 prev.map(playlist =>
-                    playlist.id === playlistId ? { ...response.data.playlist, id:response.data.playlist._id || response.data.playlist.id} : playlist
+                    (playlist._id || playlist.id) === playlistId ? response.data.playlist : playlist
                 )
             );
 
@@ -1226,6 +1169,7 @@ export default function Page() {
     return (
         <div className="app-container">
             <div ref={playerRef} style={{ display: 'none' }}></div>
+
             <header className="header">
                 <div className="header-content">
                     <div className="header-left">
@@ -1288,7 +1232,7 @@ export default function Page() {
                         <div className="playlist-list">
                             {playlists.slice(0, 3).map(playlist => (
                                 <div
-                                    key={playlist.id}
+                                    key={playlist._id || playlist.id}
                                     className="playlist-item"
                                     onClick={() => openPlaylist(playlist)}
                                 >
@@ -1519,7 +1463,7 @@ export default function Page() {
                                 <div className="playlists-grid">
                                     {playlists.map(playlist => (
                                         <div
-                                            key={playlist.id } // Use id if available, fallback to _id
+                                            key={playlist.id || playlist._id} // Use id if available, fallback to _id
                                             className="playlist-card-wrapper"
                                         >
                                             <div
@@ -1596,7 +1540,7 @@ export default function Page() {
                                                     Edit
                                                 </button>
                                                 <button
-                                                    onClick={() => deletePlaylist( selectedPlaylist.id)}
+                                                    onClick={() => deletePlaylist(selectedPlaylist._id || selectedPlaylist.id)}
                                                     className="delete-btn"
                                                 >
                                                     Delete
@@ -1606,7 +1550,7 @@ export default function Page() {
                                     </div>
                                 </div>
                             </div>
-                            {editingPlaylist && (editingPlaylist.id) === (selectedPlaylist.id) ? (
+                            {editingPlaylist && (editingPlaylist._id || editingPlaylist.id) === (selectedPlaylist._id || selectedPlaylist.id) ? (
                                 <div className="edit-playlist-form">
                                     <h3 className="form-title">Edit Playlist</h3>
                                     <div className="form-controls">
@@ -1666,7 +1610,7 @@ export default function Page() {
                                                     className="remove-song-btn"
                                                     onClick={(e) => {
                                                         e.stopPropagation();
-                                                        removeSongFromPlaylist( selectedPlaylist.id, song.id);
+                                                        removeSongFromPlaylist(selectedPlaylist._id || selectedPlaylist.id, song.id);
                                                     }}
                                                 >
                                                     Remove
@@ -1866,7 +1810,7 @@ export default function Page() {
                                 ) : null}
                                 <div className="playlists-grid">
                                     {playlists.map(playlist => (
-                                        <div key={playlist.id } className="playlist-card">
+                                        <div key={playlist.id || playlist._id} className="playlist-card">
                                             <div onClick={() => openPlaylist(playlist)}>
                                                 <Image
                                                     src={playlist.cover || DEFAULT_COVER}
@@ -1909,7 +1853,7 @@ export default function Page() {
                                                     Edit
                                                 </button>
                                                 <button
-                                                    onClick={() => deletePlaylist(playlist.id )}
+                                                    onClick={() => deletePlaylist(playlist.id || playlist._id)}
                                                     className="delete-btn"
                                                 >
                                                     Delete
@@ -1931,8 +1875,8 @@ export default function Page() {
                         <div className="modal-playlist-list">
                             {playlists.map(playlist => (
                                 <button
-                                    key={ playlist.id}
-                                    onClick={() => addSongToPlaylist( playlist.id)}
+                                    key={playlist._id || playlist.id}
+                                    onClick={() => addSongToPlaylist(playlist._id || playlist.id)}
                                     className="modal-playlist-item"
                                 >
                                     <Image
