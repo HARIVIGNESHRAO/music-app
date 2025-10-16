@@ -123,7 +123,7 @@ export default function Page() {
 
     const generateCodeVerifier = () => {
         const array = new Uint8Array(32);
-        crypto.getRandomValues(array);
+        window.crypto.getRandomValues(array);
         return btoa(String.fromCharCode.apply(null, Array.from(array)))
             .replace(/\+/g, '-')
             .replace(/\//g, '_')
@@ -133,7 +133,7 @@ export default function Page() {
     const generateCodeChallenge = async (verifier) => {
         const encoder = new TextEncoder();
         const data = encoder.encode(verifier);
-        const digest = await crypto.subtle.digest('SHA-256', data);
+        const digest = await window.crypto.subtle.digest('SHA-256', data);
         return btoa(String.fromCharCode.apply(null, Array.from(new Uint8Array(digest))))
             .replace(/\+/g, '-')
             .replace(/\//g, '_')
@@ -208,8 +208,7 @@ export default function Page() {
             const cachedTracks = getCachedData(CACHE_KEY_TOP_TRACKS);
             if (cachedTracks) {
                 setSongs(cachedTracks);
-                generateRecommendations(cachedTracks);
-                return;
+                return cachedTracks;
             }
 
             await new Promise(resolve => setTimeout(resolve, 300));
@@ -237,14 +236,15 @@ export default function Page() {
 
             setSongs(mappedSongs);
             setCachedData(CACHE_KEY_TOP_TRACKS, mappedSongs);
-            generateRecommendations(mappedSongs);
+            return mappedSongs;
         } catch (err) {
             console.error('Failed to fetch tracks:', err);
             setError(err.response?.status === 429 ? 'Rate limit exceeded. Please wait and try again.' : 'Failed to fetch tracks');
+            return [];
         } finally {
             setLoading(false);
         }
-    }, [generateRecommendations]);
+    }, []);
 
     const fetchUserPlaylists = useCallback(async (token) => {
         try {
@@ -254,12 +254,12 @@ export default function Page() {
             const cachedPlaylists = getCachedData(CACHE_KEY_PLAYLISTS);
             if (cachedPlaylists) {
                 setPlaylists(cachedPlaylists);
-                return;
+                return cachedPlaylists;
             }
 
             const playlistsResponse = await apiCallWithBackoff(() =>
                 axios.get(
-                    'https://api.spotify.com/v1/me/playlists?limit=5&fields=items(id,name,tracks.href,images)',
+                    'https://api.spotify.com/v1/me/playlists?limit=10&fields=items(id,name,tracks.href,images)',
                     {
                         headers: { Authorization: `Bearer ${token}` },
                     }
@@ -267,9 +267,9 @@ export default function Page() {
             );
 
             const playlistsWithSongs = [];
-            const MAX_PLAYLISTS = 5;
+            const MAX_PLAYLISTS = 10;
             for (const playlist of playlistsResponse.data.items.slice(0, MAX_PLAYLISTS)) {
-                await new Promise(resolve => setTimeout(resolve, 500));
+                await new Promise(resolve => setTimeout(resolve, 1000));
                 try {
                     const tracksResponse = await apiCallWithBackoff(() =>
                         axios.get(
@@ -304,7 +304,6 @@ export default function Page() {
                     });
                 } catch (err) {
                     console.error(`Error fetching tracks for playlist ${playlist.name}:`, err);
-                    if (err.response?.status === 429) continue;
                     playlistsWithSongs.push({
                         id: playlist.id,
                         name: playlist.name,
@@ -315,9 +314,11 @@ export default function Page() {
             }
             setPlaylists(playlistsWithSongs);
             setCachedData(CACHE_KEY_PLAYLISTS, playlistsWithSongs);
+            return playlistsWithSongs;
         } catch (err) {
             console.error('Failed to fetch playlists:', err);
             setError(err.response?.status === 429 ? 'Rate limit exceeded. Please wait and try again.' : 'Failed to fetch playlists');
+            return [];
         } finally {
             setLoading(false);
         }
@@ -579,11 +580,17 @@ export default function Page() {
 
         try {
             console.log('📥 Loading Spotify tracks...');
-            await fetchTopTracks(accessToken);
+            const topTracks = await fetchTopTracks(accessToken);
 
-            await new Promise(resolve => setTimeout(resolve, 2000));
             console.log('📥 Loading playlists...');
-            await fetchUserPlaylists(accessToken);
+            const userPlaylists = await fetchUserPlaylists(accessToken);
+
+            const allKnownSongs = [...topTracks, ...userPlaylists.flatMap(p => p.songs)].reduce((unique, song) => {
+                if (!unique.some(s => s.id === song.id)) unique.push(song);
+                return unique;
+            }, []);
+
+            generateRecommendations(allKnownSongs);
 
             setError('Spotify library loaded successfully!');
             setTimeout(() => setError(null), 3000);
@@ -596,7 +603,55 @@ export default function Page() {
         } finally {
             setLoading(false);
         }
-    }, [accessToken, fetchTopTracks, fetchUserPlaylists]);
+    }, [accessToken, fetchTopTracks, fetchUserPlaylists, generateRecommendations]);
+
+    useEffect(() => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get('code');
+
+        const handleTokenExchange = async () => {
+            const codeVerifier = window.localStorage.getItem('spotify_code_verifier');
+            if (!codeVerifier) {
+                setError('Missing code verifier');
+                return;
+            }
+
+            try {
+                const response = await axios.post(
+                    'https://accounts.spotify.com/api/token',
+                    new URLSearchParams({
+                        client_id: CLIENT_ID,
+                        grant_type: 'authorization_code',
+                        code,
+                        redirect_uri: REDIRECT_URI,
+                        code_verifier: codeVerifier,
+                    }),
+                    {
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                        },
+                    }
+                );
+
+                const { access_token } = response.data;
+                window.localStorage.setItem('spotify_token', access_token);
+                window.localStorage.removeItem('spotify_code_verifier');
+                setAccessToken(access_token);
+
+                // Remove code from URL
+                window.history.replaceState({}, document.title, window.location.pathname);
+
+                await fetchUserProfile(access_token);
+            } catch (err) {
+                console.error('Token exchange error:', err);
+                setError('Failed to authenticate with Spotify');
+            }
+        };
+
+        if (code && !accessToken) {
+            handleTokenExchange();
+        }
+    }, [accessToken, fetchUserProfile]);
 
     useEffect(() => {
         const storedUser = window.localStorage.getItem('user');
@@ -644,8 +699,15 @@ export default function Page() {
                 playerInstance.addListener('ready', ({ device_id }) => {
                     console.log('Spotify Player ready with Device ID', device_id);
                     setDeviceId(device_id);
-                    setSpotifyPlayer(playerInstance);
                     setPlayerReady(true);
+                    // Transfer playback to this device
+                    apiCallWithBackoff(() =>
+                        axios.put(
+                            'https://api.spotify.com/v1/me/player',
+                            { device_ids: [device_id], play: false },
+                            { headers: { Authorization: `Bearer ${accessToken}` } }
+                        )
+                    ).catch(err => console.error('Failed to transfer playback:', err));
                 });
                 playerInstance.addListener('not_ready', ({ device_id }) => {
                     console.log('Device ID has gone offline', device_id);
@@ -669,7 +731,7 @@ export default function Page() {
                             title: track.name,
                             artist: track.artists.map(a => a.name).join(', '),
                             album: track.album.name,
-                            duration: new Date(track.duration_ms).toISOString().substr(14, 5),
+                            duration: new Date(track.duration).toISOString().substr(14, 5),
                             cover: track.album.images[0]?.url || 'default-cover',
                             genre: 'Unknown',
                             plays: 0,
@@ -896,6 +958,22 @@ export default function Page() {
             audio.removeEventListener('error', handleError);
         };
     }, [isPlaying, isLoadingSong, isPremium]);
+
+    useEffect(() => {
+        if (!spotifyPlayer || !isPremium || !playerReady) return;
+
+        const updateState = async () => {
+            const state = await spotifyPlayer.getCurrentState();
+            if (state) {
+                setIsPlaying(!state.paused);
+                setCurrentTime(state.position / 1000);
+                setDuration(state.duration / 1000);
+            }
+        };
+
+        const interval = setInterval(updateState, 1000);
+        return () => clearInterval(interval);
+    }, [spotifyPlayer, isPremium, playerReady]);
 
     useEffect(() => {
         const audio = audioRef.current;
@@ -1658,10 +1736,10 @@ export default function Page() {
                         {error && <p className="player-error">{error}</p>}
                         <div className="progress-time">
                             <span>{formatTime(currentTime)}</span>
-                            <span>{currentSong.duration}</span>
+                            <span>{formatTime(duration)}</span>
                         </div>
                         <div className="progress-bar" onClick={handleSeek}>
-                            <div className="progress-fill" style={{ width: `${(currentTime / duration) * 100}%` }}></div>
+                            <div className="progress-fill" style={{ width: `${(currentTime / duration) * 100 || 0}%` }}></div>
                         </div>
                     </div>
                 </div>
