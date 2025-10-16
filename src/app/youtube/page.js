@@ -590,8 +590,8 @@ export default function Page() {
                         width: '0',
                         events: {
                             onReady: (event) => {
-                                console.log('✅ YouTube Player is ready!'); // ✅ Add confirmation log
-                                setYoutubePlayer(event.target);
+                                console.log('✅ YouTube Player is ready!');
+                                setYoutubePlayer(event.target); // ✅ Store the player
                                 try {
                                     event.target.setVolume(volume);
                                 } catch (err) {
@@ -611,11 +611,13 @@ export default function Page() {
                             }
                         }
                     });
+                    // ✅ DON'T store player here, only in onReady callback
                 } catch (err) {
                     console.error('Failed to create YouTube player:', err);
                     setError('Failed to initialize player');
                 }
             };
+
         } else if (window.YT && window.YT.Player) {
             if (!playerRef.current) {
                 console.error('playerRef is null when YT.Player already loaded');
@@ -685,22 +687,42 @@ export default function Page() {
     }, [volume, youtubePlayer]);
 
     useEffect(() => {
-        // ✅ ADD THIS CHECK - Don't try to load video if player isn't ready
+        // Don't proceed if player isn't ready or no song selected
         if (!youtubePlayer || !currentSong?.id) {
             console.log('Player not ready or no song selected');
             return;
         }
 
-        setIsLoadingSong(true);
+        // Add a small delay to ensure player is fully ready
+        const loadVideo = async () => {
+            setIsLoadingSong(true);
 
-        try {
-            youtubePlayer.loadVideoById(currentSong.id);
-        } catch (err) {
-            console.error('Error loading video:', err);
-            setError('Failed to load video');
-            setIsLoadingSong(false);
-        }
-    }, [currentSong, youtubePlayer]); // ✅ Make sure youtubePlayer is in dependencies
+            try {
+                // Check if the player has the loadVideoById method
+                if (typeof youtubePlayer.loadVideoById !== 'function') {
+                    console.error('loadVideoById is not available on player');
+                    setIsLoadingSong(false);
+                    return;
+                }
+
+                // Load the video
+                youtubePlayer.loadVideoById(currentSong.id);
+                console.log('✅ Video loaded:', currentSong.title);
+
+            } catch (err) {
+                console.error('Failed to load video:', err);
+                setError('Failed to load video. Please try again.');
+                setIsLoadingSong(false);
+            }
+        };
+
+        // Small delay to ensure player state is ready
+        const timeout = setTimeout(() => {
+            loadVideo();
+        }, 100);
+
+        return () => clearTimeout(timeout);
+    }, [currentSong, youtubePlayer]);
 
 
     const playSong = useCallback(async (song) => {
