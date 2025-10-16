@@ -567,6 +567,12 @@ export default function Page() {
     }, [repeat, playNext]);
 
     useEffect(() => {
+        // ✅ ADD THIS CHECK - Wait for playerRef to be ready
+        if (!playerRef.current) {
+            console.log('playerRef not ready yet');
+            return;
+        }
+
         if (!window.YT) {
             const tag = document.createElement('script');
             tag.src = 'https://www.youtube.com/iframe_api';
@@ -574,6 +580,12 @@ export default function Page() {
             firstScript.parentNode.insertBefore(tag, firstScript);
 
             window.onYouTubeIframeAPIReady = () => {
+                // ✅ ADD CHECK HERE TOO
+                if (!playerRef.current) {
+                    console.error('playerRef is null in onYouTubeIframeAPIReady');
+                    return;
+                }
+
                 const player = new window.YT.Player(playerRef.current, {
                     height: '0',
                     width: '0',
@@ -601,6 +613,12 @@ export default function Page() {
                 });
             };
         } else if (window.YT && window.YT.Player) {
+            // ✅ ADD CHECK HERE TOO
+            if (!playerRef.current) {
+                console.error('playerRef is null when YT.Player already loaded');
+                return;
+            }
+
             const player = new window.YT.Player(playerRef.current, {
                 height: '0',
                 width: '0',
@@ -637,7 +655,8 @@ export default function Page() {
                 }
             }
         };
-    }, [handleStateChange, playNext, volume]);
+    }, [handleStateChange, playNext, volume]); // ✅ Dependencies are correct
+
 
     useEffect(() => {
         let interval;
