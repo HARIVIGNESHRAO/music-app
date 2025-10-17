@@ -1,4 +1,5 @@
 'use client';
+
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import Image from 'next/image';
@@ -6,9 +7,21 @@ import Link from 'next/link';
 import './page.css';
 import {
     Play, Pause, SkipBack, SkipForward, Volume2, Heart, Search, Home, Music, User,
-    Plus, Shuffle, Repeat
+    Plus, Shuffle, Repeat, MoreVertical, TrendingUp, BarChart3, Shield
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+
+// Static songs data (centralized)
+const staticSongs = [
+    { id: 1, title: "Midnight Dreams", artist: "Luna Martinez", album: "Nocturnal Vibes", duration: "3:24", cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center", genre: "Pop", plays: 1234567, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3", spotify_uri: null },
+    { id: 2, title: "Electric Pulse", artist: "Neon Collective", album: "Digital Horizons", duration: "4:12", cover: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&h=300&fit=crop&crop=center", genre: "Electronic", plays: 987654, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3", spotify_uri: null },
+    { id: 3, title: "Acoustic Soul", artist: "River Stone", album: "Unplugged Sessions", duration: "2:58", cover: "https://images.unsplash.com/photo-1493612276216-ee3925520721?w=300&h=300&fit=crop&crop=center", genre: "Acoustic", plays: 756432, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3", spotify_uri: null },
+    { id: 4, title: "Urban Rhythm", artist: "City Beats", album: "Street Anthology", duration: "3:45", cover: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=300&h=300&fit=crop&crop=center", genre: "Hip-Hop", plays: 2143567, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3", spotify_uri: null },
+    { id: 5, title: "Sunset Boulevard", artist: "Golden Hour", album: "California Dreams", duration: "4:33", cover: "https://images.unsplash.com/photo-1514320291840-2e0a9bf2a9ae?w=300&h=300&fit=crop&crop=center", genre: "Rock", plays: 654321, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3", spotify_uri: null },
+    { id: 6, title: "Jazz Nights", artist: "Smooth Operators", album: "After Hours", duration: "5:12", cover: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=300&h=300&fit=crop&crop=center", genre: "Jazz", plays: 543210, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3", spotify_uri: null },
+    { id: 7, title: "Classical Morning", artist: "Orchestra Symphony", album: "Dawn Collection", duration: "6:45", cover: "https://images.unsplash.com/photo-1507838153414-b4b713384a76?w=300&h=300&fit=crop&crop=center", genre: "Classical", plays: 432109, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3", spotify_uri: null },
+    { id: 8, title: "Country Roads", artist: "Nashville Stars", album: "Southern Tales", duration: "3:56", cover: "https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=300&h=300&fit=crop&crop=center", genre: "Country", plays: 321098, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3", spotify_uri: null }
+];
 
 // Utility to debounce functions
 const debounce = (func, wait) => {
@@ -64,6 +77,7 @@ export default function Page() {
     const RESPONSE_TYPE = 'code';
     const SCOPES = 'user-read-private user-read-email user-top-read playlist-read-private playlist-modify-public streaming user-read-playback-state user-modify-playback-state';
     const CODE_CHALLENGE_METHOD = 'S256';
+
     const CACHE_KEY_TOP_TRACKS = 'spotify_top_tracks';
     const CACHE_KEY_PLAYLISTS = 'spotify_playlists';
     const CACHE_EXPIRY_MS = 60 * 60 * 1000; // 1 hour
@@ -126,20 +140,20 @@ export default function Page() {
             .replace(/=/g, '');
     };
 
-    const generateRecommendations = useCallback(() => {
-        if (recentlyPlayed.length === 0) {
+    const generateRecommendations = useCallback((allSongs) => {
+        if (!allSongs || allSongs.length === 0) {
             setRecommendations([]);
             return;
         }
 
-        const allGenres = [...new Set(songs.map(song => song.genre))];
-        const allArtists = [...new Set(songs.map(song => song.artist))];
+        const allGenres = [...new Set(allSongs.map(song => song.genre))];
+        const allArtists = [...new Set(allSongs.map(song => song.artist))];
 
         const createFeatureVector = (song) => {
             const genreVector = allGenres.map(genre => song.genre === genre ? 1 : 0);
             const artistVector = allArtists.map(artist => song.artist === artist ? 1 : 0);
-            const maxPlays = Math.max(...songs.map(s => s.plays || 1), 1);
-            const plays = song.plays ? song.plays / maxPlays : 0;
+            const maxPlays = Math.max(...allSongs.map(s => s.plays), 1);
+            const plays = song.plays / maxPlays;
             return [...genreVector, ...artistVector, plays];
         };
 
@@ -150,12 +164,23 @@ export default function Page() {
             return magnitudeA && magnitudeB ? dotProduct / (magnitudeA * magnitudeB) : 0;
         };
 
-        const songVectors = songs.map(song => ({
+        const songVectors = allSongs.map(song => ({
             song,
             vector: createFeatureVector(song)
         }));
 
-        const userVectors = recentlyPlayed.map(song => createFeatureVector(song));
+        const userPreferenceSongs = [
+            ...recentlyPlayed,
+            ...Array.from(likedSongs).map(songId => allSongs.find(s => s.id === songId)).filter(s => s)
+        ].filter((song, index, self) => song && self.findIndex(s => s.id === song.id) === index);
+
+        if (userPreferenceSongs.length === 0) {
+            const shuffled = [...allSongs].sort(() => 0.5 - Math.random());
+            setRecommendations(shuffled.slice(0, 4));
+            return;
+        }
+
+        const userVectors = userPreferenceSongs.map(song => createFeatureVector(song));
         const userVector = userVectors.reduce(
             (avg, vec) => avg.map((val, i) => val + vec[i] / userVectors.length),
             new Array(allGenres.length + allArtists.length + 1).fill(0)
@@ -169,11 +194,11 @@ export default function Page() {
         const recommendedSongs = scores
             .sort((a, b) => b.score - a.score)
             .map(item => item.song)
-            .filter(song => !recentlyPlayed.some(s => s.id === song.id))
+            .filter(song => !userPreferenceSongs.some(s => s.id === song.id))
             .slice(0, 4);
 
         setRecommendations(recommendedSongs);
-    }, [recentlyPlayed, songs]);
+    }, [recentlyPlayed, likedSongs]);
 
     const fetchTopTracks = useCallback(async (token) => {
         try {
@@ -183,14 +208,16 @@ export default function Page() {
             const cachedTracks = getCachedData(CACHE_KEY_TOP_TRACKS);
             if (cachedTracks) {
                 setSongs(cachedTracks);
-                generateRecommendations();
                 return cachedTracks;
             }
 
+            await new Promise(resolve => setTimeout(resolve, 300));
             const response = await apiCallWithBackoff(() =>
                 axios.get(
                     'https://api.spotify.com/v1/me/top/tracks?time_range=short_term&limit=10&fields=items(id,name,artists(name),album(name,images),duration_ms,preview_url,uri,popularity)',
-                    { headers: { Authorization: `Bearer ${token}` } }
+                    {
+                        headers: { Authorization: `Bearer ${token}` },
+                    }
                 )
             );
 
@@ -200,25 +227,24 @@ export default function Page() {
                 artist: track.artists.map(a => a.name).join(', '),
                 album: track.album.name,
                 duration: new Date(track.duration_ms).toISOString().substr(14, 5),
-                cover: track.album.images[0]?.url || 'https://via.placeholder.com/300',
+                cover: track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
                 genre: 'Unknown',
                 plays: track.popularity * 10000,
                 preview_url: track.preview_url || null,
-                spotify_uri: track.uri
+                spotify_uri: track.uri,
             }));
 
             setSongs(mappedSongs);
             setCachedData(CACHE_KEY_TOP_TRACKS, mappedSongs);
-            generateRecommendations();
             return mappedSongs;
         } catch (err) {
             console.error('Failed to fetch tracks:', err);
-            setError(err.response?.status === 429 ? 'Rate limit exceeded. Please wait.' : 'Failed to fetch tracks');
+            setError(err.response?.status === 429 ? 'Rate limit exceeded. Please wait and try again.' : 'Failed to fetch tracks');
             return [];
         } finally {
             setLoading(false);
         }
-    }, [generateRecommendations]);
+    }, []);
 
     const fetchUserPlaylists = useCallback(async (token) => {
         try {
@@ -234,17 +260,23 @@ export default function Page() {
             const playlistsResponse = await apiCallWithBackoff(() =>
                 axios.get(
                     'https://api.spotify.com/v1/me/playlists?limit=10&fields=items(id,name,tracks.href,images)',
-                    { headers: { Authorization: `Bearer ${token}` } }
+                    {
+                        headers: { Authorization: `Bearer ${token}` },
+                    }
                 )
             );
 
             const playlistsWithSongs = [];
-            for (const playlist of playlistsResponse.data.items.slice(0, 10)) {
+            const MAX_PLAYLISTS = 10;
+            for (const playlist of playlistsResponse.data.items.slice(0, MAX_PLAYLISTS)) {
+                await new Promise(resolve => setTimeout(resolve, 1000));
                 try {
                     const tracksResponse = await apiCallWithBackoff(() =>
                         axios.get(
                             `${playlist.tracks.href}?fields=items(track(id,name,artists(name),album(name,images),duration_ms,preview_url,uri))`,
-                            { headers: { Authorization: `Bearer ${token}` } }
+                            {
+                                headers: { Authorization: `Bearer ${token}` },
+                            }
                         )
                     );
                     const playlistSongs = tracksResponse.data.items
@@ -255,17 +287,20 @@ export default function Page() {
                             artist: item.track.artists.map(a => a.name).join(', '),
                             album: item.track.album.name,
                             duration: new Date(item.track.duration_ms).toISOString().substr(14, 5),
-                            cover: item.track.album.images[0]?.url || 'https://via.placeholder.com/300',
+                            cover: item.track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
                             genre: 'Unknown',
                             plays: 0,
                             preview_url: item.track.preview_url || null,
-                            spotify_uri: item.track.uri
+                            spotify_uri: item.track.uri,
                         }));
                     playlistsWithSongs.push({
                         id: playlist.id,
                         name: playlist.name,
                         songs: playlistSongs,
-                        cover: playlist.images?.[0]?.url || playlistSongs[0]?.cover || 'https://via.placeholder.com/300'
+                        cover:
+                            playlist.images?.[0]?.url ||
+                            playlistSongs[0]?.cover ||
+                            'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
                     });
                 } catch (err) {
                     console.error(`Error fetching tracks for playlist ${playlist.name}:`, err);
@@ -273,7 +308,7 @@ export default function Page() {
                         id: playlist.id,
                         name: playlist.name,
                         songs: [],
-                        cover: playlist.images?.[0]?.url || 'https://via.placeholder.com/300'
+                        cover: playlist.images?.[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
                     });
                 }
             }
@@ -282,7 +317,7 @@ export default function Page() {
             return playlistsWithSongs;
         } catch (err) {
             console.error('Failed to fetch playlists:', err);
-            setError(err.response?.status === 429 ? 'Rate limit exceeded. Please wait.' : 'Failed to fetch playlists');
+            setError(err.response?.status === 429 ? 'Rate limit exceeded. Please wait and try again.' : 'Failed to fetch playlists');
             return [];
         } finally {
             setLoading(false);
@@ -295,7 +330,12 @@ export default function Page() {
         }
 
         if (!accessToken || !query) {
-            setFilteredSongs([]);
+            const filtered = staticSongs.filter(song =>
+                song.title.toLowerCase().includes(query.toLowerCase()) ||
+                song.artist.toLowerCase().includes(query.toLowerCase()) ||
+                song.album.toLowerCase().includes(query.toLowerCase())
+            );
+            setFilteredSongs(filtered);
             return;
         }
 
@@ -306,7 +346,9 @@ export default function Page() {
                 const response = await apiCallWithBackoff(() =>
                     axios.get(
                         `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10&fields=tracks(items(id,name,artists(name),album(name,images),duration_ms,preview_url,uri,popularity))`,
-                        { headers: { Authorization: `Bearer ${accessToken}` } }
+                        {
+                            headers: { Authorization: `Bearer ${accessToken}` },
+                        }
                     )
                 );
                 const mappedSongs = response.data.tracks.items.map(track => ({
@@ -315,16 +357,16 @@ export default function Page() {
                     artist: track.artists.map(a => a.name).join(', '),
                     album: track.album.name,
                     duration: new Date(track.duration_ms).toISOString().substr(14, 5),
-                    cover: track.album.images[0]?.url || 'https://via.placeholder.com/300',
+                    cover: track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
                     genre: 'Unknown',
                     plays: track.popularity * 10000,
                     preview_url: track.preview_url || null,
-                    spotify_uri: track.uri
+                    spotify_uri: track.uri,
                 }));
                 setFilteredSongs(mappedSongs);
             } catch (err) {
                 console.error('Search failed:', err);
-                setError(err.response?.status === 429 ? 'Too many searches. Please wait.' : 'Search failed');
+                setError(err.response?.status === 429 ? 'Too many searches. Please wait a moment.' : 'Search failed');
             } finally {
                 setLoading(false);
             }
@@ -350,14 +392,14 @@ export default function Page() {
                     id: data.id,
                     name: data.name,
                     songs: [],
-                    cover: data.images[0]?.url || 'https://via.placeholder.com/300'
+                    cover: data.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center'
                 }]);
                 setNewPlaylistName('');
                 setShowCreatePlaylist(false);
                 setError(null);
             } catch (err) {
                 console.error('Failed to create playlist:', err);
-                setError(err.response?.status === 429 ? 'Rate limit exceeded. Please wait.' : 'Failed to create playlist');
+                setError(err.response?.status === 429 ? 'Rate limit exceeded. Please wait and try again.' : 'Failed to create playlist');
             }
         }
     };
@@ -374,6 +416,8 @@ export default function Page() {
             console.log("Already loading a song, ignoring duplicate call");
             return;
         }
+
+        console.log("Selecting song:", song.title, "hasPreview:", !!song.preview_url, "hasUri:", !!song.spotify_uri);
 
         if (!isSongPlayable(song)) {
             setError(`No playable content available for ${song.title}`);
@@ -412,17 +456,11 @@ export default function Page() {
         setCurrentSong(song);
         setIsPlaying(true);
         setError(null);
-        setRecentlyPlayed((prev) => {
-            const newPlayed = [song, ...prev.filter((s) => s.id !== song.id)];
-            const updatedPlayed = newPlayed.slice(0, 5);
-            generateRecommendations(); // Update recommendations
-            return updatedPlayed;
-        });
 
         setTimeout(() => {
             isLoadingRef.current = false;
         }, 500);
-    }, [filteredSongs, songs, isSongPlayable, generateRecommendations]);
+    }, [filteredSongs, songs, isSongPlayable]);
 
     const playNext = useCallback(() => {
         setQueue(currentQueue => {
@@ -486,6 +524,7 @@ export default function Page() {
         try {
             setLoading(true);
             setError(null);
+            console.log('Fetching user profile...');
 
             const { data } = await axios.get('https://api.spotify.com/v1/me', {
                 headers: { Authorization: `Bearer ${token}` }
@@ -495,7 +534,7 @@ export default function Page() {
                 id: data.id,
                 name: data.display_name,
                 email: data.email,
-                avatar: data.images?.[0]?.url || 'https://via.placeholder.com/100',
+                avatar: data.images?.[0]?.url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center',
                 product: data.product || 'free'
             };
 
@@ -505,38 +544,66 @@ export default function Page() {
 
             profileLoadedRef.current = true;
 
-            const topTracks = await fetchTopTracks(token);
-            const uniqueArtists = [...new Set(topTracks.map(song => song.artist))];
+            console.log('Profile loaded:', user.name);
+
+            // Initialize with static songs
+            setSongs(staticSongs);
+            setFilteredSongs(staticSongs);
+            generateRecommendations(staticSongs);
+
+            const uniqueArtists = [...new Set(staticSongs.map(song => song.artist))];
             setArtists(uniqueArtists.map((name, idx) => ({
                 id: idx + 1,
                 name,
-                songs: topTracks.filter(s => s.artist === name).length,
-                albums: new Set(topTracks.filter(s => s.artist === name).map(s => s.album)).size
+                songs: staticSongs.filter(s => s.artist === name).length,
+                albums: new Set(staticSongs.filter(s => s.artist === name).map(s => s.album)).size
             })));
+
+            console.log('Spotify tracks available on demand');
         } catch (err) {
             console.error('Profile fetch error:', err);
-            setError(err.response?.status === 429 ? 'Too many requests. Please wait.' : 'Failed to fetch profile');
+            setError(
+                err.response?.status === 429
+                    ? 'Too many requests. Please wait and try again.'
+                    : `Failed to fetch profile: ${err.response?.data?.error?.message || err.message}`
+            );
         } finally {
             setLoading(false);
         }
-    }, [fetchTopTracks]);
+    }, [generateRecommendations]);
 
     const loadSpotifyData = useCallback(async () => {
         if (!accessToken) return;
 
-        try {
-            setLoading(true);
-            setError(null);
+        setLoading(true);
+        setError(null);
 
-            await fetchTopTracks(accessToken);
-            await fetchUserPlaylists(accessToken);
+        try {
+            console.log('📥 Loading Spotify tracks...');
+            const topTracks = await fetchTopTracks(accessToken);
+
+            console.log('📥 Loading playlists...');
+            const userPlaylists = await fetchUserPlaylists(accessToken);
+
+            const allKnownSongs = [...topTracks, ...userPlaylists.flatMap(p => p.songs)].reduce((unique, song) => {
+                if (!unique.some(s => s.id === song.id)) unique.push(song);
+                return unique;
+            }, []);
+
+            generateRecommendations(allKnownSongs);
+
+            setError('Spotify library loaded successfully!');
+            setTimeout(() => setError(null), 3000);
+
         } catch (err) {
-            console.error('Failed to load Spotify data:', err);
-            setError(err.response?.status === 429 ? 'Too many requests. Please try again.' : 'Failed to load Spotify data');
+            console.error('❌ Failed to load Spotify data:', err);
+            setError(err.response?.status === 429
+                ? 'Too many requests. Please try again in a moment.'
+                : 'Failed to load Spotify data');
         } finally {
             setLoading(false);
         }
-    }, [accessToken, fetchTopTracks, fetchUserPlaylists]);
+    }, [accessToken, fetchTopTracks, fetchUserPlaylists, generateRecommendations]);
 
     useEffect(() => {
         const urlParams = new URLSearchParams(window.location.search);
@@ -557,16 +624,21 @@ export default function Page() {
                         grant_type: 'authorization_code',
                         code,
                         redirect_uri: REDIRECT_URI,
-                        code_verifier: codeVerifier
+                        code_verifier: codeVerifier,
                     }),
-                    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+                    {
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                        },
+                    }
                 );
 
-                const { access_token, expires_in } = response.data;
+                const { access_token } = response.data;
                 window.localStorage.setItem('spotify_token', access_token);
-                window.localStorage.setItem('spotify_token_expiry', Date.now() + expires_in * 1000);
+                window.localStorage.removeItem('spotify_code_verifier');
                 setAccessToken(access_token);
 
+                // Remove code from URL
                 window.history.replaceState({}, document.title, window.location.pathname);
 
                 await fetchUserProfile(access_token);
@@ -588,6 +660,19 @@ export default function Page() {
             setCurrentUser(user);
             setIsPremium(user.product === 'premium');
             profileLoadedRef.current = true;
+
+            setSongs(staticSongs);
+            setFilteredSongs(staticSongs);
+
+            const uniqueArtists = [...new Set(staticSongs.map(song => song.artist))];
+            setArtists(uniqueArtists.map((name, idx) => ({
+                id: idx + 1,
+                name,
+                songs: staticSongs.filter(s => s.artist === name).length,
+                albums: new Set(staticSongs.filter(s => s.artist === name).map(s => s.album)).size
+            })));
+
+            generateRecommendations(staticSongs);
         }
 
         const storedToken = window.localStorage.getItem('spotify_token');
@@ -595,7 +680,7 @@ export default function Page() {
             setAccessToken(storedToken);
             fetchUserProfile(storedToken);
         }
-    }, [fetchUserProfile]);
+    }, [fetchUserProfile, generateRecommendations]);
 
     useEffect(() => {
         if (!accessToken || !isPremium) return;
@@ -615,40 +700,29 @@ export default function Page() {
                     console.log('Spotify Player ready with Device ID', device_id);
                     setDeviceId(device_id);
                     setPlayerReady(true);
-                    const transferPlayback = () => {
-                        if (accessToken) {
-                            apiCallWithBackoff(() =>
-                                axios.put(
-                                    'https://api.spotify.com/v1/me/player',
-                                    { device_ids: [device_id], play: false },
-                                    { headers: { Authorization: `Bearer ${accessToken}` } }
-                                )
-                            ).catch(err => {
-                                console.error('Failed to transfer playback:', err);
-                                setError('Failed to transfer playback. Retrying...');
-                                setTimeout(transferPlayback, 2000);
-                            });
-                        }
-                    };
-                    transferPlayback();
+                    // Transfer playback to this device
+                    apiCallWithBackoff(() =>
+                        axios.put(
+                            'https://api.spotify.com/v1/me/player',
+                            { device_ids: [device_id], play: false },
+                            { headers: { Authorization: `Bearer ${accessToken}` } }
+                        )
+                    ).catch(err => console.error('Failed to transfer playback:', err));
                 });
-
                 playerInstance.addListener('not_ready', ({ device_id }) => {
                     console.log('Device ID has gone offline', device_id);
                     setDeviceId(null);
                     setPlayerReady(false);
                 });
-
                 playerInstance.addListener('initialization_error', ({ message }) => {
                     console.error('Spotify Player initialization error:', message);
                     setError('Failed to initialize Spotify player');
                 });
-
                 playerInstance.addListener('player_state_changed', (state) => {
                     if (!state) return;
                     setIsPlaying(!state.paused);
-                    setCurrentTime(state.position ? state.position / 1000 : 0);
-                    setDuration(state.duration ? state.duration / 1000 : 0);
+                    setCurrentTime(state.position / 1000);
+                    setDuration(state.duration / 1000);
 
                     if (state.track_window.current_track) {
                         const track = state.track_window.current_track;
@@ -657,8 +731,8 @@ export default function Page() {
                             title: track.name,
                             artist: track.artists.map(a => a.name).join(', '),
                             album: track.album.name,
-                            duration: state.duration ? new Date(state.duration).toISOString().substr(14, 5) : '0:00',
-                            cover: track.album.images[0]?.url || 'https://via.placeholder.com/300',
+                            duration: new Date(track.duration).toISOString().substr(14, 5),
+                            cover: track.album.images[0]?.url || 'default-cover',
                             genre: 'Unknown',
                             plays: 0,
                             spotify_uri: track.uri
@@ -708,12 +782,12 @@ export default function Page() {
         if (audioRef.current) {
             audioRef.current.volume = volume / 100;
         }
-        if (spotifyPlayer && playerReady) {
+        if (spotifyPlayer) {
             spotifyPlayer.setVolume(volume / 100).catch(err =>
                 console.error('Failed to set volume:', err)
             );
         }
-    }, [volume, spotifyPlayer, playerReady]);
+    }, [volume, spotifyPlayer]);
 
     useEffect(() => {
         if (!currentSong) return;
@@ -733,50 +807,93 @@ export default function Page() {
                 setError(null);
 
                 if (isPremium && playerReady && deviceId && currentSong.spotify_uri) {
-                    await apiCallWithBackoff(() =>
-                        axios.put(
-                            `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
-                            { uris: [currentSong.spotify_uri] },
-                            { headers: { Authorization: `Bearer ${accessToken}` } }
-                        )
-                    );
-                    console.log("Playing via Spotify SDK");
-                    return;
+                    try {
+                        await apiCallWithBackoff(() =>
+                            axios.put(
+                                `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
+                                { uris: [currentSong.spotify_uri] },
+                                { headers: { Authorization: `Bearer ${accessToken}` } }
+                            )
+                        );
+                        console.log("Playing via Spotify SDK");
+
+                        if (!isCancelled) {
+                            setRecentlyPlayed((prev) => {
+                                const newPlayed = [currentSong, ...prev.filter((s) => s.id !== currentSong.id)];
+                                return newPlayed.slice(0, 5);
+                            });
+                        }
+                        return;
+                    } catch (sdkError) {
+                        if (sdkError.response?.status === 429) {
+                            const retryAfter = parseInt(sdkError.response.headers["retry-after"] || "10", 10) * 1000;
+                            console.warn(`Rate limited. Retrying after ${retryAfter}ms...`);
+                            if (!isCancelled) {
+                                retryTimeout = setTimeout(playSong, retryAfter + Math.random() * 100);
+                            }
+                            return;
+                        }
+                        console.warn("SDK failed, trying preview:", sdkError.message);
+                    }
                 }
 
                 if (audioRef.current && currentSong.preview_url) {
+                    console.log("Attempting preview playback...");
                     const audio = audioRef.current;
+
+                    audio.pause();
+                    audio.currentTime = 0;
                     audio.src = currentSong.preview_url;
-                    audio.load();
 
                     await new Promise((resolve, reject) => {
                         const timeout = setTimeout(() => reject(new Error("Load timeout")), 10000);
+
                         audio.onloadedmetadata = () => {
                             clearTimeout(timeout);
                             resolve();
                         };
+
                         audio.onerror = (e) => {
                             clearTimeout(timeout);
                             reject(new Error("Audio load failed"));
                         };
+
+                        audio.load();
                     });
 
                     if (!isCancelled && isPlaying) {
                         await audio.play();
                         console.log("Preview playing");
+                        setError(null);
+                        setRecentlyPlayed((prev) => {
+                            const newPlayed = [currentSong, ...prev.filter((s) => s.id !== currentSong.id)];
+                            return newPlayed.slice(0, 5);
+                        });
                     }
                     return;
                 }
 
                 if (!isCancelled) {
-                    setError(currentSong.spotify_uri && !isPremium
-                        ? `${currentSong.title} requires Spotify Premium`
-                        : `No playable content for ${currentSong.title}`);
+                    if (isPremium && currentSong.spotify_uri && !playerReady) {
+                        setError("Player is initializing. Please wait.");
+                    } else if (!currentSong.preview_url && !currentSong.spotify_uri) {
+                        setError(`No playable content for ${currentSong.title}`);
+                    } else if (currentSong.spotify_uri && !currentSong.preview_url && !isPremium) {
+                        setError(`${currentSong.title} requires Spotify Premium`);
+                    } else {
+                        console.error("Playback failed despite available content");
+                        setError(`Failed to play ${currentSong.title}`);
+                    }
                     setIsPlaying(false);
                 }
             } catch (err) {
                 if (!isCancelled) {
-                    if (err.response?.status === 429) {
+                    if (err.name === "AbortError") {
+                        console.log("Playback was interrupted");
+                    } else if (err.name === "NotAllowedError") {
+                        setError("Playback blocked. Please click play to start.");
+                        setIsPlaying(false);
+                    } else if (err.response?.status === 429) {
                         const retryAfter = parseInt(err.response.headers["retry-after"] || "10", 10) * 1000;
                         console.warn(`Rate limited. Retrying after ${retryAfter}ms...`);
                         retryTimeout = setTimeout(playSong, retryAfter + Math.random() * 100);
@@ -805,7 +922,7 @@ export default function Page() {
                 clearTimeout(retryTimeout);
             }
         };
-    }, [currentSong, isPremium, playerReady, deviceId, accessToken, isPlaying]);
+    }, [currentSong?.id, isPremium, playerReady, deviceId, accessToken, isPlaying]);
 
     useEffect(() => {
         if (!audioRef.current || isPremium) return;
@@ -813,8 +930,11 @@ export default function Page() {
         const audio = audioRef.current;
 
         const handleTimeUpdate = () => setCurrentTime(audio.currentTime || 0);
-        const handleLoadedMetadata = () => setDuration(audio.duration || 0);
-        const handleError = () => setError('Error loading audio file');
+        const handleLoadedMetadata = () => setDuration(audio.duration || 30);
+        const handleError = (e) => {
+            console.error('Audio error:', e);
+            setError('Error loading audio file');
+        };
 
         audio.addEventListener('timeupdate', handleTimeUpdate);
         audio.addEventListener('loadedmetadata', handleLoadedMetadata);
@@ -823,6 +943,7 @@ export default function Page() {
         if (isPlaying && !isLoadingSong) {
             audio.play().catch(err => {
                 if (err.name !== 'AbortError') {
+                    console.error('Play error:', err);
                     setError('Playback error. Please try again.');
                     setIsPlaying(false);
                 }
@@ -845,8 +966,8 @@ export default function Page() {
             const state = await spotifyPlayer.getCurrentState();
             if (state) {
                 setIsPlaying(!state.paused);
-                setCurrentTime(state.position ? state.position / 1000 : 0);
-                setDuration(state.duration ? state.duration / 1000 : 0);
+                setCurrentTime(state.position / 1000);
+                setDuration(state.duration / 1000);
             }
         };
 
@@ -903,31 +1024,15 @@ export default function Page() {
     };
 
     const togglePlay = () => {
-        if (!currentSong) return;
         if (isPremium && spotifyPlayer && playerReady) {
             if (isPlaying) {
-                spotifyPlayer.pause().catch(err => {
-                    console.error('Failed to pause:', err);
-                    setError('Failed to pause');
-                });
+                spotifyPlayer.pause();
             } else {
-                spotifyPlayer.resume().catch(err => {
-                    console.error('Failed to resume:', err);
-                    setError('Failed to resume');
-                });
+                spotifyPlayer.resume();
             }
-        } else if (audioRef.current) {
-            if (isPlaying) {
-                audioRef.current.pause();
-            } else {
-                audioRef.current.play().catch(err => {
-                    console.error('Playback error:', err);
-                    setError('Playback error');
-                    setIsPlaying(false);
-                });
-            }
+        } else {
+            setIsPlaying(prev => !prev);
         }
-        setIsPlaying(prev => !prev);
     };
 
     const toggleShuffle = () => setShuffle(prev => !prev);
@@ -953,38 +1058,28 @@ export default function Page() {
     };
 
     const handleSeek = async (e) => {
-        if (!currentSong || !duration) return;
+        if (isPremium && spotifyPlayer && deviceId && duration) {
+            const progressBar = e.currentTarget;
+            const rect = progressBar.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const width = rect.width;
+            const seekTime = (clickX / width) * duration * 1000;
 
-        const progressBar = e.currentTarget;
-        const rect = progressBar.getBoundingClientRect();
-        const clickX = e.clientX - rect.left;
-        const width = rect.width;
-        const seekTime = (clickX / width) * duration;
-
-        if (isPremium && spotifyPlayer && deviceId) {
             try {
-                await spotifyPlayer.seek(seekTime * 1000);
+                await spotifyPlayer.seek(seekTime);
+                setCurrentTime(seekTime / 1000);
             } catch (err) {
                 console.error('Failed to seek:', err);
                 setError('Failed to seek track');
             }
-        } else if (audioRef.current) {
+        } else if (audioRef.current && duration) {
+            const progressBar = e.currentTarget;
+            const rect = progressBar.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const width = rect.width;
+            const seekTime = (clickX / width) * duration;
             audioRef.current.currentTime = seekTime;
-        }
-        setCurrentTime(seekTime);
-    };
-
-    const handleVolumeChange = (e) => {
-        const newVolume = Number(e.target.value);
-        setVolume(newVolume);
-        if (audioRef.current) {
-            audioRef.current.volume = newVolume / 100;
-        }
-        if (spotifyPlayer && playerReady) {
-            spotifyPlayer.setVolume(newVolume / 100).catch(err => {
-                console.error('Failed to set volume:', err);
-                setError('Failed to set volume');
-            });
+            setCurrentTime(seekTime);
         }
     };
 
@@ -1062,6 +1157,12 @@ export default function Page() {
         selectSong(validSongs[0], validSongs);
     };
 
+    const formatDate = (dateString) => {
+        if (!dateString) return 'N/A';
+        const date = new Date(dateString);
+        return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+    };
+
     if (!currentUser) {
         return (
             <div className="login-container">
@@ -1093,7 +1194,19 @@ export default function Page() {
 
     return (
         <div className="app-container">
-            <audio ref={audioRef} />
+            <audio
+                ref={audioRef}
+                onTimeUpdate={() => !isPremium && setCurrentTime(audioRef.current?.currentTime || 0)}
+                onLoadedMetadata={() => {
+                    if (!isPremium && audioRef.current) {
+                        setDuration(audioRef.current.duration || 30);
+                    }
+                }}
+                onError={(e) => {
+                    console.error('Audio error:', e);
+                    setError('Error loading audio file');
+                }}
+            />
             <header className="header">
                 <div className="header-content">
                     <div className="header-left">
@@ -1115,7 +1228,7 @@ export default function Page() {
                     </div>
                     <div className="header-right">
                         <Image
-                            src={currentUser.avatar || 'https://via.placeholder.com/100'}
+                            src={currentUser.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center'}
                             alt={currentUser.name}
                             className="user-avatar"
                             width={100}
@@ -1590,7 +1703,7 @@ export default function Page() {
                             <button className="control-btn" onClick={playPrevious}>
                                 <SkipBack className="control-icon" />
                             </button>
-                            <button onClick={togglePlay} className="play-btn" disabled={!isSongPlayable(currentSong)}>
+                            <button onClick={togglePlay} className="play-btn">
                                 {isPlaying ? <Pause className="play-icon" /> : <Play className="play-icon" />}
                             </button>
                             <button className="control-btn" onClick={playNext}>
@@ -1613,7 +1726,7 @@ export default function Page() {
                                     min="0"
                                     max="100"
                                     value={volume}
-                                    onChange={handleVolumeChange}
+                                    onChange={(e) => setVolume(e.target.value)}
                                     className="volume-slider"
                                 />
                             </div>
