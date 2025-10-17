@@ -129,64 +129,99 @@ export default function Page() {
     };
 
     const generateRecommendations = useCallback((allSongs) => {
+        console.log('🎯 Generating recommendations...');
+        console.log('All songs:', allSongs.length);
+        console.log('Recently played:', recentlyPlayed.length);
+        console.log('Liked songs:', likedSongs.size);
+
         if (!allSongs || allSongs.length === 0) {
+            console.log('No songs available for recommendations');
             setRecommendations([]);
             return;
         }
 
-        const allGenres = [...new Set(allSongs.map(song => song.genre))];
-        const allArtists = [...new Set(allSongs.map(song => song.artist))];
-
-        const createFeatureVector = (song) => {
-            const genreVector = allGenres.map(genre => song.genre === genre ? 1 : 0);
-            const artistVector = allArtists.map(artist => song.artist === artist ? 1 : 0);
-            const maxPlays = Math.max(...allSongs.map(s => s.plays), 1);
-            const plays = song.plays / maxPlays;
-            return [...genreVector, ...artistVector, plays];
-        };
-
-        const cosineSimilarity = (vecA, vecB) => {
-            const dotProduct = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
-            const magnitudeA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
-            const magnitudeB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
-            return magnitudeA && magnitudeB ? dotProduct / (magnitudeA * magnitudeB) : 0;
-        };
-
-        const songVectors = allSongs.map(song => ({
-            song,
-            vector: createFeatureVector(song)
-        }));
-
+        // Get user preference songs (recently played + liked)
         const userPreferenceSongs = [
             ...recentlyPlayed,
             ...Array.from(likedSongs).map(songId => allSongs.find(s => s.id === songId)).filter(s => s)
         ].filter((song, index, self) => song && self.findIndex(s => s.id === song.id) === index);
 
+        console.log('User preference songs:', userPreferenceSongs.length);
+
+        // If no preferences, return random songs
         if (userPreferenceSongs.length === 0) {
+            console.log('No user preferences, returning random songs');
             const shuffled = [...allSongs].sort(() => 0.5 - Math.random());
             setRecommendations(shuffled.slice(0, 4));
             return;
         }
 
+        // Get all unique genres and artists from ALL songs
+        const allGenres = [...new Set(allSongs.map(song => song.genre))].filter(Boolean);
+        const allArtists = [...new Set(allSongs.map(song => song.artist))].filter(Boolean);
+
+        console.log('All genres:', allGenres.length);
+        console.log('All artists:', allArtists.length);
+
+        // Create feature vector for a song
+        const createFeatureVector = (song) => {
+            const genreVector = allGenres.map(genre => song.genre === genre ? 1 : 0);
+            const artistVector = allArtists.map(artist => song.artist === artist ? 1 : 0);
+            const maxPlays = Math.max(...allSongs.map(s => s.plays || 0), 1);
+            const plays = (song.plays || 0) / maxPlays;
+            return [...genreVector, ...artistVector, plays];
+        };
+
+        // Calculate cosine similarity between two vectors
+        const cosineSimilarity = (vecA, vecB) => {
+            if (vecA.length !== vecB.length) return 0;
+
+            const dotProduct = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
+            const magnitudeA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
+            const magnitudeB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
+
+            if (magnitudeA === 0 || magnitudeB === 0) return 0;
+
+            return dotProduct / (magnitudeA * magnitudeB);
+        };
+
+        // Create feature vectors for all songs
+        const songVectors = allSongs.map(song => ({
+            song,
+            vector: createFeatureVector(song)
+        }));
+
+        // Create feature vectors for user preference songs
         const userVectors = userPreferenceSongs.map(song => createFeatureVector(song));
+
+        // Calculate average user preference vector
+        const vectorLength = allGenres.length + allArtists.length + 1;
         const userVector = userVectors.reduce(
             (avg, vec) => avg.map((val, i) => val + vec[i] / userVectors.length),
-            new Array(allGenres.length + allArtists.length + 1).fill(0)
+            new Array(vectorLength).fill(0)
         );
 
+        console.log('User vector calculated:', userVector.length);
+
+        // Calculate similarity scores for all songs
         const scores = songVectors.map(({ song, vector }) => ({
             song,
             score: cosineSimilarity(userVector, vector)
         }));
 
+        console.log('Scores calculated:', scores.length);
+
+        // Filter out already played/liked songs and get top recommendations
         const recommendedSongs = scores
             .sort((a, b) => b.score - a.score)
             .map(item => item.song)
             .filter(song => !userPreferenceSongs.some(s => s.id === song.id))
             .slice(0, 4);
 
+        console.log('✅ Recommendations generated:', recommendedSongs.length);
         setRecommendations(recommendedSongs);
     }, [recentlyPlayed, likedSongs]);
+
 
     const fetchTopTracks = useCallback(async (token) => {
         try {
@@ -550,7 +585,7 @@ export default function Page() {
         } finally {
             setLoading(false);
         }
-    }, [generateRecommendations]);
+    }, [recentlyPlayed.length, songs.length, playlists.length, generateRecommendations]);
 
     const loadSpotifyData = useCallback(async () => {
         if (!accessToken) return;
@@ -664,17 +699,25 @@ export default function Page() {
             fetchUserProfile(storedToken);
         }
     }, [fetchUserProfile, generateRecommendations]);
-
+    // Add this AFTER the existing useEffects
     useEffect(() => {
+        // Only regenerate recommendations when recentlyPlayed changes and we have songs
         if (recentlyPlayed.length > 0 && songs.length > 0) {
+            console.log('🔄 Recently played changed, regenerating recommendations');
             const allSongs = [...songs, ...playlists.flatMap(p => p.songs)].reduce((unique, song) => {
                 if (!unique.some(s => s.id === song.id)) unique.push(song);
                 return unique;
             }, []);
-            generateRecommendations(allSongs);
-        }
-    }, [recentlyPlayed, songs, playlists, generateRecommendations]);
 
+            // Use a small delay to avoid rapid regeneration
+            const timeout = setTimeout(() => {
+                generateRecommendations(allSongs);
+            }, 300);
+
+            return () => clearTimeout(timeout);
+        }
+    }, [recentlyPlayed.length, songs.length, playlists.length]); // Only watch lengths, not the full arrays
+// Only watch lengths, not the full arrays
 
     useEffect(() => {
         if (!accessToken || !isPremium) return;
@@ -859,16 +902,12 @@ export default function Page() {
                         });
                     }
 
-                    if (!isCancelled && isPlaying) {
-                        await audio.play();
-                        console.log("Preview playing");
+                    if (!isCancelled) {
                         setError(null);
                         setRecentlyPlayed((prev) => {
                             const newPlayed = [currentSong, ...prev.filter((s) => s.id !== currentSong.id)];
                             return newPlayed.slice(0, 5);
                         });
-                    } else if (!isCancelled && !isPlaying) {
-                        audio.pause();
                     }
                     return;
                 }
@@ -938,7 +977,8 @@ export default function Page() {
         audio.addEventListener('loadedmetadata', handleLoadedMetadata);
         audio.addEventListener('error', handleError);
 
-        if (isPlaying && !isLoadingSong) {
+        // ADD THIS: Handle play/pause based on isPlaying state
+        if (isPlaying && !isLoadingSong && audio.src) {
             audio.play().catch(err => {
                 if (err.name !== 'AbortError') {
                     console.error('Play error:', err);
@@ -946,7 +986,7 @@ export default function Page() {
                     setIsPlaying(false);
                 }
             });
-        } else {
+        } else if (!isPlaying && audio.src) {
             audio.pause();
         }
 
@@ -1062,25 +1102,80 @@ export default function Page() {
         const rect = progressBar.getBoundingClientRect();
         const clickX = e.clientX - rect.left;
         const width = rect.width;
-        const seekPercentage = clickX / width;
+        const seekPercentage = Math.max(0, Math.min(1, clickX / width)); // Clamp between 0 and 1
 
         if (!duration || isNaN(duration)) return;
 
+        const seekTime = seekPercentage * duration;
+
         if (isPremium && spotifyPlayer && deviceId) {
-            const seekTime = seekPercentage * duration * 1000;
             try {
-                await spotifyPlayer.seek(seekTime);
-                setCurrentTime(seekTime / 1000);
+                await spotifyPlayer.seek(seekTime * 1000);
+                setCurrentTime(seekTime);
             } catch (err) {
                 console.error('Failed to seek:', err);
                 setError('Failed to seek track');
             }
         } else if (audioRef.current) {
-            const seekTime = seekPercentage * duration;
+            audioRef.current.currentTime = seekTime;
+            setCurrentTime(seekTime);
+
+            // If audio was paused, keep it paused after seeking
+            if (!isPlaying) {
+                audioRef.current.pause();
+            }
+        }
+    };
+// Add state for tracking dragging
+    // Add state for tracking dragging
+    const [isDragging, setIsDragging] = useState(false);
+
+// Wrap these functions in useCallback to make them stable
+    const handleProgressDrag = useCallback((e) => {
+        const progressBar = document.querySelector('.progress-bar');
+        if (!progressBar) return;
+
+        const rect = progressBar.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const width = rect.width;
+        const seekPercentage = Math.max(0, Math.min(1, clickX / width));
+
+        if (!duration || isNaN(duration)) return;
+
+        const seekTime = seekPercentage * duration;
+
+        if (isPremium && spotifyPlayer && deviceId) {
+            spotifyPlayer.seek(seekTime * 1000).catch(err => {
+                console.error('Failed to seek:', err);
+            });
+            setCurrentTime(seekTime);
+        } else if (audioRef.current) {
             audioRef.current.currentTime = seekTime;
             setCurrentTime(seekTime);
         }
-    };
+    }, [duration, isPremium, spotifyPlayer, deviceId]);
+
+    const handleMouseDown = useCallback((e) => {
+        setIsDragging(true);
+        handleSeek(e);
+    }, [handleSeek]);
+
+    const handleMouseUp = useCallback(() => {
+        setIsDragging(false);
+    }, []);
+
+// Add effect to handle mouse up globally
+    useEffect(() => {
+        if (isDragging) {
+            document.addEventListener('mousemove', handleProgressDrag);
+            document.addEventListener('mouseup', handleMouseUp);
+
+            return () => {
+                document.removeEventListener('mousemove', handleProgressDrag);
+                document.removeEventListener('mouseup', handleMouseUp);
+            };
+        }
+    }, [isDragging, handleProgressDrag, handleMouseUp]);
 
 
     const formatTime = (seconds) => {
@@ -1748,10 +1843,18 @@ export default function Page() {
                             <span>{formatTime(currentTime)}</span>
                             <span>{formatTime(duration)}</span>
                         </div>
-                        <div className="progress-bar" onClick={handleSeek}>
-                            <div className="progress-fill" style={{ width: `${(currentTime / duration) * 100 || 0}%` }}></div>
+                        <div
+                            className="progress-bar"
+                            onMouseDown={handleMouseDown}
+                            onClick={handleSeek}
+                        >
+                            <div
+                                className="progress-fill"
+                                style={{ width: `${(currentTime / duration) * 100 || 0}%` }}
+                            ></div>
                         </div>
                     </div>
+
                 </div>
             )}
         </div>
