@@ -157,7 +157,19 @@ export default function Page() {    const router = useRouter();    const [curren
             setLoading(false);
         }
     }, [generateRecommendations]);
-
+    const handleVolumeChange = (e) => {
+        const newVolume = Number(e.target.value);
+        setVolume(newVolume);
+        if (audioRef.current) {
+            audioRef.current.volume = newVolume / 100;
+        }
+        if (spotifyPlayer && playerReady) {
+            spotifyPlayer.setVolume(newVolume / 100).catch(err => {
+                console.error('Failed to set volume:', err);
+                setError('Failed to set volume');
+            });
+        }
+    };
     const fetchUserPlaylists = useCallback(async (token) => {
         try {
             setLoading(true);
@@ -352,7 +364,9 @@ export default function Page() {    const router = useRouter();    const [curren
         setError(null);
         setRecentlyPlayed((prev) => {
             const newPlayed = [song, ...prev.filter((s) => s.id !== song.id)];
-            return newPlayed.slice(0, 5);
+            const updatedPlayed = newPlayed.slice(0, 5);
+            generateRecommendations(); // Trigger recommendations update
+            return updatedPlayed;
         });
 
         setTimeout(() => {
@@ -735,9 +749,8 @@ export default function Page() {    const router = useRouter();    const [curren
         if (!audioRef.current || isPremium) return;
 
         const audio = audioRef.current;
-
         const handleTimeUpdate = () => setCurrentTime(audio.currentTime || 0);
-        const handleLoadedMetadata = () => setDuration(audio.duration || 30);
+        const handleLoadedMetadata = () => setDuration(audio.duration || 0);
         const handleError = () => setError('Error loading audio file');
 
         audio.addEventListener('timeupdate', handleTimeUpdate);
@@ -830,19 +843,28 @@ export default function Page() {    const router = useRouter();    const [curren
         if (!currentSong) return;
         if (isPremium && spotifyPlayer && playerReady) {
             if (isPlaying) {
-                spotifyPlayer.pause().catch(err => setError('Failed to pause'));
+                spotifyPlayer.pause().catch(err => {
+                    console.error('Failed to pause:', err);
+                    setError('Failed to pause');
+                });
             } else {
-                spotifyPlayer.resume().catch(err => setError('Failed to resume'));
+                spotifyPlayer.resume().catch(err => {
+                    console.error('Failed to resume:', err);
+                    setError('Failed to resume');
+                });
             }
-            setIsPlaying(!isPlaying);
         } else if (audioRef.current) {
             if (isPlaying) {
                 audioRef.current.pause();
             } else {
-                audioRef.current.play().catch(err => setError('Playback error'));
+                audioRef.current.play().catch(err => {
+                    console.error('Playback error:', err);
+                    setError('Playback error');
+                    setIsPlaying(false); // Ensure state reflects failure
+                });
             }
-            setIsPlaying(!isPlaying);
         }
+        setIsPlaying(prev => !prev); // Toggle state after action
     };
 
     const toggleShuffle = () => setShuffle(prev => !prev);
@@ -879,14 +901,14 @@ export default function Page() {    const router = useRouter();    const [curren
         if (isPremium && spotifyPlayer && deviceId) {
             try {
                 await spotifyPlayer.seek(seekTime * 1000);
-                setCurrentTime(seekTime);
             } catch (err) {
+                console.error('Failed to seek:', err);
                 setError('Failed to seek track');
             }
         } else if (audioRef.current) {
             audioRef.current.currentTime = seekTime;
-            setCurrentTime(seekTime);
         }
+        setCurrentTime(seekTime); // Update state immediately
     };
 
     const formatTime = (seconds) => {
@@ -1514,7 +1536,7 @@ export default function Page() {    const router = useRouter();    const [curren
                                     min="0"
                                     max="100"
                                     value={volume}
-                                    onChange={(e) => setVolume(Number(e.target.value))}
+                                    onChange={handleVolumeChange}
                                     className="volume-slider"
                                 />
                             </div>
