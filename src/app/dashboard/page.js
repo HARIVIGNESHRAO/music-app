@@ -1119,6 +1119,13 @@ export default function Page() {
     useEffect(() => {
         applyFilters();
     }, [applyFilters]);
+    useEffect(() => {
+        const slider = document.querySelector('.volume-slider');
+        if (slider) {
+            slider.style.setProperty('--volume-percentage', `${volume}%`);
+        }
+    }, [volume]);
+
 
     const addSongToPlaylist = (playlistId) => {
         if (!selectedSongForPlaylist) return;
@@ -1191,12 +1198,6 @@ export default function Page() {
             </div>
         );
     }
-    useEffect(() => {
-        const slider = document.querySelector('.volume-slider');
-        if (slider) {
-            slider.style.setProperty('--volume-percentage', `${volume}%`);
-        }
-    }, [volume]);
 
 
     return (
