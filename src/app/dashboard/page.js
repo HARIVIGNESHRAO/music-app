@@ -578,7 +578,8 @@ export default function Page() {
                 albums: new Set(allKnownSongs.filter(s => s.artist === name).map(s => s.album)).size
             })));
 
-            generateRecommendations(allKnownSongs);
+            // FIX: Generate recommendations with all songs immediately
+            setTimeout(() => generateRecommendations(allKnownSongs), 500);
 
             setError('Spotify library loaded successfully!');
             setTimeout(() => setError(null), 3000);
@@ -663,6 +664,17 @@ export default function Page() {
             fetchUserProfile(storedToken);
         }
     }, [fetchUserProfile, generateRecommendations]);
+
+    useEffect(() => {
+        if (recentlyPlayed.length > 0 && songs.length > 0) {
+            const allSongs = [...songs, ...playlists.flatMap(p => p.songs)].reduce((unique, song) => {
+                if (!unique.some(s => s.id === song.id)) unique.push(song);
+                return unique;
+            }, []);
+            generateRecommendations(allSongs);
+        }
+    }, [recentlyPlayed, songs, playlists, generateRecommendations]);
+
 
     useEffect(() => {
         if (!accessToken || !isPremium) return;
@@ -787,8 +799,6 @@ export default function Page() {
             try {
                 setIsLoadingSong(true);
                 setError(null);
-                setCurrentTime(0);
-                setDuration(0);
 
                 if (isPremium && playerReady && deviceId && currentSong.spotify_uri) {
                     try {
@@ -825,26 +835,29 @@ export default function Page() {
                     console.log("Attempting preview playback...");
                     const audio = audioRef.current;
 
-                    audio.pause();
-                    audio.currentTime = 0;
-                    audio.src = currentSong.preview_url;
+                    // Only reload if it's a different song
+                    if (audio.src !== currentSong.preview_url) {
+                        audio.pause();
+                        audio.currentTime = 0;
+                        audio.src = currentSong.preview_url;
 
-                    await new Promise((resolve, reject) => {
-                        const timeout = setTimeout(() => reject(new Error("Load timeout")), 10000);
+                        await new Promise((resolve, reject) => {
+                            const timeout = setTimeout(() => reject(new Error("Load timeout")), 10000);
 
-                        audio.onloadedmetadata = () => {
-                            clearTimeout(timeout);
-                            setDuration(audio.duration || 30);
-                            resolve();
-                        };
+                            audio.onloadedmetadata = () => {
+                                clearTimeout(timeout);
+                                setDuration(audio.duration || 30);
+                                resolve();
+                            };
 
-                        audio.onerror = (e) => {
-                            clearTimeout(timeout);
-                            reject(new Error("Audio load failed"));
-                        };
+                            audio.onerror = (e) => {
+                                clearTimeout(timeout);
+                                reject(new Error("Audio load failed"));
+                            };
 
-                        audio.load();
-                    });
+                            audio.load();
+                        });
+                    }
 
                     if (!isCancelled && isPlaying) {
                         await audio.play();
@@ -854,6 +867,8 @@ export default function Page() {
                             const newPlayed = [currentSong, ...prev.filter((s) => s.id !== currentSong.id)];
                             return newPlayed.slice(0, 5);
                         });
+                    } else if (!isCancelled && !isPlaying) {
+                        audio.pause();
                     }
                     return;
                 }
@@ -900,14 +915,12 @@ export default function Page() {
         return () => {
             isCancelled = true;
             isLoadingRef.current = false;
-            if (audioRef.current) {
-                audioRef.current.pause();
-            }
             if (retryTimeout) {
                 clearTimeout(retryTimeout);
             }
         };
-    }, [currentSong?.id, isPremium, playerReady, deviceId, accessToken, isPlaying]);
+    }, [currentSong?.id, isPremium, playerReady, deviceId, accessToken]); // REMOVED isPlaying from dependencies
+
 
     useEffect(() => {
         if (!audioRef.current || isPremium) return;
@@ -1009,16 +1022,18 @@ export default function Page() {
     };
 
     const togglePlay = () => {
+        if (!currentSong) return;
+
         if (isPremium && spotifyPlayer && playerReady) {
-            if (isPlaying) {
-                spotifyPlayer.pause();
-            } else {
-                spotifyPlayer.resume();
-            }
+            spotifyPlayer.togglePlay().catch(err => {
+                console.error('Toggle play error:', err);
+            });
         } else {
+            // Just toggle state without triggering reload
             setIsPlaying(prev => !prev);
         }
     };
+
 
     const toggleShuffle = () => setShuffle(prev => !prev);
 
@@ -1043,13 +1058,16 @@ export default function Page() {
     };
 
     const handleSeek = async (e) => {
-        if (isPremium && spotifyPlayer && deviceId && duration) {
-            const progressBar = e.currentTarget;
-            const rect = progressBar.getBoundingClientRect();
-            const clickX = e.clientX - rect.left;
-            const width = rect.width;
-            const seekTime = (clickX / width) * duration * 1000;
+        const progressBar = e.currentTarget;
+        const rect = progressBar.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const width = rect.width;
+        const seekPercentage = clickX / width;
 
+        if (!duration || isNaN(duration)) return;
+
+        if (isPremium && spotifyPlayer && deviceId) {
+            const seekTime = seekPercentage * duration * 1000;
             try {
                 await spotifyPlayer.seek(seekTime);
                 setCurrentTime(seekTime / 1000);
@@ -1057,16 +1075,13 @@ export default function Page() {
                 console.error('Failed to seek:', err);
                 setError('Failed to seek track');
             }
-        } else if (audioRef.current && duration) {
-            const progressBar = e.currentTarget;
-            const rect = progressBar.getBoundingClientRect();
-            const clickX = e.clientX - rect.left;
-            const width = rect.width;
-            const seekTime = (clickX / width) * duration;
+        } else if (audioRef.current) {
+            const seekTime = seekPercentage * duration;
             audioRef.current.currentTime = seekTime;
             setCurrentTime(seekTime);
         }
     };
+
 
     const formatTime = (seconds) => {
         if (isNaN(seconds) || !isFinite(seconds)) return '0:00';
@@ -1176,6 +1191,13 @@ export default function Page() {
             </div>
         );
     }
+    useEffect(() => {
+        const slider = document.querySelector('.volume-slider');
+        if (slider) {
+            slider.style.setProperty('--volume-percentage', `${volume}%`);
+        }
+    }, [volume]);
+
 
     return (
         <div className="app-container">
@@ -1711,10 +1733,12 @@ export default function Page() {
                                     min="0"
                                     max="100"
                                     value={volume}
-                                    onChange={(e) => setVolume(e.target.value)}
+                                    onChange={(e) => setVolume(Number(e.target.value))}
                                     className="volume-slider"
                                 />
+                                <span className="volume-display">{volume}%</span>
                             </div>
+
                         </div>
                     </div>
                     <div className="progress-section">
