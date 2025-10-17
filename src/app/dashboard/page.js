@@ -11,18 +11,6 @@ import {
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
-// Static songs data (centralized)
-const staticSongs = [
-    { id: 1, title: "Midnight Dreams", artist: "Luna Martinez", album: "Nocturnal Vibes", duration: "3:24", cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center", genre: "Pop", plays: 1234567, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3", spotify_uri: null },
-    { id: 2, title: "Electric Pulse", artist: "Neon Collective", album: "Digital Horizons", duration: "4:12", cover: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&h=300&fit=crop&crop=center", genre: "Electronic", plays: 987654, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3", spotify_uri: null },
-    { id: 3, title: "Acoustic Soul", artist: "River Stone", album: "Unplugged Sessions", duration: "2:58", cover: "https://images.unsplash.com/photo-1493612276216-ee3925520721?w=300&h=300&fit=crop&crop=center", genre: "Acoustic", plays: 756432, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3", spotify_uri: null },
-    { id: 4, title: "Urban Rhythm", artist: "City Beats", album: "Street Anthology", duration: "3:45", cover: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=300&h=300&fit=crop&crop=center", genre: "Hip-Hop", plays: 2143567, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3", spotify_uri: null },
-    { id: 5, title: "Sunset Boulevard", artist: "Golden Hour", album: "California Dreams", duration: "4:33", cover: "https://images.unsplash.com/photo-1514320291840-2e0a9bf2a9ae?w=300&h=300&fit=crop&crop=center", genre: "Rock", plays: 654321, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3", spotify_uri: null },
-    { id: 6, title: "Jazz Nights", artist: "Smooth Operators", album: "After Hours", duration: "5:12", cover: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=300&h=300&fit=crop&crop=center", genre: "Jazz", plays: 543210, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3", spotify_uri: null },
-    { id: 7, title: "Classical Morning", artist: "Orchestra Symphony", album: "Dawn Collection", duration: "6:45", cover: "https://images.unsplash.com/photo-1507838153414-b4b713384a76?w=300&h=300&fit=crop&crop=center", genre: "Classical", plays: 432109, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3", spotify_uri: null },
-    { id: 8, title: "Country Roads", artist: "Nashville Stars", album: "Southern Tales", duration: "3:56", cover: "https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=300&h=300&fit=crop&crop=center", genre: "Country", plays: 321098, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3", spotify_uri: null }
-];
-
 // Utility to debounce functions
 const debounce = (func, wait) => {
     let timeout;
@@ -330,12 +318,7 @@ export default function Page() {
         }
 
         if (!accessToken || !query) {
-            const filtered = staticSongs.filter(song =>
-                song.title.toLowerCase().includes(query.toLowerCase()) ||
-                song.artist.toLowerCase().includes(query.toLowerCase()) ||
-                song.album.toLowerCase().includes(query.toLowerCase())
-            );
-            setFilteredSongs(filtered);
+            setFilteredSongs([]);
             return;
         }
 
@@ -427,6 +410,9 @@ export default function Page() {
         }
 
         isLoadingRef.current = true;
+
+        setCurrentTime(0);
+        setDuration(0);
 
         setQueue((prevQueue) => {
             if (songList && songList.length > 0) {
@@ -546,18 +532,12 @@ export default function Page() {
 
             console.log('Profile loaded:', user.name);
 
-            // Initialize with static songs
-            setSongs(staticSongs);
-            setFilteredSongs(staticSongs);
-            generateRecommendations(staticSongs);
+            // Initialize with empty songs
+            setSongs([]);
+            setFilteredSongs([]);
+            generateRecommendations([]);
 
-            const uniqueArtists = [...new Set(staticSongs.map(song => song.artist))];
-            setArtists(uniqueArtists.map((name, idx) => ({
-                id: idx + 1,
-                name,
-                songs: staticSongs.filter(s => s.artist === name).length,
-                albums: new Set(staticSongs.filter(s => s.artist === name).map(s => s.album)).size
-            })));
+            setArtists([]);
 
             console.log('Spotify tracks available on demand');
         } catch (err) {
@@ -589,6 +569,14 @@ export default function Page() {
                 if (!unique.some(s => s.id === song.id)) unique.push(song);
                 return unique;
             }, []);
+
+            const uniqueArtists = [...new Set(allKnownSongs.map(song => song.artist))];
+            setArtists(uniqueArtists.map((name, idx) => ({
+                id: idx + 1,
+                name,
+                songs: allKnownSongs.filter(s => s.artist === name).length,
+                albums: new Set(allKnownSongs.filter(s => s.artist === name).map(s => s.album)).size
+            })));
 
             generateRecommendations(allKnownSongs);
 
@@ -661,18 +649,12 @@ export default function Page() {
             setIsPremium(user.product === 'premium');
             profileLoadedRef.current = true;
 
-            setSongs(staticSongs);
-            setFilteredSongs(staticSongs);
+            setSongs([]);
+            setFilteredSongs([]);
 
-            const uniqueArtists = [...new Set(staticSongs.map(song => song.artist))];
-            setArtists(uniqueArtists.map((name, idx) => ({
-                id: idx + 1,
-                name,
-                songs: staticSongs.filter(s => s.artist === name).length,
-                albums: new Set(staticSongs.filter(s => s.artist === name).map(s => s.album)).size
-            })));
+            setArtists([]);
 
-            generateRecommendations(staticSongs);
+            generateRecommendations([]);
         }
 
         const storedToken = window.localStorage.getItem('spotify_token');
@@ -805,6 +787,8 @@ export default function Page() {
             try {
                 setIsLoadingSong(true);
                 setError(null);
+                setCurrentTime(0);
+                setDuration(0);
 
                 if (isPremium && playerReady && deviceId && currentSong.spotify_uri) {
                     try {
@@ -850,6 +834,7 @@ export default function Page() {
 
                         audio.onloadedmetadata = () => {
                             clearTimeout(timeout);
+                            setDuration(audio.duration || 30);
                             resolve();
                         };
 
