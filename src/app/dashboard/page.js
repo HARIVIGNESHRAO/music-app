@@ -11,6 +11,18 @@ import {
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
+// Static songs data (centralized)
+const staticSongs = [
+    { id: 1, title: "Midnight Dreams", artist: "Luna Martinez", album: "Nocturnal Vibes", duration: "3:24", cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center", genre: "Pop", plays: 1234567, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3", spotify_uri: null },
+    { id: 2, title: "Electric Pulse", artist: "Neon Collective", album: "Digital Horizons", duration: "4:12", cover: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&h=300&fit=crop&crop=center", genre: "Electronic", plays: 987654, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3", spotify_uri: null },
+    { id: 3, title: "Acoustic Soul", artist: "River Stone", album: "Unplugged Sessions", duration: "2:58", cover: "https://images.unsplash.com/photo-1493612276216-ee3925520721?w=300&h=300&fit=crop&crop=center", genre: "Acoustic", plays: 756432, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3", spotify_uri: null },
+    { id: 4, title: "Urban Rhythm", artist: "City Beats", album: "Street Anthology", duration: "3:45", cover: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=300&h=300&fit=crop&crop=center", genre: "Hip-Hop", plays: 2143567, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3", spotify_uri: null },
+    { id: 5, title: "Sunset Boulevard", artist: "Golden Hour", album: "California Dreams", duration: "4:33", cover: "https://images.unsplash.com/photo-1514320291840-2e0a9bf2a9ae?w=300&h=300&fit=crop&crop=center", genre: "Rock", plays: 654321, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3", spotify_uri: null },
+    { id: 6, title: "Jazz Nights", artist: "Smooth Operators", album: "After Hours", duration: "5:12", cover: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=300&h=300&fit=crop&crop=center", genre: "Jazz", plays: 543210, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3", spotify_uri: null },
+    { id: 7, title: "Classical Morning", artist: "Orchestra Symphony", album: "Dawn Collection", duration: "6:45", cover: "https://images.unsplash.com/photo-1507838153414-b4b713384a76?w=300&h=300&fit=crop&crop=center", genre: "Classical", plays: 432109, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3", spotify_uri: null },
+    { id: 8, title: "Country Roads", artist: "Nashville Stars", album: "Southern Tales", duration: "3:56", cover: "https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=300&h=300&fit=crop&crop=center", genre: "Country", plays: 321098, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3", spotify_uri: null }
+];
+
 // Utility to debounce functions
 const debounce = (func, wait) => {
     let timeout;
@@ -129,99 +141,64 @@ export default function Page() {
     };
 
     const generateRecommendations = useCallback((allSongs) => {
-        console.log('🎯 Generating recommendations...');
-        console.log('All songs:', allSongs.length);
-        console.log('Recently played:', recentlyPlayed.length);
-        console.log('Liked songs:', likedSongs.size);
-
         if (!allSongs || allSongs.length === 0) {
-            console.log('No songs available for recommendations');
             setRecommendations([]);
             return;
         }
 
-        // Get user preference songs (recently played + liked)
-        const userPreferenceSongs = [
-            ...recentlyPlayed,
-            ...Array.from(likedSongs).map(songId => allSongs.find(s => s.id === songId)).filter(s => s)
-        ].filter((song, index, self) => song && self.findIndex(s => s.id === song.id) === index);
+        const allGenres = [...new Set(allSongs.map(song => song.genre))];
+        const allArtists = [...new Set(allSongs.map(song => song.artist))];
 
-        console.log('User preference songs:', userPreferenceSongs.length);
-
-        // If no preferences, return random songs
-        if (userPreferenceSongs.length === 0) {
-            console.log('No user preferences, returning random songs');
-            const shuffled = [...allSongs].sort(() => 0.5 - Math.random());
-            setRecommendations(shuffled.slice(0, 4));
-            return;
-        }
-
-        // Get all unique genres and artists from ALL songs
-        const allGenres = [...new Set(allSongs.map(song => song.genre))].filter(Boolean);
-        const allArtists = [...new Set(allSongs.map(song => song.artist))].filter(Boolean);
-
-        console.log('All genres:', allGenres.length);
-        console.log('All artists:', allArtists.length);
-
-        // Create feature vector for a song
         const createFeatureVector = (song) => {
             const genreVector = allGenres.map(genre => song.genre === genre ? 1 : 0);
             const artistVector = allArtists.map(artist => song.artist === artist ? 1 : 0);
-            const maxPlays = Math.max(...allSongs.map(s => s.plays || 0), 1);
-            const plays = (song.plays || 0) / maxPlays;
+            const maxPlays = Math.max(...allSongs.map(s => s.plays), 1);
+            const plays = song.plays / maxPlays;
             return [...genreVector, ...artistVector, plays];
         };
 
-        // Calculate cosine similarity between two vectors
         const cosineSimilarity = (vecA, vecB) => {
-            if (vecA.length !== vecB.length) return 0;
-
             const dotProduct = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
             const magnitudeA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
             const magnitudeB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
-
-            if (magnitudeA === 0 || magnitudeB === 0) return 0;
-
-            return dotProduct / (magnitudeA * magnitudeB);
+            return magnitudeA && magnitudeB ? dotProduct / (magnitudeA * magnitudeB) : 0;
         };
 
-        // Create feature vectors for all songs
         const songVectors = allSongs.map(song => ({
             song,
             vector: createFeatureVector(song)
         }));
 
-        // Create feature vectors for user preference songs
-        const userVectors = userPreferenceSongs.map(song => createFeatureVector(song));
+        const userPreferenceSongs = [
+            ...recentlyPlayed,
+            ...Array.from(likedSongs).map(songId => allSongs.find(s => s.id === songId)).filter(s => s)
+        ].filter((song, index, self) => song && self.findIndex(s => s.id === song.id) === index);
 
-        // Calculate average user preference vector
-        const vectorLength = allGenres.length + allArtists.length + 1;
+        if (userPreferenceSongs.length === 0) {
+            const shuffled = [...allSongs].sort(() => 0.5 - Math.random());
+            setRecommendations(shuffled.slice(0, 4));
+            return;
+        }
+
+        const userVectors = userPreferenceSongs.map(song => createFeatureVector(song));
         const userVector = userVectors.reduce(
             (avg, vec) => avg.map((val, i) => val + vec[i] / userVectors.length),
-            new Array(vectorLength).fill(0)
+            new Array(allGenres.length + allArtists.length + 1).fill(0)
         );
 
-        console.log('User vector calculated:', userVector.length);
-
-        // Calculate similarity scores for all songs
         const scores = songVectors.map(({ song, vector }) => ({
             song,
             score: cosineSimilarity(userVector, vector)
         }));
 
-        console.log('Scores calculated:', scores.length);
-
-        // Filter out already played/liked songs and get top recommendations
         const recommendedSongs = scores
             .sort((a, b) => b.score - a.score)
             .map(item => item.song)
             .filter(song => !userPreferenceSongs.some(s => s.id === song.id))
             .slice(0, 4);
 
-        console.log('✅ Recommendations generated:', recommendedSongs.length);
         setRecommendations(recommendedSongs);
     }, [recentlyPlayed, likedSongs]);
-
 
     const fetchTopTracks = useCallback(async (token) => {
         try {
@@ -353,7 +330,12 @@ export default function Page() {
         }
 
         if (!accessToken || !query) {
-            setFilteredSongs([]);
+            const filtered = staticSongs.filter(song =>
+                song.title.toLowerCase().includes(query.toLowerCase()) ||
+                song.artist.toLowerCase().includes(query.toLowerCase()) ||
+                song.album.toLowerCase().includes(query.toLowerCase())
+            );
+            setFilteredSongs(filtered);
             return;
         }
 
@@ -445,9 +427,6 @@ export default function Page() {
         }
 
         isLoadingRef.current = true;
-
-        setCurrentTime(0);
-        setDuration(0);
 
         setQueue((prevQueue) => {
             if (songList && songList.length > 0) {
@@ -567,12 +546,18 @@ export default function Page() {
 
             console.log('Profile loaded:', user.name);
 
-            // Initialize with empty songs
-            setSongs([]);
-            setFilteredSongs([]);
-            generateRecommendations([]);
+            // Initialize with static songs
+            setSongs(staticSongs);
+            setFilteredSongs(staticSongs);
+            generateRecommendations(staticSongs);
 
-            setArtists([]);
+            const uniqueArtists = [...new Set(staticSongs.map(song => song.artist))];
+            setArtists(uniqueArtists.map((name, idx) => ({
+                id: idx + 1,
+                name,
+                songs: staticSongs.filter(s => s.artist === name).length,
+                albums: new Set(staticSongs.filter(s => s.artist === name).map(s => s.album)).size
+            })));
 
             console.log('Spotify tracks available on demand');
         } catch (err) {
@@ -585,7 +570,7 @@ export default function Page() {
         } finally {
             setLoading(false);
         }
-    }, [recentlyPlayed.length, songs.length, playlists.length, generateRecommendations]);
+    }, [generateRecommendations]);
 
     const loadSpotifyData = useCallback(async () => {
         if (!accessToken) return;
@@ -605,16 +590,7 @@ export default function Page() {
                 return unique;
             }, []);
 
-            const uniqueArtists = [...new Set(allKnownSongs.map(song => song.artist))];
-            setArtists(uniqueArtists.map((name, idx) => ({
-                id: idx + 1,
-                name,
-                songs: allKnownSongs.filter(s => s.artist === name).length,
-                albums: new Set(allKnownSongs.filter(s => s.artist === name).map(s => s.album)).size
-            })));
-
-            // FIX: Generate recommendations with all songs immediately
-            setTimeout(() => generateRecommendations(allKnownSongs), 500);
+            generateRecommendations(allKnownSongs);
 
             setError('Spotify library loaded successfully!');
             setTimeout(() => setError(null), 3000);
@@ -685,12 +661,18 @@ export default function Page() {
             setIsPremium(user.product === 'premium');
             profileLoadedRef.current = true;
 
-            setSongs([]);
-            setFilteredSongs([]);
+            setSongs(staticSongs);
+            setFilteredSongs(staticSongs);
 
-            setArtists([]);
+            const uniqueArtists = [...new Set(staticSongs.map(song => song.artist))];
+            setArtists(uniqueArtists.map((name, idx) => ({
+                id: idx + 1,
+                name,
+                songs: staticSongs.filter(s => s.artist === name).length,
+                albums: new Set(staticSongs.filter(s => s.artist === name).map(s => s.album)).size
+            })));
 
-            generateRecommendations([]);
+            generateRecommendations(staticSongs);
         }
 
         const storedToken = window.localStorage.getItem('spotify_token');
@@ -699,25 +681,6 @@ export default function Page() {
             fetchUserProfile(storedToken);
         }
     }, [fetchUserProfile, generateRecommendations]);
-    // Add this AFTER the existing useEffects
-    useEffect(() => {
-        // Only regenerate recommendations when recentlyPlayed changes and we have songs
-        if (recentlyPlayed.length > 0 && songs.length > 0) {
-            console.log('🔄 Recently played changed, regenerating recommendations');
-            const allSongs = [...songs, ...playlists.flatMap(p => p.songs)].reduce((unique, song) => {
-                if (!unique.some(s => s.id === song.id)) unique.push(song);
-                return unique;
-            }, []);
-
-            // Use a small delay to avoid rapid regeneration
-            const timeout = setTimeout(() => {
-                generateRecommendations(allSongs);
-            }, 300);
-
-            return () => clearTimeout(timeout);
-        }
-    }, [recentlyPlayed.length, songs.length, playlists.length]); // Only watch lengths, not the full arrays
-// Only watch lengths, not the full arrays
 
     useEffect(() => {
         if (!accessToken || !isPremium) return;
@@ -878,31 +841,29 @@ export default function Page() {
                     console.log("Attempting preview playback...");
                     const audio = audioRef.current;
 
-                    // Only reload if it's a different song
-                    if (audio.src !== currentSong.preview_url) {
-                        audio.pause();
-                        audio.currentTime = 0;
-                        audio.src = currentSong.preview_url;
+                    audio.pause();
+                    audio.currentTime = 0;
+                    audio.src = currentSong.preview_url;
 
-                        await new Promise((resolve, reject) => {
-                            const timeout = setTimeout(() => reject(new Error("Load timeout")), 10000);
+                    await new Promise((resolve, reject) => {
+                        const timeout = setTimeout(() => reject(new Error("Load timeout")), 10000);
 
-                            audio.onloadedmetadata = () => {
-                                clearTimeout(timeout);
-                                setDuration(audio.duration || 30);
-                                resolve();
-                            };
+                        audio.onloadedmetadata = () => {
+                            clearTimeout(timeout);
+                            resolve();
+                        };
 
-                            audio.onerror = (e) => {
-                                clearTimeout(timeout);
-                                reject(new Error("Audio load failed"));
-                            };
+                        audio.onerror = (e) => {
+                            clearTimeout(timeout);
+                            reject(new Error("Audio load failed"));
+                        };
 
-                            audio.load();
-                        });
-                    }
+                        audio.load();
+                    });
 
-                    if (!isCancelled) {
+                    if (!isCancelled && isPlaying) {
+                        await audio.play();
+                        console.log("Preview playing");
                         setError(null);
                         setRecentlyPlayed((prev) => {
                             const newPlayed = [currentSong, ...prev.filter((s) => s.id !== currentSong.id)];
@@ -954,12 +915,14 @@ export default function Page() {
         return () => {
             isCancelled = true;
             isLoadingRef.current = false;
+            if (audioRef.current) {
+                audioRef.current.pause();
+            }
             if (retryTimeout) {
                 clearTimeout(retryTimeout);
             }
         };
-    }, [currentSong?.id, isPremium, playerReady, deviceId, accessToken]); // REMOVED isPlaying from dependencies
-
+    }, [currentSong?.id, isPremium, playerReady, deviceId, accessToken, isPlaying]);
 
     useEffect(() => {
         if (!audioRef.current || isPremium) return;
@@ -977,8 +940,7 @@ export default function Page() {
         audio.addEventListener('loadedmetadata', handleLoadedMetadata);
         audio.addEventListener('error', handleError);
 
-        // ADD THIS: Handle play/pause based on isPlaying state
-        if (isPlaying && !isLoadingSong && audio.src) {
+        if (isPlaying && !isLoadingSong) {
             audio.play().catch(err => {
                 if (err.name !== 'AbortError') {
                     console.error('Play error:', err);
@@ -986,7 +948,7 @@ export default function Page() {
                     setIsPlaying(false);
                 }
             });
-        } else if (!isPlaying && audio.src) {
+        } else {
             audio.pause();
         }
 
@@ -1062,18 +1024,16 @@ export default function Page() {
     };
 
     const togglePlay = () => {
-        if (!currentSong) return;
-
         if (isPremium && spotifyPlayer && playerReady) {
-            spotifyPlayer.togglePlay().catch(err => {
-                console.error('Toggle play error:', err);
-            });
+            if (isPlaying) {
+                spotifyPlayer.pause();
+            } else {
+                spotifyPlayer.resume();
+            }
         } else {
-            // Just toggle state without triggering reload
             setIsPlaying(prev => !prev);
         }
     };
-
 
     const toggleShuffle = () => setShuffle(prev => !prev);
 
@@ -1098,85 +1058,30 @@ export default function Page() {
     };
 
     const handleSeek = async (e) => {
-        const progressBar = e.currentTarget;
-        const rect = progressBar.getBoundingClientRect();
-        const clickX = e.clientX - rect.left;
-        const width = rect.width;
-        const seekPercentage = Math.max(0, Math.min(1, clickX / width)); // Clamp between 0 and 1
+        if (isPremium && spotifyPlayer && deviceId && duration) {
+            const progressBar = e.currentTarget;
+            const rect = progressBar.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const width = rect.width;
+            const seekTime = (clickX / width) * duration * 1000;
 
-        if (!duration || isNaN(duration)) return;
-
-        const seekTime = seekPercentage * duration;
-
-        if (isPremium && spotifyPlayer && deviceId) {
             try {
-                await spotifyPlayer.seek(seekTime * 1000);
-                setCurrentTime(seekTime);
+                await spotifyPlayer.seek(seekTime);
+                setCurrentTime(seekTime / 1000);
             } catch (err) {
                 console.error('Failed to seek:', err);
                 setError('Failed to seek track');
             }
-        } else if (audioRef.current) {
+        } else if (audioRef.current && duration) {
+            const progressBar = e.currentTarget;
+            const rect = progressBar.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const width = rect.width;
+            const seekTime = (clickX / width) * duration;
             audioRef.current.currentTime = seekTime;
             setCurrentTime(seekTime);
-
-            // If audio was paused, keep it paused after seeking
-            if (!isPlaying) {
-                audioRef.current.pause();
-            }
         }
     };
-// Add state for tracking dragging
-    // Add state for tracking dragging
-    const [isDragging, setIsDragging] = useState(false);
-
-// Wrap these functions in useCallback to make them stable
-    const handleProgressDrag = useCallback((e) => {
-        const progressBar = document.querySelector('.progress-bar');
-        if (!progressBar) return;
-
-        const rect = progressBar.getBoundingClientRect();
-        const clickX = e.clientX - rect.left;
-        const width = rect.width;
-        const seekPercentage = Math.max(0, Math.min(1, clickX / width));
-
-        if (!duration || isNaN(duration)) return;
-
-        const seekTime = seekPercentage * duration;
-
-        if (isPremium && spotifyPlayer && deviceId) {
-            spotifyPlayer.seek(seekTime * 1000).catch(err => {
-                console.error('Failed to seek:', err);
-            });
-            setCurrentTime(seekTime);
-        } else if (audioRef.current) {
-            audioRef.current.currentTime = seekTime;
-            setCurrentTime(seekTime);
-        }
-    }, [duration, isPremium, spotifyPlayer, deviceId]);
-
-    const handleMouseDown = useCallback((e) => {
-        setIsDragging(true);
-        handleSeek(e);
-    }, [handleSeek]);
-
-    const handleMouseUp = useCallback(() => {
-        setIsDragging(false);
-    }, []);
-
-// Add effect to handle mouse up globally
-    useEffect(() => {
-        if (isDragging) {
-            document.addEventListener('mousemove', handleProgressDrag);
-            document.addEventListener('mouseup', handleMouseUp);
-
-            return () => {
-                document.removeEventListener('mousemove', handleProgressDrag);
-                document.removeEventListener('mouseup', handleMouseUp);
-            };
-        }
-    }, [isDragging, handleProgressDrag, handleMouseUp]);
-
 
     const formatTime = (seconds) => {
         if (isNaN(seconds) || !isFinite(seconds)) return '0:00';
@@ -1214,13 +1119,6 @@ export default function Page() {
     useEffect(() => {
         applyFilters();
     }, [applyFilters]);
-    useEffect(() => {
-        const slider = document.querySelector('.volume-slider');
-        if (slider) {
-            slider.style.setProperty('--volume-percentage', `${volume}%`);
-        }
-    }, [volume]);
-
 
     const addSongToPlaylist = (playlistId) => {
         if (!selectedSongForPlaylist) return;
@@ -1293,7 +1191,6 @@ export default function Page() {
             </div>
         );
     }
-
 
     return (
         <div className="app-container">
@@ -1829,12 +1726,10 @@ export default function Page() {
                                     min="0"
                                     max="100"
                                     value={volume}
-                                    onChange={(e) => setVolume(Number(e.target.value))}
+                                    onChange={(e) => setVolume(e.target.value)}
                                     className="volume-slider"
                                 />
-                                <span className="volume-display">{volume}%</span>
                             </div>
-
                         </div>
                     </div>
                     <div className="progress-section">
@@ -1843,18 +1738,10 @@ export default function Page() {
                             <span>{formatTime(currentTime)}</span>
                             <span>{formatTime(duration)}</span>
                         </div>
-                        <div
-                            className="progress-bar"
-                            onMouseDown={handleMouseDown}
-                            onClick={handleSeek}
-                        >
-                            <div
-                                className="progress-fill"
-                                style={{ width: `${(currentTime / duration) * 100 || 0}%` }}
-                            ></div>
+                        <div className="progress-bar" onClick={handleSeek}>
+                            <div className="progress-fill" style={{ width: `${(currentTime / duration) * 100 || 0}%` }}></div>
                         </div>
                     </div>
-
                 </div>
             )}
         </div>
