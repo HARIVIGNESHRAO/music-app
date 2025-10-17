@@ -1,13 +1,75 @@
 'use client';
-import React, { useState, useRef, useEffect, useCallback } from 'react';import axios from 'axios';import Image from 'next/image';import Link from 'next/link';import './page.css';import {    Play, Pause, SkipBack, SkipForward, Volume2, Heart, Search, Home, Music, User,    Plus, Shuffle, Repeat} from 'lucide-react';import { useRouter } from 'next/navigation';
-// Utility to debounce functionsconst debounce = (func, wait) => {    let timeout;    return (...args) => {        clearTimeout(timeout);        timeout = setTimeout(() => func(...args), wait);    };};
-export default function Page() {    const router = useRouter();    const [currentUser, setCurrentUser] = useState(null);    const [isPlaying, setIsPlaying] = useState(false);    const [currentSong, setCurrentSong] = useState(null);    const [currentTime, setCurrentTime] = useState(0);    const [duration, setDuration] = useState(0);    const [volume, setVolume] = useState(70);    const [activeTab, setActiveTab] = useState('home');    const [searchQuery, setSearchQuery] = useState('');    const [playlists, setPlaylists] = useState([]);    const [showCreatePlaylist, setShowCreatePlaylist] = useState(false);    const [newPlaylistName, setNewPlaylistName] = useState('');    const [songs, setSongs] = useState([]);    const [filteredSongs, setFilteredSongs] = useState([]);    const [accessToken, setAccessToken] = useState(null);    const [loading, setLoading] = useState(false);    const [error, setError] = useState(null);    const [selectedPlaylist, setSelectedPlaylist] = useState(null);    const [filterGenre, setFilterGenre] = useState('all');    const [filterArtist, setFilterArtist] = useState('all');    const [recommendations, setRecommendations] = useState([]);    const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);    const [selectedSongForPlaylist, setSelectedSongForPlaylist] = useState(null);    const [artists, setArtists] = useState([]);    const audioRef = useRef(null);    const [queue, setQueue] = useState([]);    const [currentIndex, setCurrentIndex] = useState(0);    const [shuffle, setShuffle] = useState(false);    const [repeat, setRepeat] = useState('off');    const [isLoadingSong, setIsLoadingSong] = useState(false);    const [likedSongs, setLikedSongs] = useState(new Set());    const [recentlyPlayed, setRecentlyPlayed] = useState([]);    const [isPremium, setIsPremium] = useState(false);    const [spotifyPlayer, setSpotifyPlayer] = useState(null);    const [deviceId, setDeviceId] = useState(null);    const [playerReady, setPlayerReady] = useState(false);    const searchTimerRef = useRef(null);    const isLoadingRef = useRef(false);    const CLIENT_ID = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID;    const REDIRECT_URI = process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI;    const AUTH_ENDPOINT = 'https://accounts.spotify.com/authorize';    const RESPONSE_TYPE = 'code';    const SCOPES = 'user-read-private user-read-email user-top-read playlist-read-private playlist-modify-public streaming user-read-playback-state user-modify-playback-state';    const CODE_CHALLENGE_METHOD = 'S256';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import axios from 'axios';
+import Image from 'next/image';
+import Link from 'next/link';
+import './page.css';
+import {
+    Play, Pause, SkipBack, SkipForward, Volume2, Heart, Search, Home, Music, User,
+    Plus, Shuffle, Repeat
+} from 'lucide-react';
+import { useRouter } from 'next/navigation';
+
+// Utility to debounce functions
+const debounce = (func, wait) => {
+    let timeout;
+    return (...args) => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func(...args), wait);
+    };
+};
+
+export default function Page() {
+    const router = useRouter();
+    const [currentUser, setCurrentUser] = useState(null);
+    const [isPlaying, setIsPlaying] = useState(false);
+    const [currentSong, setCurrentSong] = useState(null);
+    const [currentTime, setCurrentTime] = useState(0);
+    const [duration, setDuration] = useState(0);
+    const [volume, setVolume] = useState(70);
+    const [activeTab, setActiveTab] = useState('home');
+    const [searchQuery, setSearchQuery] = useState('');
+    const [playlists, setPlaylists] = useState([]);
+    const [showCreatePlaylist, setShowCreatePlaylist] = useState(false);
+    const [newPlaylistName, setNewPlaylistName] = useState('');
+    const [songs, setSongs] = useState([]);
+    const [filteredSongs, setFilteredSongs] = useState([]);
+    const [accessToken, setAccessToken] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
+    const [selectedPlaylist, setSelectedPlaylist] = useState(null);
+    const [filterGenre, setFilterGenre] = useState('all');
+    const [filterArtist, setFilterArtist] = useState('all');
+    const [recommendations, setRecommendations] = useState([]);
+    const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);
+    const [selectedSongForPlaylist, setSelectedSongForPlaylist] = useState(null);
+    const [artists, setArtists] = useState([]);
+    const audioRef = useRef(null);
+    const [queue, setQueue] = useState([]);
+    const [currentIndex, setCurrentIndex] = useState(0);
+    const [shuffle, setShuffle] = useState(false);
+    const [repeat, setRepeat] = useState('off');
+    const [isLoadingSong, setIsLoadingSong] = useState(false);
+    const [likedSongs, setLikedSongs] = useState(new Set());
+    const [recentlyPlayed, setRecentlyPlayed] = useState([]);
+    const [isPremium, setIsPremium] = useState(false);
+    const [spotifyPlayer, setSpotifyPlayer] = useState(null);
+    const [deviceId, setDeviceId] = useState(null);
+    const [playerReady, setPlayerReady] = useState(false);
+    const searchTimerRef = useRef(null);
+    const isLoadingRef = useRef(false);
+    const CLIENT_ID = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID;
+    const REDIRECT_URI = process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI;
+    const AUTH_ENDPOINT = 'https://accounts.spotify.com/authorize';
+    const RESPONSE_TYPE = 'code';
+    const SCOPES = 'user-read-private user-read-email user-top-read playlist-read-private playlist-modify-public streaming user-read-playback-state user-modify-playback-state';
+    const CODE_CHALLENGE_METHOD = 'S256';
     const CACHE_KEY_TOP_TRACKS = 'spotify_top_tracks';
     const CACHE_KEY_PLAYLISTS = 'spotify_playlists';
     const CACHE_EXPIRY_MS = 60 * 60 * 1000; // 1 hour
     const profileLoadedRef = useRef(false);
 
-// Utility for API calls with exponential backoff
+    // Utility for API calls with exponential backoff
     const apiCallWithBackoff = async (requestFn, maxRetries = 3) => {
         let apiCallCount = JSON.parse(window.localStorage.getItem('apiCallCount') || '0') + 1;
         window.localStorage.setItem('apiCallCount', apiCallCount);
@@ -29,7 +91,7 @@ export default function Page() {    const router = useRouter();    const [curren
         throw new Error('Max retries reached for API call');
     };
 
-// Cache utilities
+    // Cache utilities
     const getCachedData = (key) => {
         const cached = window.localStorage.getItem(key);
         if (cached) {
@@ -157,19 +219,7 @@ export default function Page() {    const router = useRouter();    const [curren
             setLoading(false);
         }
     }, [generateRecommendations]);
-    const handleVolumeChange = (e) => {
-        const newVolume = Number(e.target.value);
-        setVolume(newVolume);
-        if (audioRef.current) {
-            audioRef.current.volume = newVolume / 100;
-        }
-        if (spotifyPlayer && playerReady) {
-            spotifyPlayer.setVolume(newVolume / 100).catch(err => {
-                console.error('Failed to set volume:', err);
-                setError('Failed to set volume');
-            });
-        }
-    };
+
     const fetchUserPlaylists = useCallback(async (token) => {
         try {
             setLoading(true);
@@ -365,14 +415,14 @@ export default function Page() {    const router = useRouter();    const [curren
         setRecentlyPlayed((prev) => {
             const newPlayed = [song, ...prev.filter((s) => s.id !== song.id)];
             const updatedPlayed = newPlayed.slice(0, 5);
-            generateRecommendations(); // Trigger recommendations update
+            generateRecommendations(); // Update recommendations
             return updatedPlayed;
         });
 
         setTimeout(() => {
             isLoadingRef.current = false;
         }, 500);
-    }, [filteredSongs, songs, isSongPlayable]);
+    }, [filteredSongs, songs, isSongPlayable, generateRecommendations]);
 
     const playNext = useCallback(() => {
         setQueue(currentQueue => {
@@ -512,9 +562,9 @@ export default function Page() {    const router = useRouter();    const [curren
                     { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
                 );
 
-                const { access_token } = response.data;
+                const { access_token, expires_in } = response.data;
                 window.localStorage.setItem('spotify_token', access_token);
-                window.localStorage.removeItem('spotify_code_verifier');
+                window.localStorage.setItem('spotify_token_expiry', Date.now() + expires_in * 1000);
                 setAccessToken(access_token);
 
                 window.history.replaceState({}, document.title, window.location.pathname);
@@ -565,28 +615,40 @@ export default function Page() {    const router = useRouter();    const [curren
                     console.log('Spotify Player ready with Device ID', device_id);
                     setDeviceId(device_id);
                     setPlayerReady(true);
-                    apiCallWithBackoff(() =>
-                        axios.put(
-                            'https://api.spotify.com/v1/me/player',
-                            { device_ids: [device_id], play: false },
-                            { headers: { Authorization: `Bearer ${accessToken}` } }
-                        )
-                    ).catch(err => console.error('Failed to transfer playback:', err));
+                    const transferPlayback = () => {
+                        if (accessToken) {
+                            apiCallWithBackoff(() =>
+                                axios.put(
+                                    'https://api.spotify.com/v1/me/player',
+                                    { device_ids: [device_id], play: false },
+                                    { headers: { Authorization: `Bearer ${accessToken}` } }
+                                )
+                            ).catch(err => {
+                                console.error('Failed to transfer playback:', err);
+                                setError('Failed to transfer playback. Retrying...');
+                                setTimeout(transferPlayback, 2000);
+                            });
+                        }
+                    };
+                    transferPlayback();
                 });
+
                 playerInstance.addListener('not_ready', ({ device_id }) => {
                     console.log('Device ID has gone offline', device_id);
                     setDeviceId(null);
                     setPlayerReady(false);
                 });
+
                 playerInstance.addListener('initialization_error', ({ message }) => {
                     console.error('Spotify Player initialization error:', message);
                     setError('Failed to initialize Spotify player');
                 });
+
                 playerInstance.addListener('player_state_changed', (state) => {
                     if (!state) return;
                     setIsPlaying(!state.paused);
-                    setCurrentTime(state.position / 1000);
-                    setDuration(state.duration / 1000);
+                    setCurrentTime(state.position ? state.position / 1000 : 0);
+                    setDuration(state.duration ? state.duration / 1000 : 0);
 
                     if (state.track_window.current_track) {
                         const track = state.track_window.current_track;
@@ -595,7 +657,7 @@ export default function Page() {    const router = useRouter();    const [curren
                             title: track.name,
                             artist: track.artists.map(a => a.name).join(', '),
                             album: track.album.name,
-                            duration: new Date(track.duration).toISOString().substr(14, 5),
+                            duration: state.duration ? new Date(state.duration).toISOString().substr(14, 5) : '0:00',
                             cover: track.album.images[0]?.url || 'https://via.placeholder.com/300',
                             genre: 'Unknown',
                             plays: 0,
@@ -749,6 +811,7 @@ export default function Page() {    const router = useRouter();    const [curren
         if (!audioRef.current || isPremium) return;
 
         const audio = audioRef.current;
+
         const handleTimeUpdate = () => setCurrentTime(audio.currentTime || 0);
         const handleLoadedMetadata = () => setDuration(audio.duration || 0);
         const handleError = () => setError('Error loading audio file');
@@ -782,8 +845,8 @@ export default function Page() {    const router = useRouter();    const [curren
             const state = await spotifyPlayer.getCurrentState();
             if (state) {
                 setIsPlaying(!state.paused);
-                setCurrentTime(state.position / 1000);
-                setDuration(state.duration / 1000);
+                setCurrentTime(state.position ? state.position / 1000 : 0);
+                setDuration(state.duration ? state.duration / 1000 : 0);
             }
         };
 
@@ -860,11 +923,11 @@ export default function Page() {    const router = useRouter();    const [curren
                 audioRef.current.play().catch(err => {
                     console.error('Playback error:', err);
                     setError('Playback error');
-                    setIsPlaying(false); // Ensure state reflects failure
+                    setIsPlaying(false);
                 });
             }
         }
-        setIsPlaying(prev => !prev); // Toggle state after action
+        setIsPlaying(prev => !prev);
     };
 
     const toggleShuffle = () => setShuffle(prev => !prev);
@@ -908,7 +971,21 @@ export default function Page() {    const router = useRouter();    const [curren
         } else if (audioRef.current) {
             audioRef.current.currentTime = seekTime;
         }
-        setCurrentTime(seekTime); // Update state immediately
+        setCurrentTime(seekTime);
+    };
+
+    const handleVolumeChange = (e) => {
+        const newVolume = Number(e.target.value);
+        setVolume(newVolume);
+        if (audioRef.current) {
+            audioRef.current.volume = newVolume / 100;
+        }
+        if (spotifyPlayer && playerReady) {
+            spotifyPlayer.setVolume(newVolume / 100).catch(err => {
+                console.error('Failed to set volume:', err);
+                setError('Failed to set volume');
+            });
+        }
     };
 
     const formatTime = (seconds) => {
@@ -1556,5 +1633,4 @@ export default function Page() {    const router = useRouter();    const [curren
             )}
         </div>
     );
-
 }
