@@ -11,6 +11,18 @@ import {
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
+// Static songs data (centralized)
+const staticSongs = [
+    { id: 1, title: "Midnight Dreams", artist: "Luna Martinez", album: "Nocturnal Vibes", duration: "3:24", cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center", genre: "Pop", plays: 1234567, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3", spotify_uri: null },
+    { id: 2, title: "Electric Pulse", artist: "Neon Collective", album: "Digital Horizons", duration: "4:12", cover: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&h=300&fit=crop&crop=center", genre: "Electronic", plays: 987654, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3", spotify_uri: null },
+    { id: 3, title: "Acoustic Soul", artist: "River Stone", album: "Unplugged Sessions", duration: "2:58", cover: "https://images.unsplash.com/photo-1493612276216-ee3925520721?w=300&h=300&fit=crop&crop=center", genre: "Acoustic", plays: 756432, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3", spotify_uri: null },
+    { id: 4, title: "Urban Rhythm", artist: "City Beats", album: "Street Anthology", duration: "3:45", cover: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=300&h=300&fit=crop&crop=center", genre: "Hip-Hop", plays: 2143567, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3", spotify_uri: null },
+    { id: 5, title: "Sunset Boulevard", artist: "Golden Hour", album: "California Dreams", duration: "4:33", cover: "https://images.unsplash.com/photo-1514320291840-2e0a9bf2a9ae?w=300&h=300&fit=crop&crop=center", genre: "Rock", plays: 654321, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3", spotify_uri: null },
+    { id: 6, title: "Jazz Nights", artist: "Smooth Operators", album: "After Hours", duration: "5:12", cover: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=300&h=300&fit=crop&crop=center", genre: "Jazz", plays: 543210, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3", spotify_uri: null },
+    { id: 7, title: "Classical Morning", artist: "Orchestra Symphony", album: "Dawn Collection", duration: "6:45", cover: "https://images.unsplash.com/photo-1507838153414-b4b713384a76?w=300&h=300&fit=crop&crop=center", genre: "Classical", plays: 432109, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3", spotify_uri: null },
+    { id: 8, title: "Country Roads", artist: "Nashville Stars", album: "Southern Tales", duration: "3:56", cover: "https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=300&h=300&fit=crop&crop=center", genre: "Country", plays: 321098, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3", spotify_uri: null }
+];
+
 // Utility to debounce functions
 const debounce = (func, wait) => {
     let timeout;
@@ -318,8 +330,12 @@ export default function Page() {
         }
 
         if (!accessToken || !query) {
-            setFilteredSongs([]);
-            setError('Please log in with Spotify to search for songs');
+            const filtered = staticSongs.filter(song =>
+                song.title.toLowerCase().includes(query.toLowerCase()) ||
+                song.artist.toLowerCase().includes(query.toLowerCase()) ||
+                song.album.toLowerCase().includes(query.toLowerCase())
+            );
+            setFilteredSongs(filtered);
             return;
         }
 
@@ -385,8 +401,6 @@ export default function Page() {
                 console.error('Failed to create playlist:', err);
                 setError(err.response?.status === 429 ? 'Rate limit exceeded. Please wait and try again.' : 'Failed to create playlist');
             }
-        } else {
-            setError('You must be logged in with Spotify to create a playlist');
         }
     };
 
@@ -532,27 +546,20 @@ export default function Page() {
 
             console.log('Profile loaded:', user.name);
 
-            // Load Spotify tracks and playlists
-            const topTracks = await fetchTopTracks(token);
-            const userPlaylists = await fetchUserPlaylists(token);
-            const allSongs = [...topTracks, ...userPlaylists.flatMap(p => p.songs)].reduce((unique, song) => {
-                if (!unique.some(s => s.id === song.id)) unique.push(song);
-                return unique;
-            }, []);
+            // Initialize with static songs
+            setSongs(staticSongs);
+            setFilteredSongs(staticSongs);
+            generateRecommendations(staticSongs);
 
-            setSongs(allSongs);
-            setFilteredSongs(allSongs);
-
-            const uniqueArtists = [...new Set(allSongs.map(song => song.artist))];
+            const uniqueArtists = [...new Set(staticSongs.map(song => song.artist))];
             setArtists(uniqueArtists.map((name, idx) => ({
                 id: idx + 1,
                 name,
-                songs: allSongs.filter(s => s.artist === name).length,
-                albums: new Set(allSongs.filter(s => s.artist === name).map(s => s.album)).size
+                songs: staticSongs.filter(s => s.artist === name).length,
+                albums: new Set(staticSongs.filter(s => s.artist === name).map(s => s.album)).size
             })));
 
-            generateRecommendations(allSongs);
-
+            console.log('Spotify tracks available on demand');
         } catch (err) {
             console.error('Profile fetch error:', err);
             setError(
@@ -563,13 +570,10 @@ export default function Page() {
         } finally {
             setLoading(false);
         }
-    }, [fetchTopTracks, fetchUserPlaylists, generateRecommendations]);
+    }, [generateRecommendations]);
 
     const loadSpotifyData = useCallback(async () => {
-        if (!accessToken) {
-            setError('Please log in with Spotify to load your music');
-            return;
-        }
+        if (!accessToken) return;
 
         setLoading(true);
         setError(null);
@@ -586,8 +590,6 @@ export default function Page() {
                 return unique;
             }, []);
 
-            setSongs(allKnownSongs);
-            setFilteredSongs(allKnownSongs);
             generateRecommendations(allKnownSongs);
 
             setError('Spotify library loaded successfully!');
@@ -659,14 +661,26 @@ export default function Page() {
             setIsPremium(user.product === 'premium');
             profileLoadedRef.current = true;
 
-            // Load Spotify data if token exists
-            const storedToken = window.localStorage.getItem('spotify_token');
-            if (storedToken && !profileLoadedRef.current) {
-                setAccessToken(storedToken);
-                fetchUserProfile(storedToken);
-            }
+            setSongs(staticSongs);
+            setFilteredSongs(staticSongs);
+
+            const uniqueArtists = [...new Set(staticSongs.map(song => song.artist))];
+            setArtists(uniqueArtists.map((name, idx) => ({
+                id: idx + 1,
+                name,
+                songs: staticSongs.filter(s => s.artist === name).length,
+                albums: new Set(staticSongs.filter(s => s.artist === name).map(s => s.album)).size
+            })));
+
+            generateRecommendations(staticSongs);
         }
-    }, [fetchUserProfile]);
+
+        const storedToken = window.localStorage.getItem('spotify_token');
+        if (storedToken && !profileLoadedRef.current) {
+            setAccessToken(storedToken);
+            fetchUserProfile(storedToken);
+        }
+    }, [fetchUserProfile, generateRecommendations]);
 
     useEffect(() => {
         if (!accessToken || !isPremium) return;
@@ -1330,113 +1344,104 @@ export default function Page() {
                                                 </p>
                                             </div>
                                         )}
-                                        {songs.length === 0 ? (
-                                            <div className="empty-home">
-                                                <Music className="empty-icon" />
-                                                <p className="empty-text">No songs loaded. Load your Spotify library to see your music.</p>
-                                            </div>
-                                        ) : (
-                                            <>
-                                                <div className="featured-songs">
-                                                    {songs.map((song) => (
-                                                        <div
-                                                            key={song.id}
-                                                            className="song-card"
-                                                            onClick={() => selectSong(song)}
-                                                            role="button"
-                                                            tabIndex={0}
-                                                            onKeyDown={(e) => e.key === 'Enter' && selectSong(song)}
-                                                        >
-                                                            <div className="song-cover-container">
-                                                                <Image
-                                                                    src={song.cover}
-                                                                    alt={song.title}
-                                                                    className="song-cover"
-                                                                    width={300}
-                                                                    height={300}
-                                                                    loading="lazy"
-                                                                />
-                                                                <button className="play-overlay"><Play className="play-icon" /></button>
-                                                            </div>
-                                                            <h3 className="song-title">{song.title}</h3>
-                                                            <p className="song-artist">{song.artist}</p>
-                                                            <Heart
-                                                                className={`heart-icon ${likedSongs.has(song.id) ? 'liked' : ''}`}
-                                                                onClick={(e) => { e.stopPropagation(); toggleLike(song.id); }}
-                                                            />
+                                        <div className="featured-songs">
+                                            {songs.map((song) => (
+                                                <div
+                                                    key={song.id}
+                                                    className="song-card"
+                                                    onClick={() => selectSong(song)}
+                                                    role="button"
+                                                    tabIndex={0}
+                                                    onKeyDown={(e) => e.key === 'Enter' && selectSong(song)}
+                                                >
+                                                    <div className="song-cover-container">
+                                                        <Image
+                                                            src={song.cover}
+                                                            alt={song.title}
+                                                            className="song-cover"
+                                                            width={300}
+                                                            height={300}
+                                                            loading="lazy"
+                                                        />
+                                                        <button className="play-overlay"><Play className="play-icon" /></button>
+                                                    </div>
+                                                    <h3 className="song-title">{song.title}</h3>
+                                                    <p className="song-artist">{song.artist}</p>
+                                                    <Heart
+                                                        className={`heart-icon ${likedSongs.has(song.id) ? 'liked' : ''}`}
+                                                        onClick={(e) => { e.stopPropagation(); toggleLike(song.id); }}
+                                                    />
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <div className="recent-section">
+                                            <h3 className="section-title">Recently Played</h3>
+                                            <div className="recent-list">
+                                                {recentlyPlayed.slice(0, 3).map((song) => (
+                                                    <div
+                                                        key={song.id}
+                                                        className="recent-item"
+                                                        onClick={() => selectSong(song)}
+                                                        role="button"
+                                                        tabIndex={0}
+                                                        onKeyDown={(e) => e.key === 'Enter' && selectSong(song)}
+                                                    >
+                                                        <Image
+                                                            src={song.cover}
+                                                            alt={song.title}
+                                                            className="recent-cover"
+                                                            width={300}
+                                                            height={300}
+                                                            loading="lazy"
+                                                        />
+                                                        <div className="recent-info">
+                                                            <h4 className="recent-title">{song.title}</h4>
+                                                            <p className="recent-artist">{song.artist} • {song.album}</p>
                                                         </div>
-                                                    ))}
-                                                </div>
-                                                <div className="recent-section">
-                                                    <h3 className="section-title">Recently Played</h3>
-                                                    <div className="recent-list">
-                                                        {recentlyPlayed.slice(0, 3).map((song) => (
-                                                            <div
-                                                                key={song.id}
-                                                                className="recent-item"
-                                                                onClick={() => selectSong(song)}
-                                                                role="button"
-                                                                tabIndex={0}
-                                                                onKeyDown={(e) => e.key === 'Enter' && selectSong(song)}
-                                                            >
-                                                                <Image
-                                                                    src={song.cover}
-                                                                    alt={song.title}
-                                                                    className="recent-cover"
-                                                                    width={300}
-                                                                    height={300}
-                                                                    loading="lazy"
-                                                                />
-                                                                <div className="recent-info">
-                                                                    <h4 className="recent-title">{song.title}</h4>
-                                                                    <p className="recent-artist">{song.artist} • {song.album}</p>
-                                                                </div>
-                                                                <span className="recent-duration">{song.duration}</span>
-                                                                <button className="recent-play"><Play className="recent-play-icon" /></button>
-                                                                <Heart
-                                                                    className={`heart-icon ${likedSongs.has(song.id) ? 'liked' : ''}`}
-                                                                    onClick={(e) => { e.stopPropagation(); toggleLike(song.id); }}
-                                                                />
-                                                            </div>
-                                                        ))}
+                                                        <span className="recent-duration">{song.duration}</span>
+                                                        <button className="recent-play"><Play className="recent-play-icon" /></button>
+                                                        <Heart
+                                                            className={`heart-icon ${likedSongs.has(song.id) ? 'liked' : ''}`}
+                                                            onClick={(e) => { e.stopPropagation(); toggleLike(song.id); }}
+                                                        />
                                                     </div>
-                                                </div>
-                                                <div className="recommendations-section">
-                                                    <h3 className="section-title">Recommended For You</h3>
-                                                    <div className="featured-songs">
-                                                        {recommendations.map((song) => (
-                                                            <div
-                                                                key={song.id}
-                                                                className="song-card"
-                                                                onClick={() => selectSong(song)}
-                                                                role="button"
-                                                                tabIndex={0}
-                                                                onKeyDown={(e) => e.key === 'Enter' && selectSong(song)}
-                                                            >
-                                                                <div className="song-cover-container">
-                                                                    <Image
-                                                                        src={song.cover}
-                                                                        alt={song.title}
-                                                                        className="song-cover"
-                                                                        width={300}
-                                                                        height={300}
-                                                                        loading="lazy"
-                                                                    />
-                                                                    <button className="play-overlay"><Play className="play-icon" /></button>
-                                                                </div>
-                                                                <h3 className="song-title">{song.title}</h3>
-                                                                <p className="song-artist">{song.artist}</p>
-                                                                <span className="song-genre">{song.genre}</span>
-                                                                <Heart
-                                                                    className={`heart-icon ${likedSongs.has(song.id) ? 'liked' : ''}`}
-                                                                    onClick={(e) => { e.stopPropagation(); toggleLike(song.id); }}
-                                                                />
-                                                            </div>
-                                                        ))}
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div className="recommendations-section">
+                                            <h3 className="section-title">Recommended For You</h3>
+                                            <div className="featured-songs">
+                                                {recommendations.map((song) => (
+                                                    <div
+                                                        key={song.id}
+                                                        className="song-card"
+                                                        onClick={() => selectSong(song)}
+                                                        role="button"
+                                                        tabIndex={0}
+                                                        onKeyDown={(e) => e.key === 'Enter' && selectSong(song)}
+                                                    >
+                                                        <div className="song-cover-container">
+                                                            <Image
+                                                                src={song.cover}
+                                                                alt={song.title}
+                                                                className="song-cover"
+                                                                width={300}
+                                                                height={300}
+                                                                loading="lazy"
+                                                            />
+                                                            <button className="play-overlay"><Play className="play-icon" /></button>
+                                                        </div>
+                                                        <h3 className="song-title">{song.title}</h3>
+                                                        <p className="song-artist">{song.artist}</p>
+                                                        <span className="song-genre">{song.genre}</span>
+                                                        <Heart
+                                                            className={`heart-icon ${likedSongs.has(song.id) ? 'liked' : ''}`}
+                                                            onClick={(e) => { e.stopPropagation(); toggleLike(song.id); }}
+                                                        />
                                                     </div>
-                                                </div>
-                                            </>
-                                        )}
+                                                ))}
+                                            </div>
+                                        </div>
                                     </>
                                 )}
                             </div>
