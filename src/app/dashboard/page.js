@@ -6,34 +6,37 @@ import Image from 'next/image';
 import Link from 'next/link';
 import './page.css';
 import {
-    Play, Pause, SkipBack, SkipForward, Volume2, Heart, Search, Home, Music, User,
-    Plus, Shuffle, Repeat, MoreVertical, TrendingUp, BarChart3, Shield
+    Play, Pause, SkipBack, SkipForward, Volume2, Heart, Search, Home, Music, Plus, Shuffle, Repeat
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
-// Static songs data (centralized)
-const staticSongs = [
-    { id: 1, title: "Midnight Dreams", artist: "Luna Martinez", album: "Nocturnal Vibes", duration: "3:24", cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center", genre: "Pop", plays: 1234567, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3", spotify_uri: null },
-    { id: 2, title: "Electric Pulse", artist: "Neon Collective", album: "Digital Horizons", duration: "4:12", cover: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&h=300&fit=crop&crop=center", genre: "Electronic", plays: 987654, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3", spotify_uri: null },
-    { id: 3, title: "Acoustic Soul", artist: "River Stone", album: "Unplugged Sessions", duration: "2:58", cover: "https://images.unsplash.com/photo-1493612276216-ee3925520721?w=300&h=300&fit=crop&crop=center", genre: "Acoustic", plays: 756432, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3", spotify_uri: null },
-    { id: 4, title: "Urban Rhythm", artist: "City Beats", album: "Street Anthology", duration: "3:45", cover: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=300&h=300&fit=crop&crop=center", genre: "Hip-Hop", plays: 2143567, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3", spotify_uri: null },
-    { id: 5, title: "Sunset Boulevard", artist: "Golden Hour", album: "California Dreams", duration: "4:33", cover: "https://images.unsplash.com/photo-1514320291840-2e0a9bf2a9ae?w=300&h=300&fit=crop&crop=center", genre: "Rock", plays: 654321, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3", spotify_uri: null },
-    { id: 6, title: "Jazz Nights", artist: "Smooth Operators", album: "After Hours", duration: "5:12", cover: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=300&h=300&fit=crop&crop=center", genre: "Jazz", plays: 543210, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3", spotify_uri: null },
-    { id: 7, title: "Classical Morning", artist: "Orchestra Symphony", album: "Dawn Collection", duration: "6:45", cover: "https://images.unsplash.com/photo-1507838153414-b4b713384a76?w=300&h=300&fit=crop&crop=center", genre: "Classical", plays: 432109, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3", spotify_uri: null },
-    { id: 8, title: "Country Roads", artist: "Nashville Stars", album: "Southern Tales", duration: "3:56", cover: "https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=300&h=300&fit=crop&crop=center", genre: "Country", plays: 321098, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3", spotify_uri: null }
-];
+/**
+ * Full-featured music page with:
+ * - Spotify OAuth code exchange (PKCE)
+ * - Fetch top tracks & playlists
+ * - Spotify Web Playback SDK (Premium playback)
+ * - Preview-based audio fallback
+ * - Removed default/static songs
+ * - Recommendations based only on recentlyPlayed
+ * - Fixed play/pause, volume, progress, seeking, duration updates
+ *
+ * Make sure environment variables exist:
+ * NEXT_PUBLIC_SPOTIFY_CLIENT_ID
+ * NEXT_PUBLIC_SPOTIFY_REDIRECT_URI
+ */
 
-// Utility to debounce functions
-const debounce = (func, wait) => {
-    let timeout;
+const debounce = (fn, wait) => {
+    let t;
     return (...args) => {
-        clearTimeout(timeout);
-        timeout = setTimeout(() => func(...args), wait);
+        clearTimeout(t);
+        t = setTimeout(() => fn(...args), wait);
     };
 };
 
 export default function Page() {
     const router = useRouter();
+
+    // --- Basic UI / Player state ---
     const [currentUser, setCurrentUser] = useState(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [currentSong, setCurrentSong] = useState(null);
@@ -43,34 +46,36 @@ export default function Page() {
     const [activeTab, setActiveTab] = useState('home');
     const [searchQuery, setSearchQuery] = useState('');
     const [playlists, setPlaylists] = useState([]);
-    const [showCreatePlaylist, setShowCreatePlaylist] = useState(false);
-    const [newPlaylistName, setNewPlaylistName] = useState('');
-    const [songs, setSongs] = useState([]);
+    const [songs, setSongs] = useState([]); // initially empty (no static defaults)
     const [filteredSongs, setFilteredSongs] = useState([]);
-    const [accessToken, setAccessToken] = useState(null);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState(null);
-    const [selectedPlaylist, setSelectedPlaylist] = useState(null);
-    const [filterGenre, setFilterGenre] = useState('all');
-    const [filterArtist, setFilterArtist] = useState('all');
-    const [recommendations, setRecommendations] = useState([]);
-    const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);
-    const [selectedSongForPlaylist, setSelectedSongForPlaylist] = useState(null);
     const [artists, setArtists] = useState([]);
-    const audioRef = useRef(null);
+    const [recommendations, setRecommendations] = useState([]);
+    const [likedSongs, setLikedSongs] = useState(new Set());
+    const [recentlyPlayed, setRecentlyPlayed] = useState([]);
     const [queue, setQueue] = useState([]);
     const [currentIndex, setCurrentIndex] = useState(0);
     const [shuffle, setShuffle] = useState(false);
-    const [repeat, setRepeat] = useState('off');
-    const [isLoadingSong, setIsLoadingSong] = useState(false);
-    const [likedSongs, setLikedSongs] = useState(new Set());
-    const [recentlyPlayed, setRecentlyPlayed] = useState([]);
+    const [repeat, setRepeat] = useState('off'); // off | all | one
+    const [showCreatePlaylist, setShowCreatePlaylist] = useState(false);
+    const [newPlaylistName, setNewPlaylistName] = useState('');
+    const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);
+    const [selectedSongForPlaylist, setSelectedSongForPlaylist] = useState(null);
+
+    // spotify-related state
+    const [accessToken, setAccessToken] = useState(null);
     const [isPremium, setIsPremium] = useState(false);
     const [spotifyPlayer, setSpotifyPlayer] = useState(null);
-    const [deviceId, setDeviceId] = useState(null);
     const [playerReady, setPlayerReady] = useState(false);
-    const searchTimerRef = useRef(null);
+    const [deviceId, setDeviceId] = useState(null);
+
+    // misc
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
+    const audioRef = useRef(null);
     const isLoadingRef = useRef(false);
+    const profileLoadedRef = useRef(false);
+    const searchTimerRef = useRef(null);
+
     const CLIENT_ID = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID;
     const REDIRECT_URI = process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI;
     const AUTH_ENDPOINT = 'https://accounts.spotify.com/authorize';
@@ -78,168 +83,122 @@ export default function Page() {
     const SCOPES = 'user-read-private user-read-email user-top-read playlist-read-private playlist-modify-public streaming user-read-playback-state user-modify-playback-state';
     const CODE_CHALLENGE_METHOD = 'S256';
 
+    // caching
     const CACHE_KEY_TOP_TRACKS = 'spotify_top_tracks';
     const CACHE_KEY_PLAYLISTS = 'spotify_playlists';
     const CACHE_EXPIRY_MS = 60 * 60 * 1000; // 1 hour
-    const profileLoadedRef = useRef(false);
 
-    // Utility for API calls with exponential backoff
+    // ----- Utilities -----
+
     const apiCallWithBackoff = async (requestFn, maxRetries = 3) => {
+        // increment counter for debugging
         let apiCallCount = JSON.parse(window.localStorage.getItem('apiCallCount') || '0') + 1;
         window.localStorage.setItem('apiCallCount', apiCallCount);
-        console.log(`API call #${apiCallCount}: ${requestFn.toString().slice(0, 50)}...`);
 
-        for (let i = 0; i < maxRetries; i++) {
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
             try {
                 return await requestFn();
             } catch (err) {
                 if (err.response?.status === 429) {
                     const retryAfter = parseInt(err.response.headers['retry-after'] || '10', 10) * 1000;
-                    console.warn(`Rate limited. Retrying after ${retryAfter}ms...`);
-                    await new Promise(resolve => setTimeout(resolve, retryAfter + Math.random() * 100));
+                    await new Promise(res => setTimeout(res, retryAfter + Math.random() * 100));
                     continue;
                 }
-                throw err;
+                if (attempt === maxRetries - 1) throw err;
+                await new Promise(res => setTimeout(res, 500 * Math.pow(2, attempt)));
             }
         }
-        throw new Error('Max retries reached for API call');
+        throw new Error('Max retries reached');
     };
 
-    // Cache utilities
     const getCachedData = (key) => {
         const cached = window.localStorage.getItem(key);
-        if (cached) {
+        if (!cached) return null;
+        try {
             const { data, timestamp } = JSON.parse(cached);
-            if (Date.now() - timestamp < CACHE_EXPIRY_MS) {
-                return data;
-            }
+            if (Date.now() - timestamp < CACHE_EXPIRY_MS) return data;
+            return null;
+        } catch {
+            return null;
         }
-        return null;
     };
 
     const setCachedData = (key, data) => {
-        window.localStorage.setItem(key, JSON.stringify({ data, timestamp: Date.now() }));
+        try {
+            window.localStorage.setItem(key, JSON.stringify({ data, timestamp: Date.now() }));
+        } catch { /* ignore */ }
     };
 
     const generateCodeVerifier = () => {
         const array = new Uint8Array(32);
         window.crypto.getRandomValues(array);
-        return btoa(String.fromCharCode.apply(null, Array.from(array)))
-            .replace(/\+/g, '-')
-            .replace(/\//g, '_')
-            .replace(/=/g, '');
+        return btoa(String.fromCharCode(...array)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
     };
 
     const generateCodeChallenge = async (verifier) => {
         const encoder = new TextEncoder();
         const data = encoder.encode(verifier);
         const digest = await window.crypto.subtle.digest('SHA-256', data);
-        return btoa(String.fromCharCode.apply(null, Array.from(new Uint8Array(digest))))
-            .replace(/\+/g, '-')
-            .replace(/\//g, '_')
-            .replace(/=/g, '');
+        return btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
     };
 
-    const generateRecommendations = useCallback((allSongs) => {
-        if (!allSongs || allSongs.length === 0) {
+    // ----- Recommendations (based only on recentlyPlayed) -----
+    const generateRecommendations = useCallback(() => {
+        if (!recentlyPlayed || recentlyPlayed.length === 0) {
             setRecommendations([]);
             return;
         }
+        // simple approach: weight recent items and return up to 6
+        const recommended = [...recentlyPlayed]
+            .slice(0, 10) // most recent 10
+            .sort(() => 0.5 - Math.random())
+            .slice(0, 6);
+        setRecommendations(recommended);
+    }, [recentlyPlayed]);
 
-        const allGenres = [...new Set(allSongs.map(song => song.genre))];
-        const allArtists = [...new Set(allSongs.map(song => song.artist))];
-
-        const createFeatureVector = (song) => {
-            const genreVector = allGenres.map(genre => song.genre === genre ? 1 : 0);
-            const artistVector = allArtists.map(artist => song.artist === artist ? 1 : 0);
-            const maxPlays = Math.max(...allSongs.map(s => s.plays), 1);
-            const plays = song.plays / maxPlays;
-            return [...genreVector, ...artistVector, plays];
-        };
-
-        const cosineSimilarity = (vecA, vecB) => {
-            const dotProduct = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
-            const magnitudeA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
-            const magnitudeB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
-            return magnitudeA && magnitudeB ? dotProduct / (magnitudeA * magnitudeB) : 0;
-        };
-
-        const songVectors = allSongs.map(song => ({
-            song,
-            vector: createFeatureVector(song)
-        }));
-
-        const userPreferenceSongs = [
-            ...recentlyPlayed,
-            ...Array.from(likedSongs).map(songId => allSongs.find(s => s.id === songId)).filter(s => s)
-        ].filter((song, index, self) => song && self.findIndex(s => s.id === song.id) === index);
-
-        if (userPreferenceSongs.length === 0) {
-            const shuffled = [...allSongs].sort(() => 0.5 - Math.random());
-            setRecommendations(shuffled.slice(0, 4));
-            return;
-        }
-
-        const userVectors = userPreferenceSongs.map(song => createFeatureVector(song));
-        const userVector = userVectors.reduce(
-            (avg, vec) => avg.map((val, i) => val + vec[i] / userVectors.length),
-            new Array(allGenres.length + allArtists.length + 1).fill(0)
-        );
-
-        const scores = songVectors.map(({ song, vector }) => ({
-            song,
-            score: cosineSimilarity(userVector, vector)
-        }));
-
-        const recommendedSongs = scores
-            .sort((a, b) => b.score - a.score)
-            .map(item => item.song)
-            .filter(song => !userPreferenceSongs.some(s => s.id === song.id))
-            .slice(0, 4);
-
-        setRecommendations(recommendedSongs);
-    }, [recentlyPlayed, likedSongs]);
+    // ----- Spotify / Data fetching -----
 
     const fetchTopTracks = useCallback(async (token) => {
         try {
             setLoading(true);
-            setError(null);
-
-            const cachedTracks = getCachedData(CACHE_KEY_TOP_TRACKS);
-            if (cachedTracks) {
-                setSongs(cachedTracks);
-                return cachedTracks;
+            const cached = getCachedData(CACHE_KEY_TOP_TRACKS);
+            if (cached) {
+                setSongs(prev => {
+                    // merge new songs while avoiding duplicates
+                    const merged = [...cached];
+                    return merged;
+                });
+                return cached;
             }
 
-            await new Promise(resolve => setTimeout(resolve, 300));
-            const response = await apiCallWithBackoff(() =>
-                axios.get(
-                    'https://api.spotify.com/v1/me/top/tracks?time_range=short_term&limit=10&fields=items(id,name,artists(name),album(name,images),duration_ms,preview_url,uri,popularity)',
-                    {
-                        headers: { Authorization: `Bearer ${token}` },
-                    }
-                )
-            );
-
-            const mappedSongs = response.data.items.map(track => ({
+            // fetch top tracks
+            const response = await apiCallWithBackoff(() => axios.get(
+                'https://api.spotify.com/v1/me/top/tracks?time_range=short_term&limit=20',
+                { headers: { Authorization: `Bearer ${token}` } }
+            ));
+            const items = response.data.items || [];
+            const mapped = items.map(track => ({
                 id: track.id,
                 title: track.name,
                 artist: track.artists.map(a => a.name).join(', '),
                 album: track.album.name,
                 duration: new Date(track.duration_ms).toISOString().substr(14, 5),
-                cover: track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
+                cover: track.album.images?.[0]?.url || '',
                 genre: 'Unknown',
-                plays: track.popularity * 10000,
+                plays: (track.popularity || 0) * 100,
                 preview_url: track.preview_url || null,
-                spotify_uri: track.uri,
+                spotify_uri: track.uri
             }));
 
-            setSongs(mappedSongs);
-            setCachedData(CACHE_KEY_TOP_TRACKS, mappedSongs);
-            return mappedSongs;
+            setSongs(prev => {
+                const combined = [...mapped];
+                return combined;
+            });
+            setCachedData(CACHE_KEY_TOP_TRACKS, mapped);
+            return mapped;
         } catch (err) {
-            console.error('Failed to fetch tracks:', err);
-            setError(err.response?.status === 429 ? 'Rate limit exceeded. Please wait and try again.' : 'Failed to fetch tracks');
+            console.error('fetchTopTracks err', err);
+            setError(err.response?.status === 429 ? 'Rate limit exceeded' : 'Failed to fetch top tracks');
             return [];
         } finally {
             setLoading(false);
@@ -249,363 +208,132 @@ export default function Page() {
     const fetchUserPlaylists = useCallback(async (token) => {
         try {
             setLoading(true);
-            setError(null);
-
-            const cachedPlaylists = getCachedData(CACHE_KEY_PLAYLISTS);
-            if (cachedPlaylists) {
-                setPlaylists(cachedPlaylists);
-                return cachedPlaylists;
+            const cached = getCachedData(CACHE_KEY_PLAYLISTS);
+            if (cached) {
+                setPlaylists(cached);
+                return cached;
             }
 
-            const playlistsResponse = await apiCallWithBackoff(() =>
-                axios.get(
-                    'https://api.spotify.com/v1/me/playlists?limit=10&fields=items(id,name,tracks.href,images)',
-                    {
-                        headers: { Authorization: `Bearer ${token}` },
-                    }
-                )
-            );
+            const playlistsResponse = await apiCallWithBackoff(() => axios.get(
+                'https://api.spotify.com/v1/me/playlists?limit=20',
+                { headers: { Authorization: `Bearer ${token}` } }
+            ));
 
+            const playlistsData = playlistsResponse.data.items || [];
             const playlistsWithSongs = [];
-            const MAX_PLAYLISTS = 10;
-            for (const playlist of playlistsResponse.data.items.slice(0, MAX_PLAYLISTS)) {
-                await new Promise(resolve => setTimeout(resolve, 1000));
+
+            for (const pl of playlistsData.slice(0, 10)) {
                 try {
-                    const tracksResponse = await apiCallWithBackoff(() =>
-                        axios.get(
-                            `${playlist.tracks.href}?fields=items(track(id,name,artists(name),album(name,images),duration_ms,preview_url,uri))`,
-                            {
-                                headers: { Authorization: `Bearer ${token}` },
-                            }
-                        )
-                    );
-                    const playlistSongs = tracksResponse.data.items
-                        .filter(item => item.track && item.track.id)
-                        .map(item => ({
-                            id: item.track.id,
-                            title: item.track.name,
-                            artist: item.track.artists.map(a => a.name).join(', '),
-                            album: item.track.album.name,
-                            duration: new Date(item.track.duration_ms).toISOString().substr(14, 5),
-                            cover: item.track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
+                    // rate-limiting gentle pause
+                    await new Promise(res => setTimeout(res, 250));
+                    const href = pl.tracks.href;
+                    const tracksResponse = await apiCallWithBackoff(() => axios.get(
+                        `${href}?fields=items(track(id,name,artists(name),album(name,images),duration_ms,preview_url,uri))&limit=50`,
+                        { headers: { Authorization: `Bearer ${token}` } }
+                    ));
+                    const tracks = (tracksResponse.data.items || []).filter(i => i.track && i.track.id).map(item => {
+                        const track = item.track;
+                        return {
+                            id: track.id,
+                            title: track.name,
+                            artist: track.artists.map(a => a.name).join(', '),
+                            album: track.album.name,
+                            duration: new Date(track.duration_ms).toISOString().substr(14, 5),
+                            cover: track.album.images?.[0]?.url || '',
                             genre: 'Unknown',
                             plays: 0,
-                            preview_url: item.track.preview_url || null,
-                            spotify_uri: item.track.uri,
-                        }));
+                            preview_url: track.preview_url || null,
+                            spotify_uri: track.uri
+                        };
+                    });
                     playlistsWithSongs.push({
-                        id: playlist.id,
-                        name: playlist.name,
-                        songs: playlistSongs,
-                        cover:
-                            playlist.images?.[0]?.url ||
-                            playlistSongs[0]?.cover ||
-                            'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
+                        id: pl.id,
+                        name: pl.name,
+                        songs: tracks,
+                        cover: pl.images?.[0]?.url || tracks[0]?.cover || '',
                     });
                 } catch (err) {
-                    console.error(`Error fetching tracks for playlist ${playlist.name}:`, err);
+                    console.warn('playlist fetch error for', pl.name, err);
                     playlistsWithSongs.push({
-                        id: playlist.id,
-                        name: playlist.name,
+                        id: pl.id,
+                        name: pl.name,
                         songs: [],
-                        cover: playlist.images?.[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
+                        cover: pl.images?.[0]?.url || ''
                     });
                 }
             }
+
             setPlaylists(playlistsWithSongs);
             setCachedData(CACHE_KEY_PLAYLISTS, playlistsWithSongs);
             return playlistsWithSongs;
         } catch (err) {
-            console.error('Failed to fetch playlists:', err);
-            setError(err.response?.status === 429 ? 'Rate limit exceeded. Please wait and try again.' : 'Failed to fetch playlists');
+            console.error('fetchUserPlaylists err', err);
+            setError(err.response?.status === 429 ? 'Rate limit exceeded' : 'Failed to fetch playlists');
             return [];
         } finally {
             setLoading(false);
         }
     }, []);
 
-    const searchSongs = useCallback(async (query) => {
-        if (searchTimerRef.current) {
-            clearTimeout(searchTimerRef.current);
-        }
-
-        if (!accessToken || !query) {
-            const filtered = staticSongs.filter(song =>
-                song.title.toLowerCase().includes(query.toLowerCase()) ||
-                song.artist.toLowerCase().includes(query.toLowerCase()) ||
-                song.album.toLowerCase().includes(query.toLowerCase())
-            );
-            setFilteredSongs(filtered);
-            return;
-        }
-
-        searchTimerRef.current = setTimeout(async () => {
-            try {
-                setLoading(true);
-                setError(null);
-                const response = await apiCallWithBackoff(() =>
-                    axios.get(
-                        `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10&fields=tracks(items(id,name,artists(name),album(name,images),duration_ms,preview_url,uri,popularity))`,
-                        {
-                            headers: { Authorization: `Bearer ${accessToken}` },
-                        }
-                    )
-                );
-                const mappedSongs = response.data.tracks.items.map(track => ({
-                    id: track.id,
-                    title: track.name,
-                    artist: track.artists.map(a => a.name).join(', '),
-                    album: track.album.name,
-                    duration: new Date(track.duration_ms).toISOString().substr(14, 5),
-                    cover: track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
-                    genre: 'Unknown',
-                    plays: track.popularity * 10000,
-                    preview_url: track.preview_url || null,
-                    spotify_uri: track.uri,
-                }));
-                setFilteredSongs(mappedSongs);
-            } catch (err) {
-                console.error('Search failed:', err);
-                setError(err.response?.status === 429 ? 'Too many searches. Please wait a moment.' : 'Search failed');
-            } finally {
-                setLoading(false);
-            }
-        }, 800);
-    }, [accessToken]);
-
-    const createPlaylist = async () => {
-        if (!newPlaylistName.trim()) {
-            setError('Playlist name cannot be empty');
-            return;
-        }
-
-        if (accessToken && currentUser?.id) {
-            try {
-                const { data } = await apiCallWithBackoff(() =>
-                    axios.post(
-                        `https://api.spotify.com/v1/users/${currentUser.id}/playlists`,
-                        { name: newPlaylistName, public: true },
-                        { headers: { Authorization: `Bearer ${accessToken}` } }
-                    )
-                );
-                setPlaylists(prev => [...prev, {
-                    id: data.id,
-                    name: data.name,
-                    songs: [],
-                    cover: data.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center'
-                }]);
-                setNewPlaylistName('');
-                setShowCreatePlaylist(false);
-                setError(null);
-            } catch (err) {
-                console.error('Failed to create playlist:', err);
-                setError(err.response?.status === 429 ? 'Rate limit exceeded. Please wait and try again.' : 'Failed to create playlist');
-            }
-        }
-    };
-
-    const isSongPlayable = useCallback((song) => {
-        if (!song) return false;
-        if (song.preview_url) return true;
-        if (song.spotify_uri && isPremium && playerReady) return true;
-        return false;
-    }, [isPremium, playerReady]);
-
-    const selectSong = useCallback(async (song, songList = null) => {
-        if (isLoadingRef.current) {
-            console.log("Already loading a song, ignoring duplicate call");
-            return;
-        }
-
-        console.log("Selecting song:", song.title, "hasPreview:", !!song.preview_url, "hasUri:", !!song.spotify_uri);
-
-        if (!isSongPlayable(song)) {
-            setError(`No playable content available for ${song.title}`);
-            setCurrentSong(song);
-            setIsPlaying(false);
-            return;
-        }
-
-        isLoadingRef.current = true;
-
-        setQueue((prevQueue) => {
-            if (songList && songList.length > 0) {
-                const validSongs = songList.filter((s) => isSongPlayable(s));
-                if (validSongs.length === 0) {
-                    setError("No playable songs in the provided list");
-                    isLoadingRef.current = false;
-                    return prevQueue;
-                }
-                const index = validSongs.findIndex((s) => s.id === song.id);
-                setCurrentIndex(index >= 0 ? index : 0);
-                return validSongs;
-            } else if (!prevQueue.some((s) => s.id === song.id)) {
-                const validSongs = (filteredSongs.length > 0 ? filteredSongs : songs).filter((s) =>
-                    isSongPlayable(s)
-                );
-                const index = validSongs.findIndex((s) => s.id === song.id);
-                setCurrentIndex(index >= 0 ? index : 0);
-                return validSongs;
-            }
-
-            const index = prevQueue.findIndex((s) => s.id === song.id);
-            if (index >= 0) setCurrentIndex(index);
-            return prevQueue;
-        });
-
-        setCurrentSong(song);
-        setIsPlaying(true);
-        setError(null);
-
-        setTimeout(() => {
-            isLoadingRef.current = false;
-        }, 500);
-    }, [filteredSongs, songs, isSongPlayable]);
-
-    const playNext = useCallback(() => {
-        setQueue(currentQueue => {
-            if (currentQueue.length === 0) return currentQueue;
-
-            setCurrentIndex(prevIndex => {
-                let nextIndex;
-                if (shuffle) {
-                    nextIndex = Math.floor(Math.random() * currentQueue.length);
-                } else {
-                    nextIndex = prevIndex + 1;
-                    if (nextIndex >= currentQueue.length) {
-                        if (repeat === 'all') {
-                            nextIndex = 0;
-                        } else {
-                            setIsPlaying(false);
-                            return prevIndex;
-                        }
-                    }
-                }
-
-                selectSong(currentQueue[nextIndex]);
-                return nextIndex;
-            });
-
-            return currentQueue;
-        });
-    }, [shuffle, repeat, selectSong]);
-
-    const playPrevious = useCallback(() => {
-        if (queue.length === 0) return;
-
-        if (currentTime > 3) {
-            if (isPremium && spotifyPlayer && deviceId) {
-                spotifyPlayer.seek(0);
-            } else if (audioRef.current) {
-                audioRef.current.currentTime = 0;
-            }
-            return;
-        }
-
-        let prevIndex = currentIndex - 1;
-        if (prevIndex < 0) {
-            if (repeat === 'all') {
-                prevIndex = queue.length - 1;
-            } else {
-                prevIndex = 0;
-            }
-        }
-
-        setCurrentIndex(prevIndex);
-        selectSong(queue[prevIndex]);
-    }, [queue, currentIndex, currentTime, repeat, isPremium, spotifyPlayer, deviceId, selectSong]);
-
-    const fetchUserProfile = useCallback(async (token) => {
-        if (profileLoadedRef.current) {
-            console.log('Profile already loaded, skipping...');
+    const loadSpotifyData = useCallback(async () => {
+        if (!accessToken) {
+            setError('No access token');
             return;
         }
 
         try {
             setLoading(true);
             setError(null);
-            console.log('Fetching user profile...');
+            const topTracks = await fetchTopTracks(accessToken);
+            const userPlaylists = await fetchUserPlaylists(accessToken);
 
-            const { data } = await axios.get('https://api.spotify.com/v1/me', {
-                headers: { Authorization: `Bearer ${token}` }
-            });
+            // merge known songs from top tracks + playlists
+            const allKnown = [...(topTracks || []), ...(userPlaylists.flatMap(p => p.songs) || [])];
+            // dedupe by id
+            const unique = allKnown.reduce((acc, s) => {
+                if (!acc.some(x => x.id === s.id)) acc.push(s);
+                return acc;
+            }, []);
+            setSongs(unique);
+            setFilteredSongs(unique);
 
-            const user = {
-                id: data.id,
-                name: data.display_name,
-                email: data.email,
-                avatar: data.images?.[0]?.url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center',
-                product: data.product || 'free'
-            };
-
-            setCurrentUser(user);
-            setIsPremium(user.product === 'premium');
-            window.localStorage.setItem('user', JSON.stringify(user));
-
-            profileLoadedRef.current = true;
-
-            console.log('Profile loaded:', user.name);
-
-            // Initialize with static songs
-            setSongs(staticSongs);
-            setFilteredSongs(staticSongs);
-            generateRecommendations(staticSongs);
-
-            const uniqueArtists = [...new Set(staticSongs.map(song => song.artist))];
+            // artists list
+            const uniqueArtists = [...new Set(unique.map(s => s.artist))];
             setArtists(uniqueArtists.map((name, idx) => ({
                 id: idx + 1,
                 name,
-                songs: staticSongs.filter(s => s.artist === name).length,
-                albums: new Set(staticSongs.filter(s => s.artist === name).map(s => s.album)).size
+                songs: unique.filter(s => s.artist === name).length,
+                albums: new Set(unique.filter(s => s.artist === name).map(s => s.album)).size
             })));
 
-            console.log('Spotify tracks available on demand');
+            setError('Spotify library loaded');
+            setTimeout(() => setError(null), 2500);
         } catch (err) {
-            console.error('Profile fetch error:', err);
-            setError(
-                err.response?.status === 429
-                    ? 'Too many requests. Please wait and try again.'
-                    : `Failed to fetch profile: ${err.response?.data?.error?.message || err.message}`
-            );
+            console.error('loadSpotifyData err', err);
+            setError(err.response?.status === 429 ? 'Rate limit exceeded' : 'Failed to load Spotify data');
         } finally {
             setLoading(false);
         }
-    }, [generateRecommendations]);
+    }, [accessToken, fetchTopTracks, fetchUserPlaylists]);
 
-    const loadSpotifyData = useCallback(async () => {
-        if (!accessToken) return;
+    // ----- Spotify auth & PKCE exchange -----
 
-        setLoading(true);
-        setError(null);
-
+    const handleSpotifyLogin = async () => {
         try {
-            console.log('📥 Loading Spotify tracks...');
-            const topTracks = await fetchTopTracks(accessToken);
+            const codeVerifier = generateCodeVerifier();
+            window.localStorage.setItem('spotify_code_verifier', codeVerifier);
+            const codeChallenge = await generateCodeChallenge(codeVerifier);
 
-            console.log('📥 Loading playlists...');
-            const userPlaylists = await fetchUserPlaylists(accessToken);
-
-            const allKnownSongs = [...topTracks, ...userPlaylists.flatMap(p => p.songs)].reduce((unique, song) => {
-                if (!unique.some(s => s.id === song.id)) unique.push(song);
-                return unique;
-            }, []);
-
-            generateRecommendations(allKnownSongs);
-
-            setError('Spotify library loaded successfully!');
-            setTimeout(() => setError(null), 3000);
-
+            const authUrl = `${AUTH_ENDPOINT}?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}&response_type=${RESPONSE_TYPE}&code_challenge=${codeChallenge}&code_challenge_method=${CODE_CHALLENGE_METHOD}`;
+            window.location.href = authUrl;
         } catch (err) {
-            console.error('❌ Failed to load Spotify data:', err);
-            setError(err.response?.status === 429
-                ? 'Too many requests. Please try again in a moment.'
-                : 'Failed to load Spotify data');
-        } finally {
-            setLoading(false);
+            console.error('spotify login err', err);
+            setError('Failed to start Spotify login');
         }
-    }, [accessToken, fetchTopTracks, fetchUserPlaylists, generateRecommendations]);
+    };
 
     useEffect(() => {
+        // handle code exchange
         const urlParams = new URLSearchParams(window.location.search);
         const code = urlParams.get('code');
 
@@ -615,391 +343,681 @@ export default function Page() {
                 setError('Missing code verifier');
                 return;
             }
-
             try {
-                const response = await axios.post(
-                    'https://accounts.spotify.com/api/token',
-                    new URLSearchParams({
-                        client_id: CLIENT_ID,
-                        grant_type: 'authorization_code',
-                        code,
-                        redirect_uri: REDIRECT_URI,
-                        code_verifier: codeVerifier,
-                    }),
-                    {
-                        headers: {
-                            'Content-Type': 'application/x-www-form-urlencoded',
-                        },
-                    }
-                );
+                const body = new URLSearchParams({
+                    client_id: CLIENT_ID,
+                    grant_type: 'authorization_code',
+                    code,
+                    redirect_uri: REDIRECT_URI,
+                    code_verifier: codeVerifier
+                });
 
-                const { access_token } = response.data;
-                window.localStorage.setItem('spotify_token', access_token);
+                const response = await axios.post('https://accounts.spotify.com/api/token', body.toString(), {
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+                });
+
+                const token = response.data.access_token;
+                window.localStorage.setItem('spotify_token', token);
                 window.localStorage.removeItem('spotify_code_verifier');
-                setAccessToken(access_token);
+                setAccessToken(token);
 
-                // Remove code from URL
+                // remove code param
                 window.history.replaceState({}, document.title, window.location.pathname);
-
-                await fetchUserProfile(access_token);
             } catch (err) {
-                console.error('Token exchange error:', err);
+                console.error('token exchange err', err);
                 setError('Failed to authenticate with Spotify');
             }
         };
 
-        if (code && !accessToken) {
-            handleTokenExchange();
-        }
-    }, [accessToken, fetchUserProfile]);
+        if (code && !accessToken) handleTokenExchange();
+    }, [accessToken]);
 
-    useEffect(() => {
-        const storedUser = window.localStorage.getItem('user');
-        if (storedUser) {
-            const user = JSON.parse(storedUser);
+    // ----- Fetch user profile -----
+    const fetchUserProfile = useCallback(async (token) => {
+        if (!token) return;
+        if (profileLoadedRef.current) return;
+
+        try {
+            setLoading(true);
+            const { data } = await axios.get('https://api.spotify.com/v1/me', {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+
+            const user = {
+                id: data.id,
+                name: data.display_name || data.id,
+                email: data.email,
+                avatar: data.images?.[0]?.url || '',
+                product: data.product || 'free'
+            };
+
             setCurrentUser(user);
             setIsPremium(user.product === 'premium');
+            window.localStorage.setItem('user', JSON.stringify(user));
+
             profileLoadedRef.current = true;
-
-            setSongs(staticSongs);
-            setFilteredSongs(staticSongs);
-
-            const uniqueArtists = [...new Set(staticSongs.map(song => song.artist))];
-            setArtists(uniqueArtists.map((name, idx) => ({
-                id: idx + 1,
-                name,
-                songs: staticSongs.filter(s => s.artist === name).length,
-                albums: new Set(staticSongs.filter(s => s.artist === name).map(s => s.album)).size
-            })));
-
-            generateRecommendations(staticSongs);
+            // Do not initialize songs with static data (we removed static songs)
+        } catch (err) {
+            console.error('fetchUserProfile err', err);
+            setError('Failed to fetch profile');
+        } finally {
+            setLoading(false);
         }
-
-        const storedToken = window.localStorage.getItem('spotify_token');
-        if (storedToken && !profileLoadedRef.current) {
-            setAccessToken(storedToken);
-            fetchUserProfile(storedToken);
-        }
-    }, [fetchUserProfile, generateRecommendations]);
+    }, []);
 
     useEffect(() => {
-        if (!accessToken || !isPremium) return;
+        // restore user/token on mount
+        const storedUser = window.localStorage.getItem('user');
+        if (storedUser) {
+            const u = JSON.parse(storedUser);
+            setCurrentUser(u);
+            setIsPremium(u.product === 'premium');
+            profileLoadedRef.current = true;
+        }
+        const storedToken = window.localStorage.getItem('spotify_token');
+        if (storedToken) {
+            setAccessToken(storedToken);
+            fetchUserProfile(storedToken);
+            // intentionally do not auto-load library until user clicks "Load My Music" UI, to reduce rate use
+        }
+    }, [fetchUserProfile]);
 
-        let scriptElement = null;
+    // ----- Spotify Web Playback SDK initialization for premium users -----
+    useEffect(() => {
+        if (!accessToken || !isPremium) return;
+        let scriptEl = null;
         let playerInstance = null;
 
         const initializePlayer = () => {
-            if (window.Spotify) {
-                playerInstance = new window.Spotify.Player({
-                    name: 'MusicStream Web Player',
-                    getOAuthToken: cb => { cb(accessToken); },
-                    volume: volume / 100
-                });
-
-                playerInstance.addListener('ready', ({ device_id }) => {
-                    console.log('Spotify Player ready with Device ID', device_id);
-                    setDeviceId(device_id);
-                    setPlayerReady(true);
-                    // Transfer playback to this device
-                    apiCallWithBackoff(() =>
-                        axios.put(
-                            'https://api.spotify.com/v1/me/player',
-                            { device_ids: [device_id], play: false },
-                            { headers: { Authorization: `Bearer ${accessToken}` } }
-                        )
-                    ).catch(err => console.error('Failed to transfer playback:', err));
-                });
-                playerInstance.addListener('not_ready', ({ device_id }) => {
-                    console.log('Device ID has gone offline', device_id);
-                    setDeviceId(null);
-                    setPlayerReady(false);
-                });
-                playerInstance.addListener('initialization_error', ({ message }) => {
-                    console.error('Spotify Player initialization error:', message);
-                    setError('Failed to initialize Spotify player');
-                });
-                playerInstance.addListener('player_state_changed', (state) => {
-                    if (!state) return;
-                    setIsPlaying(!state.paused);
-                    setCurrentTime(state.position / 1000);
-                    setDuration(state.duration / 1000);
-
-                    if (state.track_window.current_track) {
-                        const track = state.track_window.current_track;
-                        const newSong = {
-                            id: track.id,
-                            title: track.name,
-                            artist: track.artists.map(a => a.name).join(', '),
-                            album: track.album.name,
-                            duration: new Date(track.duration).toISOString().substr(14, 5),
-                            cover: track.album.images[0]?.url || 'default-cover',
-                            genre: 'Unknown',
-                            plays: 0,
-                            spotify_uri: track.uri
-                        };
-                        setCurrentSong(newSong);
-                        setRecentlyPlayed(prev => {
-                            const newPlayed = [newSong, ...prev.filter(s => s.id !== track.id)];
-                            return newPlayed.slice(0, 5);
-                        });
-                    }
-                });
-
-                playerInstance.connect().catch(err => {
-                    console.error('Spotify Player connection error:', err);
-                    setError('Failed to connect Spotify player');
-                });
-            } else {
-                setError('Spotify Web Playback SDK not loaded');
+            if (!window.Spotify) {
+                setError('Spotify SDK not available');
+                return;
             }
+
+            playerInstance = new window.Spotify.Player({
+                name: 'MusicStream Web Player',
+                getOAuthToken: cb => cb(accessToken),
+                volume: volume / 100
+            });
+
+            playerInstance.addListener('ready', ({ device_id }) => {
+                setDeviceId(device_id);
+                setPlayerReady(true);
+
+                // transfer playback (do not auto-play)
+                apiCallWithBackoff(() => axios.put('https://api.spotify.com/v1/me/player', { device_ids: [device_id], play: false }, {
+                    headers: { Authorization: `Bearer ${accessToken}` }
+                })).catch(e => console.warn('transfer playback failed', e));
+            });
+
+            playerInstance.addListener('not_ready', ({ device_id }) => {
+                setDeviceId(null);
+                setPlayerReady(false);
+            });
+
+            playerInstance.addListener('initialization_error', ({ message }) => {
+                console.error('Spotify SDK init err', message);
+                setError('Spotify player initialization error');
+            });
+
+            playerInstance.addListener('authentication_error', ({ message }) => {
+                console.error('Spotify auth err', message);
+                setError('Spotify authentication error');
+            });
+
+            playerInstance.addListener('player_state_changed', (state) => {
+                if (!state) return;
+                setIsPlaying(!state.paused);
+                setCurrentTime(state.position / 1000);
+                setDuration(state.duration / 1000);
+                // update current song from state
+                const track = state.track_window?.current_track;
+                if (track) {
+                    const newSong = {
+                        id: track.id,
+                        title: track.name,
+                        artist: track.artists.map(a => a.name).join(', '),
+                        album: track.album.name,
+                        duration: new Date(track.duration_ms).toISOString().substr(14, 5),
+                        cover: track.album.images?.[0]?.url || '',
+                        spotify_uri: track.uri
+                    };
+                    setCurrentSong(newSong);
+                    setRecentlyPlayed(prev => {
+                        const newPlayed = [newSong, ...prev.filter(s => s.id !== newSong.id)];
+                        return newPlayed.slice(0, 10);
+                    });
+                }
+            });
+
+            playerInstance.connect().then(success => {
+                if (success) setSpotifyPlayer(playerInstance);
+            }).catch(err => {
+                console.error('player connect err', err);
+                setError('Failed to connect Spotify player');
+            });
         };
 
         if (!window.Spotify) {
-            scriptElement = document.createElement('script');
-            scriptElement.src = 'https://sdk.scdn.co/spotify-player.js';
-            scriptElement.async = true;
-            scriptElement.onerror = () => {
-                console.error('Failed to load Spotify SDK script');
-                setError('Failed to load Spotify player');
+            scriptEl = document.createElement('script');
+            scriptEl.src = 'https://sdk.scdn.co/spotify-player.js';
+            scriptEl.async = true;
+            scriptEl.onload = () => {
+                window.onSpotifyWebPlaybackSDKReady = initializePlayer;
             };
-            document.body.appendChild(scriptElement);
-            window.onSpotifyWebPlaybackSDKReady = initializePlayer;
+            scriptEl.onerror = () => {
+                setError('Failed to load Spotify SDK');
+            };
+            document.body.appendChild(scriptEl);
         } else {
             initializePlayer();
         }
 
         return () => {
-            if (playerInstance) {
-                playerInstance.disconnect();
-            }
-            if (scriptElement && document.body.contains(scriptElement)) {
-                document.body.removeChild(scriptElement);
-            }
+            if (playerInstance) playerInstance.disconnect();
+            if (scriptEl && document.body.contains(scriptEl)) document.body.removeChild(scriptEl);
+            setSpotifyPlayer(null);
+            setPlayerReady(false);
         };
-    }, [accessToken, isPremium, volume]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [accessToken, isPremium]);
 
+    // keep player volume in sync
     useEffect(() => {
-        if (audioRef.current) {
-            audioRef.current.volume = volume / 100;
+        if (audioRef.current) audioRef.current.volume = volume / 100;
+        if (spotifyPlayer && playerReady) {
+            spotifyPlayer.setVolume(volume / 100).catch(err => console.warn('setVolume err', err));
         }
-        if (spotifyPlayer) {
-            spotifyPlayer.setVolume(volume / 100).catch(err =>
-                console.error('Failed to set volume:', err)
-            );
-        }
-    }, [volume, spotifyPlayer]);
+    }, [volume, spotifyPlayer, playerReady]);
 
+    // ----- Playback handling: preview (audio element) + spotify playback (premium) -----
+
+    // check if song is playable (preview or spotify + premium + player ready)
+    const isSongPlayable = useCallback((song) => {
+        if (!song) return false;
+        if (song.preview_url) return true;
+        if (song.spotify_uri && isPremium && playerReady) return true;
+        return false;
+    }, [isPremium, playerReady]);
+
+    // selectSong should also queue songs when provided with a list
+    const selectSong = useCallback(async (song, songList = null) => {
+        if (!song) return;
+
+        if (!isSongPlayable(song)) {
+            setError(`No playable content available for ${song.title}`);
+            setCurrentSong(song);
+            setIsPlaying(false);
+            return;
+        }
+
+        if (isLoadingRef.current) {
+            console.log('Already loading a song');
+            return;
+        }
+        isLoadingRef.current = true;
+        setError(null);
+
+        // Setup queue
+        setQueue(prevQueue => {
+            // if a playlist/list provided, build validSongs from it
+            if (songList && songList.length > 0) {
+                const validSongs = songList.filter(s => isSongPlayable(s));
+                if (validSongs.length === 0) {
+                    setError('No playable songs in the provided list');
+                    isLoadingRef.current = false;
+                    return prevQueue;
+                }
+                const idx = validSongs.findIndex(s => s.id === song.id);
+                setCurrentIndex(idx >= 0 ? idx : 0);
+                return validSongs;
+            }
+
+            // if not in queue, put filteredSongs or songs
+            const source = filteredSongs.length > 0 ? filteredSongs : songs;
+            const valid = source.filter(s => isSongPlayable(s));
+            if (!prevQueue.some(s => s.id === song.id)) {
+                const idx = valid.findIndex(s => s.id === song.id);
+                setCurrentIndex(idx >= 0 ? idx : 0);
+                return valid;
+            } else {
+                const idx = prevQueue.findIndex(s => s.id === song.id);
+                if (idx >= 0) setCurrentIndex(idx);
+                return prevQueue;
+            }
+        });
+
+        setCurrentSong(song);
+        setIsPlaying(true);
+
+        setRecentlyPlayed(prev => {
+            const updated = [song, ...prev.filter(s => s.id !== song.id)];
+            return updated.slice(0, 20);
+        });
+
+        // small delay to avoid race
+        setTimeout(() => {
+            isLoadingRef.current = false;
+        }, 300);
+    }, [filteredSongs, songs, isSongPlayable]);
+
+    // playback effect: when currentSong or isPlaying changes, play via SDK or preview
     useEffect(() => {
         if (!currentSong) return;
-
-        let isCancelled = false;
         let retryTimeout = null;
+        let cancelled = false;
 
         const playSong = async () => {
-            if (isLoadingRef.current) {
-                console.log("Already loading song, skipping duplicate playback attempt");
-                return;
-            }
+            if (isLoadingRef.current) return;
             isLoadingRef.current = true;
+            setError(null);
+            setIsLoadingRef.current?.();
 
             try {
-                setIsLoadingSong(true);
-                setError(null);
-
-                if (isPremium && playerReady && deviceId && currentSong.spotify_uri) {
+                // Preferred path: Spotify SDK for premium users & available device
+                if (currentSong.spotify_uri && isPremium && playerReady && spotifyPlayer && deviceId) {
                     try {
-                        await apiCallWithBackoff(() =>
-                            axios.put(
-                                `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
-                                { uris: [currentSong.spotify_uri] },
-                                { headers: { Authorization: `Bearer ${accessToken}` } }
-                            )
-                        );
-                        console.log("Playing via Spotify SDK");
-
-                        if (!isCancelled) {
-                            setRecentlyPlayed((prev) => {
-                                const newPlayed = [currentSong, ...prev.filter((s) => s.id !== currentSong.id)];
-                                return newPlayed.slice(0, 5);
+                        await apiCallWithBackoff(() => axios.put(
+                            `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
+                            { uris: [currentSong.spotify_uri] },
+                            { headers: { Authorization: `Bearer ${accessToken}` } }
+                        ));
+                        // SDK handles state updates through player_state_changed
+                        if (!cancelled) {
+                            setRecentlyPlayed(prev => {
+                                const updated = [currentSong, ...prev.filter(s => s.id !== currentSong.id)];
+                                return updated.slice(0, 20);
                             });
                         }
                         return;
-                    } catch (sdkError) {
-                        if (sdkError.response?.status === 429) {
-                            const retryAfter = parseInt(sdkError.response.headers["retry-after"] || "10", 10) * 1000;
-                            console.warn(`Rate limited. Retrying after ${retryAfter}ms...`);
-                            if (!isCancelled) {
-                                retryTimeout = setTimeout(playSong, retryAfter + Math.random() * 100);
-                            }
+                    } catch (sdkErr) {
+                        // retry on rate limit
+                        if (sdkErr.response?.status === 429) {
+                            const retryAfter = parseInt(sdkErr.response.headers['retry-after'] || '10', 10) * 1000;
+                            retryTimeout = setTimeout(playSong, retryAfter + Math.random() * 200);
                             return;
                         }
-                        console.warn("SDK failed, trying preview:", sdkError.message);
+                        // fall through to preview attempt
+                        console.warn('SDK play failed; falling back to preview', sdkErr);
                     }
                 }
 
+                // Preview playback using <audio />
                 if (audioRef.current && currentSong.preview_url) {
-                    console.log("Attempting preview playback...");
                     const audio = audioRef.current;
-
                     audio.pause();
                     audio.currentTime = 0;
                     audio.src = currentSong.preview_url;
+                    audio.volume = volume / 100;
 
                     await new Promise((resolve, reject) => {
-                        const timeout = setTimeout(() => reject(new Error("Load timeout")), 10000);
+                        const loadTimeout = setTimeout(() => reject(new Error('Load timeout')), 10000);
 
-                        audio.onloadedmetadata = () => {
-                            clearTimeout(timeout);
+                        const onLoaded = () => {
+                            clearTimeout(loadTimeout);
                             resolve();
                         };
-
-                        audio.onerror = (e) => {
-                            clearTimeout(timeout);
-                            reject(new Error("Audio load failed"));
+                        const onError = () => {
+                            clearTimeout(loadTimeout);
+                            reject(new Error('Audio load failed'));
                         };
 
+                        audio.onloadedmetadata = onLoaded;
+                        audio.onerror = onError;
                         audio.load();
                     });
 
-                    if (!isCancelled && isPlaying) {
+                    if (!cancelled && isPlaying) {
                         await audio.play();
-                        console.log("Preview playing");
                         setError(null);
-                        setRecentlyPlayed((prev) => {
-                            const newPlayed = [currentSong, ...prev.filter((s) => s.id !== currentSong.id)];
-                            return newPlayed.slice(0, 5);
+                        setRecentlyPlayed(prev => {
+                            const updated = [currentSong, ...prev.filter(s => s.id !== currentSong.id)];
+                            return updated.slice(0, 20);
                         });
                     }
                     return;
                 }
 
-                if (!isCancelled) {
-                    if (isPremium && currentSong.spotify_uri && !playerReady) {
-                        setError("Player is initializing. Please wait.");
-                    } else if (!currentSong.preview_url && !currentSong.spotify_uri) {
-                        setError(`No playable content for ${currentSong.title}`);
-                    } else if (currentSong.spotify_uri && !currentSong.preview_url && !isPremium) {
+                // If not playable
+                if (!cancelled) {
+                    if (currentSong.spotify_uri && !isPremium) {
                         setError(`${currentSong.title} requires Spotify Premium`);
                     } else {
-                        console.error("Playback failed despite available content");
-                        setError(`Failed to play ${currentSong.title}`);
+                        setError(`No playable content for ${currentSong.title}`);
                     }
                     setIsPlaying(false);
                 }
             } catch (err) {
-                if (!isCancelled) {
-                    if (err.name === "AbortError") {
-                        console.log("Playback was interrupted");
-                    } else if (err.name === "NotAllowedError") {
-                        setError("Playback blocked. Please click play to start.");
+                console.error('playSong err', err);
+                if (!cancelled) {
+                    if (err.response?.status === 429) {
+                        const retryAfter = parseInt(err.response.headers['retry-after'] || '10', 10) * 1000;
+                        retryTimeout = setTimeout(playSong, retryAfter + Math.random() * 200);
+                    } else if (err.name === 'NotAllowedError') {
+                        setError('Playback blocked. Click play to start.');
                         setIsPlaying(false);
-                    } else if (err.response?.status === 429) {
-                        const retryAfter = parseInt(err.response.headers["retry-after"] || "10", 10) * 1000;
-                        console.warn(`Rate limited. Retrying after ${retryAfter}ms...`);
-                        retryTimeout = setTimeout(playSong, retryAfter + Math.random() * 100);
                     } else {
-                        setError(`Failed to play: ${err.message}`);
+                        setError(err.message || 'Playback failed');
                         setIsPlaying(false);
                     }
                 }
             } finally {
-                if (!isCancelled) {
-                    setIsLoadingSong(false);
-                    isLoadingRef.current = false;
-                }
+                if (!cancelled) isLoadingRef.current = false;
             }
         };
 
         playSong();
 
         return () => {
-            isCancelled = true;
+            cancelled = true;
             isLoadingRef.current = false;
+            if (retryTimeout) clearTimeout(retryTimeout);
             if (audioRef.current) {
                 audioRef.current.pause();
             }
-            if (retryTimeout) {
-                clearTimeout(retryTimeout);
-            }
         };
-    }, [currentSong?.id, isPremium, playerReady, deviceId, accessToken, isPlaying]);
+    }, [currentSong?.id, accessToken, isPremium, playerReady, spotifyPlayer, deviceId, isPlaying, volume]);
 
-    useEffect(() => {
-        if (!audioRef.current || isPremium) return;
-
-        const audio = audioRef.current;
-
-        const handleTimeUpdate = () => setCurrentTime(audio.currentTime || 0);
-        const handleLoadedMetadata = () => setDuration(audio.duration || 30);
-        const handleError = (e) => {
-            console.error('Audio error:', e);
-            setError('Error loading audio file');
-        };
-
-        audio.addEventListener('timeupdate', handleTimeUpdate);
-        audio.addEventListener('loadedmetadata', handleLoadedMetadata);
-        audio.addEventListener('error', handleError);
-
-        if (isPlaying && !isLoadingSong) {
-            audio.play().catch(err => {
-                if (err.name !== 'AbortError') {
-                    console.error('Play error:', err);
-                    setError('Playback error. Please try again.');
-                    setIsPlaying(false);
-                }
-            });
-        } else {
-            audio.pause();
-        }
-
-        return () => {
-            audio.removeEventListener('timeupdate', handleTimeUpdate);
-            audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
-            audio.removeEventListener('error', handleError);
-        };
-    }, [isPlaying, isLoadingSong, isPremium]);
-
-    useEffect(() => {
-        if (!spotifyPlayer || !isPremium || !playerReady) return;
-
-        const updateState = async () => {
-            const state = await spotifyPlayer.getCurrentState();
-            if (state) {
-                setIsPlaying(!state.paused);
-                setCurrentTime(state.position / 1000);
-                setDuration(state.duration / 1000);
-            }
-        };
-
-        const interval = setInterval(updateState, 1000);
-        return () => clearInterval(interval);
-    }, [spotifyPlayer, isPremium, playerReady]);
-
+    // audio element events (only for preview playback; SDK uses its own events)
     useEffect(() => {
         const audio = audioRef.current;
-        if (!audio || isPremium) return;
+        if (!audio) return;
 
-        const handleEnded = () => {
+        const onTimeUpdate = () => setCurrentTime(audio.currentTime || 0);
+        const onLoadedMeta = () => setDuration(audio.duration || 30);
+        const onError = (e) => {
+            console.error('Audio error', e);
+            setError('Audio playback error');
+        };
+        const onEnded = () => {
             if (repeat === 'one') {
                 audio.currentTime = 0;
-                audio.play().catch(err => console.error('Replay error:', err));
+                audio.play().catch(err => console.warn('replay err', err));
             } else {
+                // play next from queue
                 playNext();
             }
         };
 
-        audio.addEventListener('ended', handleEnded);
-        return () => audio.removeEventListener('ended', handleEnded);
-    }, [repeat, isPremium, playNext]);
+        audio.addEventListener('timeupdate', onTimeUpdate);
+        audio.addEventListener('loadedmetadata', onLoadedMeta);
+        audio.addEventListener('error', onError);
+        audio.addEventListener('ended', onEnded);
 
-    const handleSpotifyLogin = async () => {
-        const codeVerifier = generateCodeVerifier();
-        window.localStorage.setItem('spotify_code_verifier', codeVerifier);
-        const codeChallenge = await generateCodeChallenge(codeVerifier);
-        const authUrl = `${AUTH_ENDPOINT}?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}&response_type=${RESPONSE_TYPE}&code_challenge=${codeChallenge}&code_challenge_method=${CODE_CHALLENGE_METHOD}`;
-        window.location.href = authUrl;
+        return () => {
+            audio.removeEventListener('timeupdate', onTimeUpdate);
+            audio.removeEventListener('loadedmetadata', onLoadedMeta);
+            audio.removeEventListener('error', onError);
+            audio.removeEventListener('ended', onEnded);
+        };
+    }, [repeat]);
+
+    // keep SDK player state polling to sync position (optional)
+    useEffect(() => {
+        if (!spotifyPlayer || !isPremium || !playerReady) return;
+        let interval = null;
+        const updateState = async () => {
+            try {
+                const state = await spotifyPlayer.getCurrentState();
+                if (state) {
+                    setIsPlaying(!state.paused);
+                    setCurrentTime(state.position / 1000);
+                    setDuration(state.duration / 1000);
+                }
+            } catch (err) {
+                console.warn('getCurrentState err', err);
+            }
+        };
+        interval = setInterval(updateState, 1000);
+        return () => clearInterval(interval);
+    }, [spotifyPlayer, isPremium, playerReady]);
+
+    // ----- Queue controls -----
+    const playNext = useCallback(() => {
+        setQueue(currentQueue => {
+            if (!currentQueue || currentQueue.length === 0) return currentQueue;
+            setCurrentIndex(prevIndex => {
+                let nextIndex;
+                if (shuffle) {
+                    nextIndex = Math.floor(Math.random() * currentQueue.length);
+                } else {
+                    nextIndex = prevIndex + 1;
+                    if (nextIndex >= currentQueue.length) {
+                        if (repeat === 'all') nextIndex = 0;
+                        else {
+                            setIsPlaying(false);
+                            return prevIndex;
+                        }
+                    }
+                }
+                selectSong(currentQueue[nextIndex]);
+                return nextIndex;
+            });
+            return currentQueue;
+        });
+    }, [shuffle, repeat, selectSong]);
+
+    const playPrevious = useCallback(() => {
+        if (!queue || queue.length === 0) return;
+        if (currentTime > 3) {
+            // restart current
+            if (isPremium && spotifyPlayer && deviceId) {
+                spotifyPlayer.seek(0).catch(err => console.warn('seek err', err));
+            } else if (audioRef.current) {
+                audioRef.current.currentTime = 0;
+            }
+            return;
+        }
+        let prevIdx = currentIndex - 1;
+        if (prevIdx < 0) {
+            if (repeat === 'all') prevIdx = queue.length - 1;
+            else prevIdx = 0;
+        }
+        setCurrentIndex(prevIdx);
+        selectSong(queue[prevIdx]);
+    }, [queue, currentIndex, currentTime, repeat, isPremium, spotifyPlayer, deviceId, selectSong]);
+
+    // ----- UI helpers -----
+    const formatTime = (seconds) => {
+        if (isNaN(seconds) || !isFinite(seconds)) return '0:00';
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
     };
 
+    const togglePlayPause = () => {
+        if (isPremium && spotifyPlayer && playerReady) {
+            // control via SDK if possible
+            spotifyPlayer.getCurrentState().then(state => {
+                if (!state) {
+                    // try to play currentSong via API if present
+                    if (currentSong?.spotify_uri && deviceId) {
+                        axios.put(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, { uris: [currentSong.spotify_uri] }, {
+                            headers: { Authorization: `Bearer ${accessToken}` }
+                        }).catch(err => console.warn('api play err', err));
+                        setIsPlaying(true);
+                    }
+                } else {
+                    if (state.paused) spotifyPlayer.resume().catch(err => console.warn('resume err', err));
+                    else spotifyPlayer.pause().catch(err => console.warn('pause err', err));
+                }
+            }).catch(err => {
+                console.warn('getCurrentState err', err);
+                setIsPlaying(prev => !prev);
+            });
+        } else {
+            setIsPlaying(prev => !prev);
+        }
+    };
+
+    // Seeking (works for both SDK via API and audio element)
+    const handleSeek = async (e) => {
+        if (!duration || (!audioRef.current && !(spotifyPlayer && playerReady))) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const width = rect.width;
+        const seekSeconds = (clickX / width) * duration;
+
+        if (isPremium && spotifyPlayer && playerReady && deviceId) {
+            const seekMs = Math.floor(seekSeconds * 1000);
+            try {
+                await axios.put(`https://api.spotify.com/v1/me/player/seek?device_id=${deviceId}&position_ms=${seekMs}`, {}, {
+                    headers: { Authorization: `Bearer ${accessToken}` }
+                });
+                setCurrentTime(seekSeconds);
+            } catch (err) {
+                console.warn('sdk seek fail', err);
+                setError('Failed to seek track');
+            }
+        } else if (audioRef.current) {
+            audioRef.current.currentTime = seekSeconds;
+            setCurrentTime(seekSeconds);
+        }
+    };
+
+    // ----- Search & Filters -----
+    const searchSongs = useCallback(async (query) => {
+        if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+        if (!accessToken || !query) {
+            // local filter fallback
+            const filtered = songs.filter(song =>
+                song.title.toLowerCase().includes(query.toLowerCase()) ||
+                song.artist.toLowerCase().includes(query.toLowerCase()) ||
+                song.album.toLowerCase().includes(query.toLowerCase())
+            );
+            setFilteredSongs(filtered);
+            return;
+        }
+        searchTimerRef.current = setTimeout(async () => {
+            try {
+                setLoading(true);
+                const resp = await apiCallWithBackoff(() => axios.get(
+                    `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=20`,
+                    { headers: { Authorization: `Bearer ${accessToken}` } }
+                ));
+                const items = resp.data.tracks?.items || [];
+                const mapped = items.map(track => ({
+                    id: track.id,
+                    title: track.name,
+                    artist: track.artists.map(a => a.name).join(', '),
+                    album: track.album.name,
+                    duration: new Date(track.duration_ms).toISOString().substr(14, 5),
+                    cover: track.album.images?.[0]?.url || '',
+                    genre: 'Unknown',
+                    plays: track.popularity * 100,
+                    preview_url: track.preview_url || null,
+                    spotify_uri: track.uri
+                }));
+                setFilteredSongs(mapped);
+            } catch (err) {
+                console.error('search err', err);
+                setError(err.response?.status === 429 ? 'Too many searches' : 'Search failed');
+            } finally {
+                setLoading(false);
+            }
+        }, 700);
+    }, [accessToken, songs]);
+
+    // Apply filters to songs list when filters change
+    const [filterGenre, setFilterGenre] = useState('all');
+    const [filterArtist, setFilterArtist] = useState('all');
+
+    const applyFilters = useCallback(() => {
+        let filtered = [...songs];
+        if (filterGenre !== 'all') filtered = filtered.filter(s => s.genre === filterGenre);
+        if (filterArtist !== 'all') filtered = filtered.filter(s => s.artist === filterArtist);
+        if (searchQuery) {
+            filtered = filtered.filter(song =>
+                song.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                song.artist.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                song.album.toLowerCase().includes(searchQuery.toLowerCase())
+            );
+        }
+        setFilteredSongs(filtered);
+    }, [songs, filterGenre, filterArtist, searchQuery]);
+
+    useEffect(() => {
+        applyFilters();
+    }, [applyFilters]);
+
+    // ----- Playlist creation & add song to playlist (local UI only + Spotify API for remote playlists) -----
+    const createPlaylist = async () => {
+        if (!newPlaylistName.trim()) {
+            setError('Playlist name cannot be empty');
+            return;
+        }
+        if (!accessToken || !currentUser?.id) {
+            setError('Please login with Spotify to create playlists');
+            return;
+        }
+        try {
+            setLoading(true);
+            const { data } = await apiCallWithBackoff(() => axios.post(
+                `https://api.spotify.com/v1/users/${currentUser.id}/playlists`,
+                { name: newPlaylistName, public: true },
+                { headers: { Authorization: `Bearer ${accessToken}` } }
+            ));
+            setPlaylists(prev => [...prev, { id: data.id, name: data.name, songs: [], cover: data.images?.[0]?.url || '' }]);
+            setNewPlaylistName('');
+            setShowCreatePlaylist(false);
+            setError(null);
+        } catch (err) {
+            console.error('createPlaylist err', err);
+            setError(err.response?.status === 429 ? 'Rate limit exceeded' : 'Failed to create playlist');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const addSongToPlaylist = (playlistId) => {
+        if (!selectedSongForPlaylist) return;
+        setPlaylists(prev => prev.map(pl => {
+            if (pl.id === playlistId) {
+                const exists = pl.songs.some(s => s.id === selectedSongForPlaylist.id);
+                if (!exists) return { ...pl, songs: [...pl.songs, selectedSongForPlaylist] };
+            }
+            return pl;
+        }));
+        setShowAddToPlaylist(false);
+        setSelectedSongForPlaylist(null);
+    };
+
+    // open playlist detail
+    const [selectedPlaylist, setSelectedPlaylist] = useState(null);
+    const openPlaylist = (playlist) => {
+        setSelectedPlaylist(playlist);
+        setActiveTab('playlist-detail');
+    };
+
+    const playAllSongs = (songList) => {
+        if (!songList || songList.length === 0) {
+            setError('No songs in this playlist');
+            return;
+        }
+        const valid = songList.filter(s => isSongPlayable(s));
+        if (valid.length === 0) {
+            setError('No playable songs in playlist');
+            return;
+        }
+        selectSong(valid[0], valid);
+    };
+
+    // toggles
+    const toggleShuffle = () => setShuffle(prev => !prev);
+    const toggleRepeat = () => {
+        const modes = ['off', 'all', 'one'];
+        setRepeat(prev => modes[(modes.indexOf(prev) + 1) % modes.length]);
+    };
+    const toggleLike = (songId) => {
+        setLikedSongs(prev => {
+            const newSet = new Set(prev);
+            if (newSet.has(songId)) newSet.delete(songId);
+            else newSet.add(songId);
+            return newSet;
+        });
+    };
+
+    // logout
     const handleLogout = () => {
         setAccessToken(null);
         setCurrentUser(null);
@@ -1016,153 +1034,25 @@ export default function Page() {
         setDeviceId(null);
         setPlayerReady(false);
         profileLoadedRef.current = false;
-
         window.localStorage.removeItem('spotify_token');
         window.localStorage.removeItem('spotify_code_verifier');
         window.localStorage.removeItem('user');
         router.push('/login');
     };
 
-    const togglePlay = () => {
-        if (isPremium && spotifyPlayer && playerReady) {
-            if (isPlaying) {
-                spotifyPlayer.pause();
-            } else {
-                spotifyPlayer.resume();
-            }
-        } else {
-            setIsPlaying(prev => !prev);
-        }
+    // helper for search input change
+    const handleSearchChange = (e) => {
+        const q = e.target.value;
+        setSearchQuery(q);
+        searchSongs(q);
     };
 
-    const toggleShuffle = () => setShuffle(prev => !prev);
-
-    const toggleRepeat = () => {
-        const modes = ['off', 'all', 'one'];
-        setRepeat(prev => {
-            const currentModeIndex = modes.indexOf(prev);
-            return modes[(currentModeIndex + 1) % modes.length];
-        });
-    };
-
-    const toggleLike = (songId) => {
-        setLikedSongs(prev => {
-            const newLiked = new Set(prev);
-            if (newLiked.has(songId)) {
-                newLiked.delete(songId);
-            } else {
-                newLiked.add(songId);
-            }
-            return newLiked;
-        });
-    };
-
-    const handleSeek = async (e) => {
-        if (isPremium && spotifyPlayer && deviceId && duration) {
-            const progressBar = e.currentTarget;
-            const rect = progressBar.getBoundingClientRect();
-            const clickX = e.clientX - rect.left;
-            const width = rect.width;
-            const seekTime = (clickX / width) * duration * 1000;
-
-            try {
-                await spotifyPlayer.seek(seekTime);
-                setCurrentTime(seekTime / 1000);
-            } catch (err) {
-                console.error('Failed to seek:', err);
-                setError('Failed to seek track');
-            }
-        } else if (audioRef.current && duration) {
-            const progressBar = e.currentTarget;
-            const rect = progressBar.getBoundingClientRect();
-            const clickX = e.clientX - rect.left;
-            const width = rect.width;
-            const seekTime = (clickX / width) * duration;
-            audioRef.current.currentTime = seekTime;
-            setCurrentTime(seekTime);
-        }
-    };
-
-    const formatTime = (seconds) => {
-        if (isNaN(seconds) || !isFinite(seconds)) return '0:00';
-        const mins = Math.floor(seconds / 60);
-        const secs = Math.floor(seconds % 60);
-        return `${mins}:${secs.toString().padStart(2, '0')}`;
-    };
-
-    const handleSearch = (e) => {
-        const query = e.target.value;
-        setSearchQuery(query);
-        searchSongs(query);
-    };
-
-    const applyFilters = useCallback(() => {
-        let filtered = [...songs];
-
-        if (filterGenre !== 'all') {
-            filtered = filtered.filter(song => song.genre === filterGenre);
-        }
-        if (filterArtist !== 'all') {
-            filtered = filtered.filter(song => song.artist === filterArtist);
-        }
-        if (searchQuery) {
-            filtered = filtered.filter(song =>
-                song.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                song.artist.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                song.album.toLowerCase().includes(searchQuery.toLowerCase())
-            );
-        }
-
-        setFilteredSongs(filtered);
-    }, [songs, filterGenre, filterArtist, searchQuery]);
-
+    // update recommendations when recently played changes
     useEffect(() => {
-        applyFilters();
-    }, [applyFilters]);
+        generateRecommendations();
+    }, [recentlyPlayed, generateRecommendations]);
 
-    const addSongToPlaylist = (playlistId) => {
-        if (!selectedSongForPlaylist) return;
-
-        setPlaylists(prev => prev.map(playlist => {
-            if (playlist.id === playlistId) {
-                const songExists = playlist.songs.some(s => s.id === selectedSongForPlaylist.id);
-                if (!songExists) {
-                    return { ...playlist, songs: [...playlist.songs, selectedSongForPlaylist] };
-                }
-            }
-            return playlist;
-        }));
-
-        setShowAddToPlaylist(false);
-        setSelectedSongForPlaylist(null);
-    };
-
-    const openPlaylist = (playlist) => {
-        setSelectedPlaylist(playlist);
-        setActiveTab('playlist-detail');
-    };
-
-    const playAllSongs = (songList) => {
-        if (songList.length === 0) {
-            setError('No songs in this playlist');
-            return;
-        }
-
-        const validSongs = songList.filter((s) => isSongPlayable(s));
-        if (validSongs.length === 0) {
-            setError('No playable songs in this playlist');
-            return;
-        }
-
-        selectSong(validSongs[0], validSongs);
-    };
-
-    const formatDate = (dateString) => {
-        if (!dateString) return 'N/A';
-        const date = new Date(dateString);
-        return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-    };
-
+    // --- UI: if not logged in show login card ---
     if (!currentUser) {
         return (
             <div className="login-container">
@@ -1175,15 +1065,9 @@ export default function Page() {
                         <p className="app-subtitle">Your personal music companion</p>
                     </div>
                     <div className="login-buttons">
-                        <button onClick={handleSpotifyLogin} className="login-btn spotify-btn">
-                            Login with Spotify
-                        </button>
-                        <Link href="/login?type=user">
-                            <button className="login-btn user-btn">Login as User</button>
-                        </Link>
-                        <Link href="/login?type=admin">
-                            <button className="login-btn admin-btn">Login as Admin</button>
-                        </Link>
+                        <button onClick={handleSpotifyLogin} className="login-btn spotify-btn">Login with Spotify</button>
+                        <Link href="/login?type=user"><button className="login-btn user-btn">Login as User</button></Link>
+                        <Link href="/login?type=admin"><button className="login-btn admin-btn">Login as Admin</button></Link>
                     </div>
                     {loading && <p>Loading...</p>}
                     {error && <p className="error-text">{error}</p>}
@@ -1192,21 +1076,16 @@ export default function Page() {
         );
     }
 
+    // --- Main App UI ---
     return (
         <div className="app-container">
             <audio
                 ref={audioRef}
-                onTimeUpdate={() => !isPremium && setCurrentTime(audioRef.current?.currentTime || 0)}
-                onLoadedMetadata={() => {
-                    if (!isPremium && audioRef.current) {
-                        setDuration(audioRef.current.duration || 30);
-                    }
-                }}
-                onError={(e) => {
-                    console.error('Audio error:', e);
-                    setError('Error loading audio file');
-                }}
+                onTimeUpdate={() => { if (!isPremium) setCurrentTime(audioRef.current?.currentTime || 0); }}
+                onLoadedMetadata={() => { if (!isPremium && audioRef.current) setDuration(audioRef.current.duration || 30); }}
+                onError={(e) => { console.error('Audio error', e); setError('Audio error'); }}
             />
+
             <header className="header">
                 <div className="header-content">
                     <div className="header-left">
@@ -1220,7 +1099,7 @@ export default function Page() {
                                 type="text"
                                 placeholder="Search songs, artists, albums..."
                                 value={searchQuery}
-                                onChange={handleSearch}
+                                onChange={handleSearchChange}
                                 className="search-input"
                             />
                             {loading && <span className="search-loading">Searching...</span>}
@@ -1231,57 +1110,39 @@ export default function Page() {
                             src={currentUser.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center'}
                             alt={currentUser.name}
                             className="user-avatar"
-                            width={100}
-                            height={100}
-                            priority
+                            width={48}
+                            height={48}
                         />
                         <span className="user-name">{currentUser.name} {isPremium ? '(Premium)' : '(Free)'}</span>
                         <button onClick={handleLogout} className="logout-btn">Logout</button>
                     </div>
                 </div>
             </header>
+
             <div className="main-layout">
                 <aside className="sidebar">
                     <nav className="nav-menu">
-                        <button onClick={() => setActiveTab('home')} className={`nav-item ${activeTab === 'home' ? 'active' : ''}`}>
-                            <Home className="nav-icon" /><span>Home</span>
-                        </button>
-                        <button onClick={() => setActiveTab('search')} className={`nav-item ${activeTab === 'search' ? 'active' : ''}`}>
-                            <Search className="nav-icon" /><span>Search</span>
-                        </button>
-                        <button onClick={() => setActiveTab('playlists')} className={`nav-item ${activeTab === 'playlists' ? 'active' : ''}`}>
-                            <Music className="nav-icon" /><span>My Playlists</span>
-                        </button>
+                        <button onClick={() => setActiveTab('home')} className={`nav-item ${activeTab === 'home' ? 'active' : ''}`}><Home className="nav-icon" /><span>Home</span></button>
+                        <button onClick={() => setActiveTab('search')} className={`nav-item ${activeTab === 'search' ? 'active' : ''}`}><Search className="nav-icon" /><span>Search</span></button>
+                        <button onClick={() => setActiveTab('playlists')} className={`nav-item ${activeTab === 'playlists' ? 'active' : ''}`}><Music className="nav-icon" /><span>My Playlists</span></button>
                     </nav>
+
                     <div className="quick-playlists">
                         <h3 className="quick-title">Quick Playlists</h3>
                         <div className="playlist-list">
-                            {playlists.slice(0, 3).map((playlist) => (
-                                <div
-                                    key={playlist.id}
-                                    className="playlist-item"
-                                    onClick={() => openPlaylist(playlist)}
-                                    role="button"
-                                    tabIndex={0}
-                                    onKeyDown={(e) => e.key === 'Enter' && openPlaylist(playlist)}
-                                >
-                                    <Image
-                                        src={playlist.cover}
-                                        alt={playlist.name}
-                                        className="playlist-cover"
-                                        width={300}
-                                        height={300}
-                                        loading="lazy"
-                                    />
+                            {playlists.slice(0, 3).map(pl => (
+                                <div key={pl.id} className="playlist-item" onClick={() => openPlaylist(pl)} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && openPlaylist(pl)}>
+                                    <Image src={pl.cover || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center'} alt={pl.name} width={80} height={80} className="playlist-cover" />
                                     <div className="playlist-info">
-                                        <p className="playlist-name">{playlist.name}</p>
-                                        <p className="playlist-count">{playlist.songs.length} songs</p>
+                                        <p className="playlist-name">{pl.name}</p>
+                                        <p className="playlist-count">{pl.songs.length} songs</p>
                                     </div>
                                 </div>
                             ))}
                         </div>
                     </div>
                 </aside>
+
                 <main className="main-content">
                     {activeTab === 'home' && (
                         <div className="home-content">
@@ -1289,155 +1150,68 @@ export default function Page() {
                                 <h2 className="welcome-title">Welcome back, {currentUser.name}!</h2>
                                 {loading ? <p>Loading...</p> : error ? <p className="error-text">{error}</p> : (
                                     <>
-                                        {accessToken && currentUser && (
+                                        {accessToken && (
                                             <div style={{
                                                 padding: '20px',
                                                 background: 'linear-gradient(135deg, #1DB954 0%, #1ed760 100%)',
                                                 borderRadius: '12px',
                                                 margin: '20px 0',
-                                                textAlign: 'center',
-                                                boxShadow: '0 4px 12px rgba(29, 185, 84, 0.3)'
+                                                textAlign: 'center'
                                             }}>
-                                                <h3 style={{
-                                                    color: 'white',
-                                                    marginBottom: '10px',
-                                                    fontSize: '20px',
-                                                    fontWeight: 'bold'
+                                                <h3 style={{ color: 'white', marginBottom: '10px' }}>🎵 Load Your Spotify Library</h3>
+                                                <button onClick={loadSpotifyData} disabled={loading} style={{
+                                                    padding: '12px 28px', background: '#fff', color: '#1DB954', borderRadius: '24px', border: 'none', fontWeight: '700'
                                                 }}>
-                                                    🎵 Load Your Spotify Library
-                                                </h3>
-                                                <button
-                                                    onClick={loadSpotifyData}
-                                                    disabled={loading}
-                                                    style={{
-                                                        padding: '12px 32px',
-                                                        background: 'white',
-                                                        color: '#1DB954',
-                                                        border: 'none',
-                                                        borderRadius: '24px',
-                                                        fontSize: '16px',
-                                                        fontWeight: 'bold',
-                                                        cursor: loading ? 'not-allowed' : 'pointer',
-                                                        opacity: loading ? 0.6 : 1,
-                                                        transition: 'all 0.3s ease',
-                                                        boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
-                                                    }}
-                                                    onMouseOver={(e) => {
-                                                        if (!loading) {
-                                                            e.target.style.transform = 'scale(1.05)';
-                                                            e.target.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
-                                                        }
-                                                    }}
-                                                    onMouseOut={(e) => {
-                                                        e.target.style.transform = 'scale(1)';
-                                                        e.target.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)';
-                                                    }}
-                                                >
-                                                    {loading ? '⏳ Loading Spotify Data...' : '📥 Load My Music from Spotify'}
+                                                    {loading ? '⏳ Loading...' : '📥 Load My Music from Spotify'}
                                                 </button>
-                                                <p style={{
-                                                    color: 'rgba(255,255,255,0.9)',
-                                                    marginTop: '10px',
-                                                    fontSize: '13px'
-                                                }}>
-                                                    Click to load your personalized top tracks and playlists from Spotify
-                                                </p>
+                                                <p style={{ color: 'rgba(255,255,255,0.9)', marginTop: '10px', fontSize: '13px' }}>Click to load your personalized top tracks and playlists from Spotify</p>
                                             </div>
                                         )}
+
                                         <div className="featured-songs">
-                                            {songs.map((song) => (
-                                                <div
-                                                    key={song.id}
-                                                    className="song-card"
-                                                    onClick={() => selectSong(song)}
-                                                    role="button"
-                                                    tabIndex={0}
-                                                    onKeyDown={(e) => e.key === 'Enter' && selectSong(song)}
-                                                >
+                                            {songs.map(song => (
+                                                <div key={song.id} className="song-card" onClick={() => selectSong(song)} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && selectSong(song)}>
                                                     <div className="song-cover-container">
-                                                        <Image
-                                                            src={song.cover}
-                                                            alt={song.title}
-                                                            className="song-cover"
-                                                            width={300}
-                                                            height={300}
-                                                            loading="lazy"
-                                                        />
+                                                        <Image src={song.cover || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center'} alt={song.title} width={200} height={200} className="song-cover" />
                                                         <button className="play-overlay"><Play className="play-icon" /></button>
                                                     </div>
                                                     <h3 className="song-title">{song.title}</h3>
                                                     <p className="song-artist">{song.artist}</p>
-                                                    <Heart
-                                                        className={`heart-icon ${likedSongs.has(song.id) ? 'liked' : ''}`}
-                                                        onClick={(e) => { e.stopPropagation(); toggleLike(song.id); }}
-                                                    />
+                                                    <Heart className={`heart-icon ${likedSongs.has(song.id) ? 'liked' : ''}`} onClick={(e) => { e.stopPropagation(); toggleLike(song.id); }} />
                                                 </div>
                                             ))}
                                         </div>
+
                                         <div className="recent-section">
                                             <h3 className="section-title">Recently Played</h3>
                                             <div className="recent-list">
-                                                {recentlyPlayed.slice(0, 3).map((song) => (
-                                                    <div
-                                                        key={song.id}
-                                                        className="recent-item"
-                                                        onClick={() => selectSong(song)}
-                                                        role="button"
-                                                        tabIndex={0}
-                                                        onKeyDown={(e) => e.key === 'Enter' && selectSong(song)}
-                                                    >
-                                                        <Image
-                                                            src={song.cover}
-                                                            alt={song.title}
-                                                            className="recent-cover"
-                                                            width={300}
-                                                            height={300}
-                                                            loading="lazy"
-                                                        />
+                                                {recentlyPlayed.slice(0, 6).map(s => (
+                                                    <div key={s.id} className="recent-item" onClick={() => selectSong(s)} role="button" tabIndex={0}>
+                                                        <Image src={s.cover || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center'} alt={s.title} width={80} height={80} className="recent-cover" />
                                                         <div className="recent-info">
-                                                            <h4 className="recent-title">{song.title}</h4>
-                                                            <p className="recent-artist">{song.artist} • {song.album}</p>
+                                                            <h4 className="recent-title">{s.title}</h4>
+                                                            <p className="recent-artist">{s.artist} • {s.album}</p>
                                                         </div>
-                                                        <span className="recent-duration">{song.duration}</span>
-                                                        <button className="recent-play"><Play className="recent-play-icon" /></button>
-                                                        <Heart
-                                                            className={`heart-icon ${likedSongs.has(song.id) ? 'liked' : ''}`}
-                                                            onClick={(e) => { e.stopPropagation(); toggleLike(song.id); }}
-                                                        />
+                                                        <span className="recent-duration">{s.duration}</span>
+                                                        <button className="recent-play" onClick={(e) => { e.stopPropagation(); selectSong(s); }}><Play /></button>
+                                                        <Heart className={`heart-icon ${likedSongs.has(s.id) ? 'liked' : ''}`} onClick={(e) => { e.stopPropagation(); toggleLike(s.id); }} />
                                                     </div>
                                                 ))}
                                             </div>
                                         </div>
+
                                         <div className="recommendations-section">
                                             <h3 className="section-title">Recommended For You</h3>
                                             <div className="featured-songs">
-                                                {recommendations.map((song) => (
-                                                    <div
-                                                        key={song.id}
-                                                        className="song-card"
-                                                        onClick={() => selectSong(song)}
-                                                        role="button"
-                                                        tabIndex={0}
-                                                        onKeyDown={(e) => e.key === 'Enter' && selectSong(song)}
-                                                    >
+                                                {recommendations.map(r => (
+                                                    <div key={r.id} className="song-card" onClick={() => selectSong(r)} role="button" tabIndex={0}>
                                                         <div className="song-cover-container">
-                                                            <Image
-                                                                src={song.cover}
-                                                                alt={song.title}
-                                                                className="song-cover"
-                                                                width={300}
-                                                                height={300}
-                                                                loading="lazy"
-                                                            />
-                                                            <button className="play-overlay"><Play className="play-icon" /></button>
+                                                            <Image src={r.cover || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center'} alt={r.title} width={200} height={200} />
+                                                            <button className="play-overlay"><Play /></button>
                                                         </div>
-                                                        <h3 className="song-title">{song.title}</h3>
-                                                        <p className="song-artist">{song.artist}</p>
-                                                        <span className="song-genre">{song.genre}</span>
-                                                        <Heart
-                                                            className={`heart-icon ${likedSongs.has(song.id) ? 'liked' : ''}`}
-                                                            onClick={(e) => { e.stopPropagation(); toggleLike(song.id); }}
-                                                        />
+                                                        <h3 className="song-title">{r.title}</h3>
+                                                        <p className="song-artist">{r.artist}</p>
+                                                        <Heart className={`heart-icon ${likedSongs.has(r.id) ? 'liked' : ''}`} onClick={(e) => { e.stopPropagation(); toggleLike(r.id); }} />
                                                     </div>
                                                 ))}
                                             </div>
@@ -1447,6 +1221,7 @@ export default function Page() {
                             </div>
                         </div>
                     )}
+
                     {activeTab === 'search' && (
                         <div className="search-content">
                             <h2 className="page-title">Search & Browse</h2>
@@ -1464,29 +1239,16 @@ export default function Page() {
                                     <label className="filter-label">Artist:</label>
                                     <select value={filterArtist} onChange={(e) => setFilterArtist(e.target.value)} className="filter-select">
                                         <option value="all">All Artists</option>
-                                        {artists.map((artist) => <option key={artist.id} value={artist.name}>{artist.name}</option>)}
+                                        {artists.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}
                                     </select>
                                 </div>
                             </div>
+
                             {loading ? <p>Loading...</p> : error ? <p className="error-text">{error}</p> : filteredSongs.length > 0 ? (
                                 <div className="search-results">
-                                    {filteredSongs.map((song) => (
-                                        <div
-                                            key={song.id}
-                                            className="search-item"
-                                            role="button"
-                                            tabIndex={0}
-                                            onKeyDown={(e) => e.key === 'Enter' && selectSong(song)}
-                                        >
-                                            <Image
-                                                src={song.cover}
-                                                alt={song.title}
-                                                className="search-cover"
-                                                width={300}
-                                                height={300}
-                                                loading="lazy"
-                                                onClick={() => selectSong(song)}
-                                            />
+                                    {filteredSongs.map(song => (
+                                        <div key={song.id} className="search-item" role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && selectSong(song)}>
+                                            <Image src={song.cover || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center'} alt={song.title} width={80} height={80} className="search-cover" onClick={() => selectSong(song)} />
                                             <div className="search-info" onClick={() => selectSong(song)}>
                                                 <h4 className="search-title">{song.title}</h4>
                                                 <p className="search-artist">{song.artist} • {song.album}</p>
@@ -1494,157 +1256,83 @@ export default function Page() {
                                             </div>
                                             <div className="search-actions">
                                                 <span className="search-duration">{song.duration}</span>
-                                                <button
-                                                    className="add-playlist-btn"
-                                                    onClick={(e) => { e.stopPropagation(); setSelectedSongForPlaylist(song); setShowAddToPlaylist(true); }}
-                                                    title="Add to playlist"
-                                                >
-                                                    <Plus className="plus-icon-small" />
+                                                <button className="add-playlist-btn" onClick={(e) => { e.stopPropagation(); setSelectedSongForPlaylist(song); setShowAddToPlaylist(true); }}>
+                                                    <Plus />
                                                 </button>
-                                                <Heart
-                                                    className={`heart-icon ${likedSongs.has(song.id) ? 'liked' : ''}`}
-                                                    onClick={(e) => { e.stopPropagation(); toggleLike(song.id); }}
-                                                />
-                                                <button className="search-play" onClick={() => selectSong(song)}>
-                                                    <Play className="search-play-icon" />
-                                                </button>
+                                                <Heart className={`heart-icon ${likedSongs.has(song.id) ? 'liked' : ''}`} onClick={(e) => { e.stopPropagation(); toggleLike(song.id); }} />
+                                                <button className="search-play" onClick={() => selectSong(song)}><Play /></button>
                                             </div>
                                         </div>
                                     ))}
                                 </div>
                             ) : (
-                                <div className="empty-search">
-                                    <Search className="empty-icon" />
-                                    <p className="empty-text">{searchQuery ? 'No songs found' : 'Use filters to browse songs or search above'}</p>
-                                </div>
+                                <div className="empty-search"><Search /><p className="empty-text">{searchQuery ? 'No songs found' : 'Use filters to browse songs or search above'}</p></div>
                             )}
                         </div>
                     )}
+
                     {activeTab === 'playlists' && (
                         <div className="playlists-content">
                             <div className="playlists-header">
                                 <h2 className="page-title">My Playlists</h2>
-                                <button onClick={() => setShowCreatePlaylist(true)} className="create-playlist-btn">
-                                    <Plus className="plus-icon" /><span>Create Playlist</span>
-                                </button>
+                                <button onClick={() => setShowCreatePlaylist(true)} className="create-playlist-btn"><Plus /> <span>Create Playlist</span></button>
                             </div>
+
                             {showCreatePlaylist && (
                                 <div className="create-playlist-form">
                                     <h3 className="form-title">Create New Playlist</h3>
                                     <div className="form-controls">
-                                        <input
-                                            type="text"
-                                            placeholder="Playlist name"
-                                            value={newPlaylistName}
-                                            onChange={(e) => setNewPlaylistName(e.target.value)}
-                                            className="playlist-input"
-                                        />
+                                        <input type="text" placeholder="Playlist name" value={newPlaylistName} onChange={(e) => setNewPlaylistName(e.target.value)} className="playlist-input" />
                                         <button onClick={createPlaylist} className="create-btn">Create</button>
                                         <button onClick={() => setShowCreatePlaylist(false)} className="cancel-btn">Cancel</button>
                                     </div>
                                 </div>
                             )}
+
                             {loading ? <p>Loading...</p> : error ? <p className="error-text">{error}</p> : (
                                 <div className="playlists-grid">
-                                    {playlists.map((playlist) => (
-                                        <div
-                                            key={playlist.id}
-                                            className="playlist-card"
-                                            onClick={() => openPlaylist(playlist)}
-                                            role="button"
-                                            tabIndex={0}
-                                            onKeyDown={(e) => e.key === 'Enter' && openPlaylist(playlist)}
-                                        >
-                                            <Image
-                                                src={playlist.cover}
-                                                alt={playlist.name}
-                                                className="playlist-card-cover"
-                                                width={300}
-                                                height={300}
-                                                loading="lazy"
-                                            />
+                                    {playlists.map(pl => (
+                                        <div key={pl.id} className="playlist-card" onClick={() => openPlaylist(pl)} role="button" tabIndex={0}>
+                                            <Image src={pl.cover || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center'} alt={pl.name} width={200} height={200} className="playlist-card-cover" />
                                             <div className="playlist-card-overlay">
-                                                <button
-                                                    className="playlist-play-btn"
-                                                    onClick={(e) => { e.stopPropagation(); playAllSongs(playlist.songs); }}
-                                                >
-                                                    <Play className="play-icon" />
-                                                </button>
+                                                <button className="playlist-play-btn" onClick={(e) => { e.stopPropagation(); playAllSongs(pl.songs); }}><Play /></button>
                                             </div>
-                                            <h3 className="playlist-card-name">{playlist.name}</h3>
-                                            <p className="playlist-card-count">{playlist.songs.length} songs</p>
+                                            <h3 className="playlist-card-name">{pl.name}</h3>
+                                            <p className="playlist-card-count">{pl.songs.length} songs</p>
                                         </div>
                                     ))}
                                 </div>
                             )}
                         </div>
                     )}
+
                     {activeTab === 'playlist-detail' && selectedPlaylist && (
                         <div className="playlist-detail-content">
                             <div className="playlist-detail-header">
                                 <button onClick={() => setActiveTab('playlists')} className="back-btn">← Back to Playlists</button>
                                 <div className="playlist-header-content">
-                                    <Image
-                                        src={selectedPlaylist.cover}
-                                        alt={selectedPlaylist.name}
-                                        className="playlist-detail-cover"
-                                        width={300}
-                                        height={300}
-                                        loading="lazy"
-                                    />
+                                    <Image src={selectedPlaylist.cover || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center'} alt={selectedPlaylist.name} width={200} height={200} className="playlist-detail-cover" />
                                     <div className="playlist-header-info">
                                         <h2 className="playlist-detail-title">{selectedPlaylist.name}</h2>
                                         <p className="playlist-detail-count">{selectedPlaylist.songs.length} songs</p>
-                                        {selectedPlaylist.songs.length > 0 && (
-                                            <button onClick={() => playAllSongs(selectedPlaylist.songs)} className="play-all-btn">
-                                                <Play className="play-icon" /> Play All
-                                            </button>
-                                        )}
+                                        {selectedPlaylist.songs.length > 0 && <button onClick={() => playAllSongs(selectedPlaylist.songs)} className="play-all-btn"><Play /> Play All</button>}
                                     </div>
                                 </div>
                             </div>
+
                             <div className="playlist-songs-list">
                                 {selectedPlaylist.songs.length === 0 ? (
-                                    <div className="empty-playlist">
-                                        <Music className="empty-icon" />
-                                        <p className="empty-text">No songs in this playlist yet</p>
-                                        <button onClick={() => setActiveTab('search')} className="browse-btn">Browse Songs</button>
-                                    </div>
+                                    <div className="empty-playlist"><Music /><p className="empty-text">No songs in this playlist yet</p><button onClick={() => setActiveTab('search')} className="browse-btn">Browse Songs</button></div>
                                 ) : (
-                                    selectedPlaylist.songs.map((song, index) => (
-                                        <div
-                                            key={song.id}
-                                            className="playlist-song-item"
-                                            onClick={() => selectSong(song, selectedPlaylist.songs)}
-                                            role="button"
-                                            tabIndex={0}
-                                            onKeyDown={(e) => e.key === 'Enter' && selectSong(song, selectedPlaylist.songs)}
-                                        >
-                                            <span className="song-number">{index + 1}</span>
-                                            <Image
-                                                src={song.cover}
-                                                alt={song.title}
-                                                className="playlist-song-cover"
-                                                width={300}
-                                                height={300}
-                                                loading="lazy"
-                                            />
-                                            <div className="playlist-song-info">
-                                                <h4 className="playlist-song-title">{song.title}</h4>
-                                                <p className="playlist-song-artist">{song.artist}</p>
-                                            </div>
+                                    selectedPlaylist.songs.map((song, idx) => (
+                                        <div key={song.id} className="playlist-song-item" onClick={() => selectSong(song, selectedPlaylist.songs)} role="button" tabIndex={0}>
+                                            <span className="song-number">{idx + 1}</span>
+                                            <Image src={song.cover || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center'} alt={song.title} width={60} height={60} className="playlist-song-cover" />
+                                            <div className="playlist-song-info"><h4 className="playlist-song-title">{song.title}</h4><p className="playlist-song-artist">{song.artist}</p></div>
                                             <span className="playlist-song-album">{song.album}</span>
                                             <span className="playlist-song-duration">{song.duration}</span>
-                                            <button className="playlist-song-play">
-                                                <Play className="play-icon-small" />
-                                            </button>
-                                            <Heart
-                                                className={`heart-icon ${likedSongs.has(song.id) ? 'liked' : ''}`}
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    toggleLike(song.id);
-                                                }}
-                                            />
+                                            <button className="playlist-song-play" onClick={(e) => { e.stopPropagation(); selectSong(song); }}><Play /></button>
+                                            <Heart className={`heart-icon ${likedSongs.has(song.id) ? 'liked' : ''}`} onClick={(e) => { e.stopPropagation(); toggleLike(song.id); }} />
                                         </div>
                                     ))
                                 )}
@@ -1653,24 +1341,18 @@ export default function Page() {
                     )}
                 </main>
             </div>
+
             {showAddToPlaylist && (
                 <div className="modal-overlay" onClick={() => setShowAddToPlaylist(false)}>
                     <div className="modal-content" onClick={(e) => e.stopPropagation()}>
                         <h3 className="modal-title">Add to Playlist</h3>
                         <p className="modal-subtitle">Select a playlist for {selectedSongForPlaylist?.title}</p>
                         <div className="modal-playlist-list">
-                            {playlists.map((playlist) => (
-                                <button key={playlist.id} onClick={() => addSongToPlaylist(playlist.id)} className="modal-playlist-item">
-                                    <Image
-                                        src={playlist.cover}
-                                        alt={playlist.name}
-                                        className="modal-playlist-cover"
-                                        width={300}
-                                        height={300}
-                                        loading="lazy"
-                                    />
-                                    <span className="modal-playlist-name">{playlist.name}</span>
-                                    <span className="modal-playlist-count">{playlist.songs.length} songs</span>
+                            {playlists.map(pl => (
+                                <button key={pl.id} onClick={() => addSongToPlaylist(pl.id)} className="modal-playlist-item">
+                                    <Image src={pl.cover || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center'} alt={pl.name} width={50} height={50} />
+                                    <span className="modal-playlist-name">{pl.name}</span>
+                                    <span className="modal-playlist-count">{pl.songs.length} songs</span>
                                 </button>
                             ))}
                         </div>
@@ -1678,60 +1360,38 @@ export default function Page() {
                     </div>
                 </div>
             )}
+
             {currentSong && (
                 <div className="music-player">
                     <div className="player-content">
                         <div className="player-left">
-                            <Image
-                                src={currentSong.cover}
-                                alt={currentSong.title}
-                                className="player-cover"
-                                width={300}
-                                height={300}
-                                loading="lazy"
-                            />
+                            <Image src={currentSong.cover || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center'} alt={currentSong.title} width={80} height={80} className="player-cover" />
                             <div className="player-info">
                                 <h4 className="player-title">{currentSong.title}</h4>
                                 <p className="player-artist">{currentSong.artist}</p>
-                                {(!isPremium || !currentSong.spotify_uri) && currentSong.preview_url && <p className="player-note">30-second preview</p>}
+                                {(!isPremium || !currentSong.spotify_uri) && currentSong.preview_url && <p className="player-note">Preview</p>}
                             </div>
                         </div>
+
                         <div className="player-controls">
-                            <button className={`control-btn ${shuffle ? 'active' : ''}`} onClick={toggleShuffle}>
-                                <Shuffle className="control-icon" />
-                            </button>
-                            <button className="control-btn" onClick={playPrevious}>
-                                <SkipBack className="control-icon" />
-                            </button>
-                            <button onClick={togglePlay} className="play-btn">
+                            <button className={`control-btn ${shuffle ? 'active' : ''}`} onClick={toggleShuffle}><Shuffle /></button>
+                            <button className="control-btn" onClick={playPrevious}><SkipBack /></button>
+                            <button onClick={togglePlayPause} className="play-btn">
                                 {isPlaying ? <Pause className="play-icon" /> : <Play className="play-icon" />}
                             </button>
-                            <button className="control-btn" onClick={playNext}>
-                                <SkipForward className="control-icon" />
-                            </button>
-                            <button className={`control-btn ${repeat !== 'off' ? 'active' : ''}`} onClick={toggleRepeat}>
-                                <Repeat className="control-icon" />
-                                {repeat === 'one' && <span className="repeat-indicator">1</span>}
-                            </button>
+                            <button className="control-btn" onClick={playNext}><SkipForward /></button>
+                            <button className={`control-btn ${repeat !== 'off' ? 'active' : ''}`} onClick={toggleRepeat}><Repeat />{repeat === 'one' && <span className="repeat-indicator">1</span>}</button>
                         </div>
+
                         <div className="player-right">
-                            <Heart
-                                className={`heart-btn ${likedSongs.has(currentSong.id) ? 'liked' : ''}`}
-                                onClick={() => toggleLike(currentSong.id)}
-                            />
+                            <Heart className={`heart-btn ${likedSongs.has(currentSong.id) ? 'liked' : ''}`} onClick={() => toggleLike(currentSong.id)} />
                             <div className="volume-controls">
-                                <Volume2 className="volume-icon" />
-                                <input
-                                    type="range"
-                                    min="0"
-                                    max="100"
-                                    value={volume}
-                                    onChange={(e) => setVolume(e.target.value)}
-                                    className="volume-slider"
-                                />
+                                <Volume2 />
+                                <input type="range" min="0" max="100" value={volume} onChange={(e) => setVolume(Number(e.target.value))} className="volume-slider" />
                             </div>
                         </div>
                     </div>
+
                     <div className="progress-section">
                         {error && <p className="player-error">{error}</p>}
                         <div className="progress-time">
@@ -1739,7 +1399,7 @@ export default function Page() {
                             <span>{formatTime(duration)}</span>
                         </div>
                         <div className="progress-bar" onClick={handleSeek}>
-                            <div className="progress-fill" style={{ width: `${(currentTime / duration) * 100 || 0}%` }}></div>
+                            <div className="progress-fill" style={{ width: `${(duration ? (currentTime / duration) * 100 : 0)}%` }}></div>
                         </div>
                     </div>
                 </div>
