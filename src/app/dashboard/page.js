@@ -784,7 +784,7 @@ export default function Page() {
                 document.body.removeChild(scriptElement);
             }
         };
-    }, [accessToken, isPremium, volume]);
+    }, [accessToken, isPremium]);
 
     useEffect(() => {
         if (audioRef.current) {
@@ -930,7 +930,7 @@ export default function Page() {
                 clearTimeout(retryTimeout);
             }
         };
-    }, [currentSong?.id, isPremium, playerReady, deviceId, accessToken, isPlaying]);
+    }, [currentSong?.id, isPremium, playerReady, deviceId, accessToken]);
 
     useEffect(() => {
         if (!audioRef.current || isPremium) return;
