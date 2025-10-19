@@ -11,17 +11,8 @@ import {
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
-// Static songs data (centralized)
-const staticSongs = [
-    { id: 1, title: "Midnight Dreams", artist: "Luna Martinez", album: "Nocturnal Vibes", duration: "3:24", cover: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center", genre: "Pop", plays: 1234567, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3", spotify_uri: null },
-    { id: 2, title: "Electric Pulse", artist: "Neon Collective", album: "Digital Horizons", duration: "4:12", cover: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&h=300&fit=crop&crop=center", genre: "Electronic", plays: 987654, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3", spotify_uri: null },
-    { id: 3, title: "Acoustic Soul", artist: "River Stone", album: "Unplugged Sessions", duration: "2:58", cover: "https://images.unsplash.com/photo-1493612276216-ee3925520721?w=300&h=300&fit=crop&crop=center", genre: "Acoustic", plays: 756432, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3", spotify_uri: null },
-    { id: 4, title: "Urban Rhythm", artist: "City Beats", album: "Street Anthology", duration: "3:45", cover: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=300&h=300&fit=crop&crop=center", genre: "Hip-Hop", plays: 2143567, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3", spotify_uri: null },
-    { id: 5, title: "Sunset Boulevard", artist: "Golden Hour", album: "California Dreams", duration: "4:33", cover: "https://images.unsplash.com/photo-1514320291840-2e0a9bf2a9ae?w=300&h=300&fit=crop&crop=center", genre: "Rock", plays: 654321, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3", spotify_uri: null },
-    { id: 6, title: "Jazz Nights", artist: "Smooth Operators", album: "After Hours", duration: "5:12", cover: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=300&h=300&fit=crop&crop=center", genre: "Jazz", plays: 543210, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3", spotify_uri: null },
-    { id: 7, title: "Classical Morning", artist: "Orchestra Symphony", album: "Dawn Collection", duration: "6:45", cover: "https://images.unsplash.com/photo-1507838153414-b4b713384a76?w=300&h=300&fit=crop&crop=center", genre: "Classical", plays: 432109, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3", spotify_uri: null },
-    { id: 8, title: "Country Roads", artist: "Nashville Stars", album: "Southern Tales", duration: "3:56", cover: "https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=300&h=300&fit=crop&crop=center", genre: "Country", plays: 321098, preview_url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3", spotify_uri: null }
-];
+// Static songs data removed per request; keeping empty array to avoid breaking references
+const staticSongs = [];
 
 // Utility to debounce functions
 const debounce = (func, wait) => {
@@ -682,6 +673,20 @@ export default function Page() {
         }
     }, [fetchUserProfile, generateRecommendations]);
 
+    // Recompute recommendations when recent plays, likes, or library change
+    useEffect(() => {
+        // Build a pool of known songs from loaded songs, playlists, and recent plays
+        const playlistSongs = playlists.flatMap(p => p.songs || []);
+        const poolMap = new Map();
+        [...songs, ...playlistSongs, ...recentlyPlayed].forEach(s => {
+            if (s && s.id && !poolMap.has(s.id)) {
+                poolMap.set(s.id, s);
+            }
+        });
+        const pool = Array.from(poolMap.values());
+        generateRecommendations(pool);
+    }, [recentlyPlayed, likedSongs, songs, playlists, generateRecommendations]);
+
     useEffect(() => {
         if (!accessToken || !isPremium) return;
 
@@ -695,6 +700,8 @@ export default function Page() {
                     getOAuthToken: cb => { cb(accessToken); },
                     volume: volume / 100
                 });
+                // Store player instance so controls (play/pause/seek/volume) can access it
+                setSpotifyPlayer(playerInstance);
 
                 playerInstance.addListener('ready', ({ device_id }) => {
                     console.log('Spotify Player ready with Device ID', device_id);
@@ -770,8 +777,9 @@ export default function Page() {
 
         return () => {
             if (playerInstance) {
-                playerInstance.disconnect();
+                try { playerInstance.disconnect(); } catch {}
             }
+            setSpotifyPlayer(null);
             if (scriptElement && document.body.contains(scriptElement)) {
                 document.body.removeChild(scriptElement);
             }
@@ -1726,7 +1734,7 @@ export default function Page() {
                                     min="0"
                                     max="100"
                                     value={volume}
-                                    onChange={(e) => setVolume(e.target.value)}
+                                    onChange={(e) => setVolume(Number(e.target.value))}
                                     className="volume-slider"
                                 />
                             </div>
