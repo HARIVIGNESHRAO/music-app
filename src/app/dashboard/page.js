@@ -44,6 +44,13 @@ export default function Page() {
     const [selectedPlaylist, setSelectedPlaylist] = useState(null);
     const [filterGenre, setFilterGenre] = useState('all');
     const [filterArtist, setFilterArtist] = useState('all');
+    // New filter states
+    const [playableOnly, setPlayableOnly] = useState(false);
+    const [likedOnly, setLikedOnly] = useState(false);
+    const [minDuration, setMinDuration] = useState(''); // mm:ss
+    const [maxDuration, setMaxDuration] = useState(''); // mm:ss
+    const [sortBy, setSortBy] = useState('relevance'); // relevance | popularity | title | duration
+
     const [recommendations, setRecommendations] = useState([]);
     const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);
     const [selectedSongForPlaylist, setSelectedSongForPlaylist] = useState(null);
@@ -60,6 +67,40 @@ export default function Page() {
     const [spotifyPlayer, setSpotifyPlayer] = useState(null);
     const [deviceId, setDeviceId] = useState(null);
     const [playerReady, setPlayerReady] = useState(false);
+
+    // Load saved filters on mount
+    useEffect(() => {
+        try {
+            const raw = window.localStorage.getItem('dashboard_filters');
+            if (raw) {
+                const f = JSON.parse(raw);
+                if (typeof f.filterGenre === 'string') setFilterGenre(f.filterGenre);
+                if (typeof f.filterArtist === 'string') setFilterArtist(f.filterArtist);
+                if (typeof f.playableOnly === 'boolean') setPlayableOnly(f.playableOnly);
+                if (typeof f.likedOnly === 'boolean') setLikedOnly(f.likedOnly);
+                if (typeof f.minDuration === 'string') setMinDuration(f.minDuration);
+                if (typeof f.maxDuration === 'string') setMaxDuration(f.maxDuration);
+                if (typeof f.sortBy === 'string') setSortBy(f.sortBy);
+            }
+        } catch (_) {}
+    }, []);
+
+    // Persist filters when they change
+    useEffect(() => {
+        const data = {
+            filterGenre,
+            filterArtist,
+            playableOnly,
+            likedOnly,
+            minDuration,
+            maxDuration,
+            sortBy,
+        };
+        try {
+            window.localStorage.setItem('dashboard_filters', JSON.stringify(data));
+        } catch (_) {}
+    }, [filterGenre, filterArtist, playableOnly, likedOnly, minDuration, maxDuration, sortBy]);
+
     const searchTimerRef = useRef(null);
     const isLoadingRef = useRef(false);
     const CLIENT_ID = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID;
@@ -1115,6 +1156,33 @@ export default function Page() {
         return `${mins}:${secs.toString().padStart(2, '0')}`;
     };
 
+    // Parse mm:ss or seconds string to total seconds; returns null if invalid
+    const parseTimeInput = (str) => {
+        if (!str) return null;
+        const s = String(str).trim();
+        if (!s) return null;
+        if (/^\d+$/.test(s)) return parseInt(s, 10);
+        const m = s.match(/^(\d{1,3}):(\d{1,2})$/);
+        if (m) {
+            const mins = parseInt(m[1], 10);
+            const secs = parseInt(m[2], 10);
+            if (secs >= 60) return null;
+            return mins * 60 + secs;
+        }
+        return null;
+    };
+
+    // Get song duration in seconds from duration_ms or duration (mm:ss)
+    const getSongDurationSeconds = (song) => {
+        if (!song) return 0;
+        if (typeof song.duration_ms === 'number') return Math.round(song.duration_ms / 1000);
+        if (song.duration && typeof song.duration === 'string') {
+            const secs = parseTimeInput(song.duration);
+            return secs || 0;
+        }
+        return 0;
+    };
+
     const handleSearch = (e) => {
         const query = e.target.value;
         setSearchQuery(query);
@@ -1124,22 +1192,51 @@ export default function Page() {
     const applyFilters = useCallback(() => {
         let filtered = [...songs];
 
+        // 1) Basic filters
         if (filterGenre !== 'all') {
-            filtered = filtered.filter(song => song.genre === filterGenre);
+            filtered = filtered.filter((song) => song.genre === filterGenre);
         }
         if (filterArtist !== 'all') {
-            filtered = filtered.filter(song => song.artist === filterArtist);
+            filtered = filtered.filter((song) => song.artist === filterArtist);
         }
         if (searchQuery) {
-            filtered = filtered.filter(song =>
-                song.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                song.artist.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                song.album.toLowerCase().includes(searchQuery.toLowerCase())
+            const q = searchQuery.toLowerCase();
+            filtered = filtered.filter((song) =>
+                (song.title && song.title.toLowerCase().includes(q)) ||
+                (song.artist && song.artist.toLowerCase().includes(q)) ||
+                (song.album && song.album.toLowerCase().includes(q))
             );
         }
 
+        // 2) Playable / Liked toggles
+        if (playableOnly) {
+            filtered = filtered.filter((song) => isSongPlayable(song));
+        }
+        if (likedOnly) {
+            filtered = filtered.filter((song) => likedSongs.has(song.id));
+        }
+
+        // 3) Duration range
+        const minSec = parseTimeInput(minDuration);
+        const maxSec = parseTimeInput(maxDuration);
+        if (minSec != null) {
+            filtered = filtered.filter((song) => getSongDurationSeconds(song) >= minSec);
+        }
+        if (maxSec != null) {
+            filtered = filtered.filter((song) => getSongDurationSeconds(song) <= maxSec);
+        }
+
+        // 4) Sorting
+        if (sortBy === 'title') {
+            filtered.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+        } else if (sortBy === 'duration') {
+            filtered.sort((a, b) => getSongDurationSeconds(a) - getSongDurationSeconds(b));
+        } else if (sortBy === 'popularity') {
+            filtered.sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
+        } // relevance keeps incoming order
+
         setFilteredSongs(filtered);
-    }, [songs, filterGenre, filterArtist, searchQuery]);
+    }, [songs, filterGenre, filterArtist, searchQuery, playableOnly, likedOnly, minDuration, maxDuration, sortBy, likedSongs, isSongPlayable]);
 
     useEffect(() => {
         applyFilters();
@@ -1491,6 +1588,61 @@ export default function Page() {
                                         <option value="all">All Artists</option>
                                         {artists.map((artist) => <option key={artist.id} value={artist.name}>{artist.name}</option>)}
                                     </select>
+                                </div>
+                                <div className="filter-group inline">
+                                    <label className="filter-label">Duration:</label>
+                                    <input
+                                        type="text"
+                                        inputMode="numeric"
+                                        placeholder="Min mm:ss"
+                                        value={minDuration}
+                                        onChange={(e) => setMinDuration(e.target.value)}
+                                        className="filter-input"
+                                    />
+                                    <span className="filter-sep">–</span>
+                                    <input
+                                        type="text"
+                                        inputMode="numeric"
+                                        placeholder="Max mm:ss"
+                                        value={maxDuration}
+                                        onChange={(e) => setMaxDuration(e.target.value)}
+                                        className="filter-input"
+                                    />
+                                </div>
+                                <div className="filter-group toggles">
+                                    <label className="checkbox">
+                                        <input type="checkbox" checked={playableOnly} onChange={(e) => setPlayableOnly(e.target.checked)} />
+                                        <span>Playable only</span>
+                                    </label>
+                                    <label className="checkbox">
+                                        <input type="checkbox" checked={likedOnly} onChange={(e) => setLikedOnly(e.target.checked)} />
+                                        <span>Liked only</span>
+                                    </label>
+                                </div>
+                                <div className="filter-group">
+                                    <label className="filter-label">Sort by:</label>
+                                    <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="filter-select">
+                                        <option value="relevance">Relevance</option>
+                                        <option value="popularity">Popularity</option>
+                                        <option value="title">Title A–Z</option>
+                                        <option value="duration">Duration</option>
+                                    </select>
+                                </div>
+                                <div className="filter-actions">
+                                    <button
+                                        className="clear-filters-btn"
+                                        onClick={() => {
+                                            setFilterGenre('all');
+                                            setFilterArtist('all');
+                                            setPlayableOnly(false);
+                                            setLikedOnly(false);
+                                            setMinDuration('');
+                                            setMaxDuration('');
+                                            setSortBy('relevance');
+                                        }}
+                                    >
+                                        Clear Filters
+                                    </button>
                                 </div>
                             </div>
                             {loading ? <p>Loading...</p> : error ? <p className="error-text">{error}</p> : filteredSongs.length > 0 ? (
