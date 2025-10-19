@@ -44,6 +44,14 @@ export default function Page() {
     const [selectedPlaylist, setSelectedPlaylist] = useState(null);
     const [filterGenre, setFilterGenre] = useState('all');
     const [filterArtist, setFilterArtist] = useState('all');
+    // Enhanced filter controls
+    const [playableOnly, setPlayableOnly] = useState(false);
+    const [likedOnly, setLikedOnly] = useState(false);
+    const [sortBy, setSortBy] = useState('relevance'); // relevance | popularity | title_asc | duration_asc
+    const [durationMin, setDurationMin] = useState(''); // mm:ss
+    const [durationMax, setDurationMax] = useState(''); // mm:ss
+    // Remote search results from Spotify; when present, filters apply on top
+    const [remoteResults, setRemoteResults] = useState(null);
     const [recommendations, setRecommendations] = useState([]);
     const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);
     const [selectedSongForPlaylist, setSelectedSongForPlaylist] = useState(null);
@@ -132,63 +140,125 @@ export default function Page() {
     };
 
     const generateRecommendations = useCallback((allSongs) => {
+        // Improved recommender: recency- and like-weighted, playlist-debiased, artist-diverse
         if (!allSongs || allSongs.length === 0) {
             setRecommendations([]);
             return;
         }
 
-        const allGenres = [...new Set(allSongs.map(song => song.genre))];
-        const allArtists = [...new Set(allSongs.map(song => song.artist))];
+        // Normalize and guard missing fields
+        const safeSongs = allSongs.filter(Boolean).map(s => ({
+            ...s,
+            genre: s.genre || 'Unknown',
+            artist: s.artist || 'Unknown Artist',
+            plays: Number.isFinite(s.plays) ? s.plays : 0,
+        }));
 
+        const allGenres = [...new Set(safeSongs.map(song => song.genre))];
+        const allArtists = [...new Set(safeSongs.map(song => song.artist))];
+
+        const maxPlays = Math.max(...safeSongs.map(s => s.plays || 0), 1);
         const createFeatureVector = (song) => {
-            const genreVector = allGenres.map(genre => song.genre === genre ? 1 : 0);
-            const artistVector = allArtists.map(artist => song.artist === artist ? 1 : 0);
-            const maxPlays = Math.max(...allSongs.map(s => s.plays), 1);
-            const plays = song.plays / maxPlays;
-            return [...genreVector, ...artistVector, plays];
+            const genreVector = allGenres.map(genre => (song.genre === genre ? 1 : 0));
+            const artistVector = allArtists.map(artist => (song.artist === artist ? 1 : 0));
+            const playsNorm = (song.plays || 0) / maxPlays; // popularity prior
+            return [...genreVector, ...artistVector, playsNorm];
         };
 
         const cosineSimilarity = (vecA, vecB) => {
-            const dotProduct = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
-            const magnitudeA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
-            const magnitudeB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
-            return magnitudeA && magnitudeB ? dotProduct / (magnitudeA * magnitudeB) : 0;
+            const dot = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
+            const magA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
+            const magB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
+            return magA && magB ? dot / (magA * magB) : 0;
         };
 
-        const songVectors = allSongs.map(song => ({
-            song,
-            vector: createFeatureVector(song)
-        }));
-
-        const userPreferenceSongs = [
-            ...recentlyPlayed,
-            ...Array.from(likedSongs).map(songId => allSongs.find(s => s.id === songId)).filter(s => s)
-        ].filter((song, index, self) => song && self.findIndex(s => s.id === song.id) === index);
+        // Build user preference set = full session recentlyPlayed + liked songs present in pool
+        const likedFromPool = Array.from(likedSongs)
+            .map(id => safeSongs.find(s => s.id === id))
+            .filter(Boolean);
+        const userPreferenceSongs = [...recentlyPlayed, ...likedFromPool]
+            .filter(Boolean)
+            .filter((song, idx, self) => self.findIndex(s => s.id === song.id) === idx);
 
         if (userPreferenceSongs.length === 0) {
-            const shuffled = [...allSongs].sort(() => 0.5 - Math.random());
-            setRecommendations(shuffled.slice(0, 4));
+            // Cold start: pick diverse popular items
+            const byPopularity = [...safeSongs]
+                .sort((a, b) => (b.plays || 0) - (a.plays || 0));
+            const picked = [];
+            const seenArtists = new Set();
+            for (const s of byPopularity) {
+                if (!seenArtists.has(s.artist)) {
+                    picked.push(s);
+                    seenArtists.add(s.artist);
+                    if (picked.length === 4) break;
+                }
+            }
+            setRecommendations(picked);
             return;
         }
 
-        const userVectors = userPreferenceSongs.map(song => createFeatureVector(song));
-        const userVector = userVectors.reduce(
-            (avg, vec) => avg.map((val, i) => val + vec[i] / userVectors.length),
-            new Array(allGenres.length + allArtists.length + 1).fill(0)
-        );
+        // Create weighted user vector: recency decay + like boost
+        const vectorsCache = new Map();
+        const getVec = (song) => {
+            if (!vectorsCache.has(song.id)) vectorsCache.set(song.id, createFeatureVector(song));
+            return vectorsCache.get(song.id);
+        };
 
-        const scores = songVectors.map(({ song, vector }) => ({
-            song,
-            score: cosineSimilarity(userVector, vector)
-        }));
+        const recencyWeight = (index) => {
+            // index 0 is most recent
+            const lambda = 0.25; // higher = more recency emphasis
+            return Math.exp(-lambda * index);
+        };
 
-        const recommendedSongs = scores
-            .sort((a, b) => b.score - a.score)
-            .map(item => item.song)
-            .filter(song => !userPreferenceSongs.some(s => s.id === song.id))
-            .slice(0, 4);
+        const LIKE_BOOST = 0.6; // extra weight if liked
+        const prefWithWeights = userPreferenceSongs.map((song, idx) => {
+            const base = recencyWeight(idx);
+            const liked = likedSongs.has(song.id) ? LIKE_BOOST : 0;
+            return { song, weight: base + liked };
+        });
 
-        setRecommendations(recommendedSongs);
+        const dim = allGenres.length + allArtists.length + 1;
+        const userVector = prefWithWeights.reduce((acc, { song, weight }) => {
+            const v = getVec(song);
+            for (let i = 0; i < dim; i++) acc[i] += v[i] * weight;
+            return acc;
+        }, new Array(dim).fill(0));
+        // L2 normalize user vector
+        const norm = Math.sqrt(userVector.reduce((s, x) => s + x * x, 0)) || 1;
+        for (let i = 0; i < dim; i++) userVector[i] /= norm;
+
+        // Score candidates
+        const prefIds = new Set(userPreferenceSongs.map(s => s.id));
+        const candidates = safeSongs.filter(s => !prefIds.has(s.id));
+
+        const scores = candidates.map(song => {
+            const sim = cosineSimilarity(userVector, getVec(song));
+            const popularityPrior = (song.plays || 0) / maxPlays; // small prior
+            const score = sim * 0.9 + popularityPrior * 0.1;
+            return { song, score };
+        }).sort((a, b) => b.score - a.score);
+
+        // Diversity re-ranking: at most 1 per artist in top picks
+        const diverse = [];
+        const seenArtists = new Set();
+        for (const item of scores) {
+            if (!seenArtists.has(item.song.artist)) {
+                diverse.push(item.song);
+                seenArtists.add(item.song.artist);
+                if (diverse.length >= 4) break;
+            }
+        }
+        // If not enough unique artists, fill remaining from ranked list
+        if (diverse.length < 4) {
+            for (const item of scores) {
+                if (!diverse.some(s => s.id === item.song.id)) {
+                    diverse.push(item.song);
+                    if (diverse.length >= 4) break;
+                }
+            }
+        }
+
+        setRecommendations(diverse.slice(0, 4));
     }, [recentlyPlayed, likedSongs]);
 
     const fetchTopTracks = useCallback(async (token) => {
@@ -321,12 +391,8 @@ export default function Page() {
         }
 
         if (!accessToken || !query) {
-            const filtered = staticSongs.filter(song =>
-                song.title.toLowerCase().includes(query.toLowerCase()) ||
-                song.artist.toLowerCase().includes(query.toLowerCase()) ||
-                song.album.toLowerCase().includes(query.toLowerCase())
-            );
-            setFilteredSongs(filtered);
+            // Clear remote results; local filtering will apply to current songs
+            setRemoteResults(null);
             return;
         }
 
@@ -354,7 +420,7 @@ export default function Page() {
                     preview_url: track.preview_url || null,
                     spotify_uri: track.uri,
                 }));
-                setFilteredSongs(mappedSongs);
+                setRemoteResults(mappedSongs);
             } catch (err) {
                 console.error('Search failed:', err);
                 setError(err.response?.status === 429 ? 'Too many searches. Please wait a moment.' : 'Search failed');
@@ -363,6 +429,96 @@ export default function Page() {
             }
         }, 800);
     }, [accessToken]);
+
+    // Persist filters: load on mount
+    useEffect(() => {
+        try {
+            const saved = JSON.parse(window.localStorage.getItem('filters_v1') || '{}');
+            if (saved) {
+                if (saved.filterArtist) setFilterArtist(saved.filterArtist);
+                if (saved.filterGenre) setFilterGenre(saved.filterGenre);
+                if (typeof saved.playableOnly === 'boolean') setPlayableOnly(saved.playableOnly);
+                if (typeof saved.likedOnly === 'boolean') setLikedOnly(saved.likedOnly);
+                if (saved.sortBy) setSortBy(saved.sortBy);
+                if (typeof saved.durationMin === 'string') setDurationMin(saved.durationMin);
+                if (typeof saved.durationMax === 'string') setDurationMax(saved.durationMax);
+            }
+        } catch {}
+    }, []);
+
+    // Persist filters: save on change
+    useEffect(() => {
+        window.localStorage.setItem('filters_v1', JSON.stringify({
+            filterArtist, filterGenre, playableOnly, likedOnly, sortBy, durationMin, durationMax
+        }));
+    }, [filterArtist, filterGenre, playableOnly, likedOnly, sortBy, durationMin, durationMax]);
+
+    // Recompute artists list based on current source
+    useEffect(() => {
+        const source = (remoteResults && Array.isArray(remoteResults)) ? remoteResults : songs;
+        const uniqueArtists = [...new Set(source.map(s => s?.artist).filter(Boolean))];
+        setArtists(uniqueArtists.map((name, idx) => ({
+            id: idx + 1,
+            name,
+            songs: source.filter(s => s.artist === name).length,
+            albums: new Set(source.filter(s => s.artist === name).map(s => s.album)).size
+        })));
+    }, [songs, remoteResults]);
+
+    // Centralized filter computation
+    useEffect(() => {
+        const base = (remoteResults && Array.isArray(remoteResults)) ? remoteResults : songs;
+        let results = [...base];
+
+        // Local text filtering if not using remote search results
+        if (!remoteResults && searchQuery) {
+            const q = searchQuery.toLowerCase();
+            results = results.filter(s =>
+                (s.title || '').toLowerCase().includes(q) ||
+                (s.artist || '').toLowerCase().includes(q) ||
+                (s.album || '').toLowerCase().includes(q)
+            );
+        }
+
+        if (filterArtist !== 'all') {
+            results = results.filter(s => s.artist === filterArtist);
+        }
+        if (filterGenre !== 'all') {
+            results = results.filter(s => (s.genre || 'Unknown') === filterGenre);
+        }
+        if (playableOnly) {
+            results = results.filter(s => isSongPlayable(s));
+        }
+        if (likedOnly) {
+            results = results.filter(s => likedSongs.has(s.id));
+        }
+
+        const minSec = parseDurationToSeconds(durationMin);
+        const maxSec = parseDurationToSeconds(durationMax);
+        if (minSec != null) {
+            results = results.filter(s => (parseDurationToSeconds(s.duration) || 0) >= minSec);
+        }
+        if (maxSec != null) {
+            results = results.filter(s => (parseDurationToSeconds(s.duration) || 99999) <= maxSec);
+        }
+
+        switch (sortBy) {
+            case 'popularity':
+                results.sort((a, b) => (b.plays || 0) - (a.plays || 0));
+                break;
+            case 'title_asc':
+                results.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+                break;
+            case 'duration_asc':
+                results.sort((a, b) => (parseDurationToSeconds(a.duration) || 0) - (parseDurationToSeconds(b.duration) || 0));
+                break;
+            default:
+                // relevance: keep current order
+                break;
+        }
+
+        setFilteredSongs(results);
+    }, [songs, remoteResults, searchQuery, filterArtist, filterGenre, playableOnly, likedOnly, sortBy, durationMin, durationMax, isSongPlayable, likedSongs]);
 
     const createPlaylist = async () => {
         if (!newPlaylistName.trim()) {
@@ -675,17 +831,16 @@ export default function Page() {
 
     // Recompute recommendations when recent plays, likes, or library change
     useEffect(() => {
-        // Build a pool of known songs from loaded songs, playlists, and recent plays
-        const playlistSongs = playlists.flatMap(p => p.songs || []);
+        // Build a debiased pool: use user's top tracks (songs) and recently played only
         const poolMap = new Map();
-        [...songs, ...playlistSongs, ...recentlyPlayed].forEach(s => {
+        [...songs, ...recentlyPlayed].forEach(s => {
             if (s && s.id && !poolMap.has(s.id)) {
                 poolMap.set(s.id, s);
             }
         });
         const pool = Array.from(poolMap.values());
         generateRecommendations(pool);
-    }, [recentlyPlayed, likedSongs, songs, playlists, generateRecommendations]);
+    }, [recentlyPlayed, likedSongs, songs, generateRecommendations]);
 
     useEffect(() => {
         if (!accessToken || !isPremium) return;
@@ -1115,6 +1270,17 @@ export default function Page() {
         return `${mins}:${secs.toString().padStart(2, '0')}`;
     };
 
+    // Helpers for filters
+    const parseDurationToSeconds = (dur) => {
+        if (!dur || typeof dur !== 'string') return null;
+        const parts = dur.split(':');
+        if (parts.length !== 2) return null;
+        const m = parseInt(parts[0], 10);
+        const s = parseInt(parts[1], 10);
+        if (Number.isNaN(m) || Number.isNaN(s)) return null;
+        return m * 60 + s;
+    };
+
     const handleSearch = (e) => {
         const query = e.target.value;
         setSearchQuery(query);
@@ -1249,6 +1415,67 @@ export default function Page() {
                                 className="search-input"
                             />
                             {loading && <span className="search-loading">Searching...</span>}
+                        </div>
+                        <div className="filters-row">
+                            <select value={filterArtist} onChange={(e) => setFilterArtist(e.target.value)} className="filter-select" aria-label="Filter by artist">
+                                <option value="all">All artists</option>
+                                {Array.from(new Set(((remoteResults && Array.isArray(remoteResults)) ? remoteResults : songs).map(s => s.artist).filter(Boolean)))
+                                    .slice(0, 100)
+                                    .map(name => (
+                                        <option key={name} value={name}>{name}</option>
+                                    ))}
+                            </select>
+                            <select value={filterGenre} onChange={(e) => setFilterGenre(e.target.value)} className="filter-select" aria-label="Filter by genre">
+                                <option value="all">All genres</option>
+                                {Array.from(new Set(((remoteResults && Array.isArray(remoteResults)) ? remoteResults : songs).map(s => s.genre || 'Unknown')))
+                                    .map(g => (
+                                        <option key={g} value={g}>{g}</option>
+                                    ))}
+                            </select>
+                            <label className="filter-toggle">
+                                <input type="checkbox" checked={playableOnly} onChange={(e) => setPlayableOnly(e.target.checked)} /> Playable only
+                            </label>
+                            <label className="filter-toggle">
+                                <input type="checkbox" checked={likedOnly} onChange={(e) => setLikedOnly(e.target.checked)} /> Liked only
+                            </label>
+                            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="filter-select" aria-label="Sort by">
+                                <option value="relevance">Sort: Relevance</option>
+                                <option value="popularity">Sort: Popularity</option>
+                                <option value="title_asc">Sort: Title A–Z</option>
+                                <option value="duration_asc">Sort: Duration</option>
+                            </select>
+                            <input
+                                type="text"
+                                inputMode="numeric"
+                                placeholder="Min mm:ss"
+                                value={durationMin}
+                                onChange={(e) => setDurationMin(e.target.value)}
+                                className="filter-input"
+                                aria-label="Min duration"
+                            />
+                            <input
+                                type="text"
+                                inputMode="numeric"
+                                placeholder="Max mm:ss"
+                                value={durationMax}
+                                onChange={(e) => setDurationMax(e.target.value)}
+                                className="filter-input"
+                                aria-label="Max duration"
+                            />
+                            <button
+                                className="filter-clear"
+                                onClick={() => {
+                                    setFilterArtist('all');
+                                    setFilterGenre('all');
+                                    setPlayableOnly(false);
+                                    setLikedOnly(false);
+                                    setSortBy('relevance');
+                                    setDurationMin('');
+                                    setDurationMax('');
+                                }}
+                            >
+                                Clear
+                            </button>
                         </div>
                     </div>
                     <div className="header-right">
