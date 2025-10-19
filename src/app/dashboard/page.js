@@ -140,125 +140,63 @@ export default function Page() {
     };
 
     const generateRecommendations = useCallback((allSongs) => {
-        // Improved recommender: recency- and like-weighted, playlist-debiased, artist-diverse
         if (!allSongs || allSongs.length === 0) {
             setRecommendations([]);
             return;
         }
 
-        // Normalize and guard missing fields
-        const safeSongs = allSongs.filter(Boolean).map(s => ({
-            ...s,
-            genre: s.genre || 'Unknown',
-            artist: s.artist || 'Unknown Artist',
-            plays: Number.isFinite(s.plays) ? s.plays : 0,
-        }));
+        const allGenres = [...new Set(allSongs.map(song => song.genre))];
+        const allArtists = [...new Set(allSongs.map(song => song.artist))];
 
-        const allGenres = [...new Set(safeSongs.map(song => song.genre))];
-        const allArtists = [...new Set(safeSongs.map(song => song.artist))];
-
-        const maxPlays = Math.max(...safeSongs.map(s => s.plays || 0), 1);
         const createFeatureVector = (song) => {
-            const genreVector = allGenres.map(genre => (song.genre === genre ? 1 : 0));
-            const artistVector = allArtists.map(artist => (song.artist === artist ? 1 : 0));
-            const playsNorm = (song.plays || 0) / maxPlays; // popularity prior
-            return [...genreVector, ...artistVector, playsNorm];
+            const genreVector = allGenres.map(genre => song.genre === genre ? 1 : 0);
+            const artistVector = allArtists.map(artist => song.artist === artist ? 1 : 0);
+            const maxPlays = Math.max(...allSongs.map(s => s.plays), 1);
+            const plays = song.plays / maxPlays;
+            return [...genreVector, ...artistVector, plays];
         };
 
         const cosineSimilarity = (vecA, vecB) => {
-            const dot = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
-            const magA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
-            const magB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
-            return magA && magB ? dot / (magA * magB) : 0;
+            const dotProduct = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
+            const magnitudeA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
+            const magnitudeB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
+            return magnitudeA && magnitudeB ? dotProduct / (magnitudeA * magnitudeB) : 0;
         };
 
-        // Build user preference set = full session recentlyPlayed + liked songs present in pool
-        const likedFromPool = Array.from(likedSongs)
-            .map(id => safeSongs.find(s => s.id === id))
-            .filter(Boolean);
-        const userPreferenceSongs = [...recentlyPlayed, ...likedFromPool]
-            .filter(Boolean)
-            .filter((song, idx, self) => self.findIndex(s => s.id === song.id) === idx);
+        const songVectors = allSongs.map(song => ({
+            song,
+            vector: createFeatureVector(song)
+        }));
+
+        const userPreferenceSongs = [
+            ...recentlyPlayed,
+            ...Array.from(likedSongs).map(songId => allSongs.find(s => s.id === songId)).filter(s => s)
+        ].filter((song, index, self) => song && self.findIndex(s => s.id === song.id) === index);
 
         if (userPreferenceSongs.length === 0) {
-            // Cold start: pick diverse popular items
-            const byPopularity = [...safeSongs]
-                .sort((a, b) => (b.plays || 0) - (a.plays || 0));
-            const picked = [];
-            const seenArtists = new Set();
-            for (const s of byPopularity) {
-                if (!seenArtists.has(s.artist)) {
-                    picked.push(s);
-                    seenArtists.add(s.artist);
-                    if (picked.length === 4) break;
-                }
-            }
-            setRecommendations(picked);
+            const shuffled = [...allSongs].sort(() => 0.5 - Math.random());
+            setRecommendations(shuffled.slice(0, 4));
             return;
         }
 
-        // Create weighted user vector: recency decay + like boost
-        const vectorsCache = new Map();
-        const getVec = (song) => {
-            if (!vectorsCache.has(song.id)) vectorsCache.set(song.id, createFeatureVector(song));
-            return vectorsCache.get(song.id);
-        };
+        const userVectors = userPreferenceSongs.map(song => createFeatureVector(song));
+        const userVector = userVectors.reduce(
+            (avg, vec) => avg.map((val, i) => val + vec[i] / userVectors.length),
+            new Array(allGenres.length + allArtists.length + 1).fill(0)
+        );
 
-        const recencyWeight = (index) => {
-            // index 0 is most recent
-            const lambda = 0.25; // higher = more recency emphasis
-            return Math.exp(-lambda * index);
-        };
+        const scores = songVectors.map(({ song, vector }) => ({
+            song,
+            score: cosineSimilarity(userVector, vector)
+        }));
 
-        const LIKE_BOOST = 0.6; // extra weight if liked
-        const prefWithWeights = userPreferenceSongs.map((song, idx) => {
-            const base = recencyWeight(idx);
-            const liked = likedSongs.has(song.id) ? LIKE_BOOST : 0;
-            return { song, weight: base + liked };
-        });
+        const recommendedSongs = scores
+            .sort((a, b) => b.score - a.score)
+            .map(item => item.song)
+            .filter(song => !userPreferenceSongs.some(s => s.id === song.id))
+            .slice(0, 4);
 
-        const dim = allGenres.length + allArtists.length + 1;
-        const userVector = prefWithWeights.reduce((acc, { song, weight }) => {
-            const v = getVec(song);
-            for (let i = 0; i < dim; i++) acc[i] += v[i] * weight;
-            return acc;
-        }, new Array(dim).fill(0));
-        // L2 normalize user vector
-        const norm = Math.sqrt(userVector.reduce((s, x) => s + x * x, 0)) || 1;
-        for (let i = 0; i < dim; i++) userVector[i] /= norm;
-
-        // Score candidates
-        const prefIds = new Set(userPreferenceSongs.map(s => s.id));
-        const candidates = safeSongs.filter(s => !prefIds.has(s.id));
-
-        const scores = candidates.map(song => {
-            const sim = cosineSimilarity(userVector, getVec(song));
-            const popularityPrior = (song.plays || 0) / maxPlays; // small prior
-            const score = sim * 0.9 + popularityPrior * 0.1;
-            return { song, score };
-        }).sort((a, b) => b.score - a.score);
-
-        // Diversity re-ranking: at most 1 per artist in top picks
-        const diverse = [];
-        const seenArtists = new Set();
-        for (const item of scores) {
-            if (!seenArtists.has(item.song.artist)) {
-                diverse.push(item.song);
-                seenArtists.add(item.song.artist);
-                if (diverse.length >= 4) break;
-            }
-        }
-        // If not enough unique artists, fill remaining from ranked list
-        if (diverse.length < 4) {
-            for (const item of scores) {
-                if (!diverse.some(s => s.id === item.song.id)) {
-                    diverse.push(item.song);
-                    if (diverse.length >= 4) break;
-                }
-            }
-        }
-
-        setRecommendations(diverse.slice(0, 4));
+        setRecommendations(recommendedSongs);
     }, [recentlyPlayed, likedSongs]);
 
     const fetchTopTracks = useCallback(async (token) => {
@@ -831,16 +769,17 @@ export default function Page() {
 
     // Recompute recommendations when recent plays, likes, or library change
     useEffect(() => {
-        // Build a debiased pool: use user's top tracks (songs) and recently played only
+        // Build a pool of known songs from loaded songs, playlists, and recent plays
+        const playlistSongs = playlists.flatMap(p => p.songs || []);
         const poolMap = new Map();
-        [...songs, ...recentlyPlayed].forEach(s => {
+        [...songs, ...playlistSongs, ...recentlyPlayed].forEach(s => {
             if (s && s.id && !poolMap.has(s.id)) {
                 poolMap.set(s.id, s);
             }
         });
         const pool = Array.from(poolMap.values());
         generateRecommendations(pool);
-    }, [recentlyPlayed, likedSongs, songs, generateRecommendations]);
+    }, [recentlyPlayed, likedSongs, songs, playlists, generateRecommendations]);
 
     useEffect(() => {
         if (!accessToken || !isPremium) return;
