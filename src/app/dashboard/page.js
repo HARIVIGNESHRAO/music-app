@@ -182,31 +182,13 @@ export default function Page() {
             score: cosineSimilarity(userVector, vector)
         }));
 
-        const ranked = scores
+        const recommendedSongs = scores
             .sort((a, b) => b.score - a.score)
             .map(item => item.song)
-            .filter(song => !userPreferenceSongs.some(s => s.id === song.id));
+            .filter(song => !userPreferenceSongs.some(s => s.id === song.id))
+            .slice(0, 4);
 
-        // Ensure artist diversity to avoid clumping similar/adjacent tracks
-        const picked = [];
-        const seenArtists = new Set();
-        for (const s of ranked) {
-            const artistKey = s.artist || '';
-            if (seenArtists.has(artistKey)) continue;
-            seenArtists.add(artistKey);
-            picked.push(s);
-            if (picked.length === 4) break;
-        }
-        // If not enough unique artists, fill the rest ignoring artist cap
-        if (picked.length < 4) {
-            for (const s of ranked) {
-                if (picked.some(p => p.id === s.id)) continue;
-                picked.push(s);
-                if (picked.length === 4) break;
-            }
-        }
-
-        setRecommendations(picked);
+        setRecommendations(recommendedSongs);
     }, [recentlyPlayed, likedSongs]);
 
     const fetchTopTracks = useCallback(async (token) => {
@@ -693,16 +675,17 @@ export default function Page() {
 
     // Recompute recommendations when recent plays, likes, or library change
     useEffect(() => {
-        // Build a pool from user's top tracks and recently played only (exclude raw playlist tracks to avoid overfitting to playlist order)
+        // Build a pool of known songs from loaded songs, playlists, and recent plays
+        const playlistSongs = playlists.flatMap(p => p.songs || []);
         const poolMap = new Map();
-        [...songs, ...recentlyPlayed].forEach(s => {
+        [...songs, ...playlistSongs, ...recentlyPlayed].forEach(s => {
             if (s && s.id && !poolMap.has(s.id)) {
                 poolMap.set(s.id, s);
             }
         });
         const pool = Array.from(poolMap.values());
         generateRecommendations(pool);
-    }, [recentlyPlayed, likedSongs, songs, generateRecommendations]);
+    }, [recentlyPlayed, likedSongs, songs, playlists, generateRecommendations]);
 
     useEffect(() => {
         if (!accessToken || !isPremium) return;
