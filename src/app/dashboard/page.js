@@ -784,7 +784,7 @@ export default function Page() {
                 document.body.removeChild(scriptElement);
             }
         };
-    }, [accessToken, isPremium]);
+    }, [accessToken, isPremium, volume]);
 
     useEffect(() => {
         if (audioRef.current) {
