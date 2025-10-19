@@ -747,7 +747,7 @@ export default function Page() {
                         setCurrentSong(newSong);
                         setRecentlyPlayed(prev => {
                             const newPlayed = [newSong, ...prev.filter(s => s.id !== track.id)];
-                            return newPlayed.slice(0, 5);
+                            return newPlayed; // keep full session history for recommendations
                         });
                     }
                 });
@@ -828,7 +828,7 @@ export default function Page() {
                         if (!isCancelled) {
                             setRecentlyPlayed((prev) => {
                                 const newPlayed = [currentSong, ...prev.filter((s) => s.id !== currentSong.id)];
-                                return newPlayed.slice(0, 5);
+                                return newPlayed; // keep full session history for recommendations
                             });
                         }
                         return;
@@ -875,7 +875,7 @@ export default function Page() {
                         setError(null);
                         setRecentlyPlayed((prev) => {
                             const newPlayed = [currentSong, ...prev.filter((s) => s.id !== currentSong.id)];
-                            return newPlayed.slice(0, 5);
+                            return newPlayed; // keep full session history for recommendations
                         });
                     }
                     return;
@@ -1031,15 +1031,32 @@ export default function Page() {
         router.push('/login');
     };
 
-    const togglePlay = () => {
-        if (isPremium && spotifyPlayer && playerReady) {
-            if (isPlaying) {
-                spotifyPlayer.pause();
-            } else {
-                spotifyPlayer.resume();
+    const togglePlay = async () => {
+        try {
+            if (isPremium && spotifyPlayer && playerReady) {
+                // Use SDK toggle to handle both pause and resume reliably
+                await spotifyPlayer.togglePlay();
+                setIsPlaying(prev => !prev);
+                return;
             }
-        } else {
+
+            const audio = audioRef.current;
+            if (audio) {
+                if (isPlaying) {
+                    await audio.pause();
+                    setIsPlaying(false);
+                } else {
+                    await audio.play();
+                    setIsPlaying(true);
+                }
+                return;
+            }
+
+            // Fallback: just flip the state
             setIsPlaying(prev => !prev);
+        } catch (err) {
+            console.error('Toggle play failed:', err);
+            setError('Unable to toggle playback');
         }
     };
 
