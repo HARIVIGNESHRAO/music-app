@@ -60,6 +60,7 @@ export default function Page() {
     const [spotifyPlayer, setSpotifyPlayer] = useState(null);
     const [deviceId, setDeviceId] = useState(null);
     const [playerReady, setPlayerReady] = useState(false);
+    const [audioFeaturesById, setAudioFeaturesById] = useState({});
     const searchTimerRef = useRef(null);
     const isLoadingRef = useRef(false);
     const CLIENT_ID = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID;
@@ -110,6 +111,192 @@ export default function Page() {
 
     const setCachedData = (key, data) => {
         window.localStorage.setItem(key, JSON.stringify({ data, timestamp: Date.now() }));
+    };
+
+    // ===== ML-based recommendations: audio features helpers =====
+    const AUDIO_FEATURES_CACHE_KEY = 'spotify_audio_features_v1';
+    const AUDIO_FEATURES_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+    const loadAudioFeaturesCache = () => {
+        try {
+            const raw = window.localStorage.getItem(AUDIO_FEATURES_CACHE_KEY);
+            if (!raw) return {};
+            const parsed = JSON.parse(raw);
+            // Purge expired
+            const now = Date.now();
+            const cleaned = {};
+            Object.keys(parsed).forEach(id => {
+                const item = parsed[id];
+                if (item && item._ts && (now - item._ts) < AUDIO_FEATURES_TTL_MS) {
+                    cleaned[id] = item;
+                }
+            });
+            // Save cleaned back to storage if changed
+            window.localStorage.setItem(AUDIO_FEATURES_CACHE_KEY, JSON.stringify(cleaned));
+            return cleaned;
+        } catch (e) {
+            console.warn('Failed to load audio features cache', e);
+            return {};
+        }
+    };
+
+    const saveAudioFeaturesCache = (mapObj) => {
+        try {
+            window.localStorage.setItem(AUDIO_FEATURES_CACHE_KEY, JSON.stringify(mapObj || {}));
+        } catch (e) {
+            console.warn('Failed to save audio features cache', e);
+        }
+    };
+
+    const mergeFeaturesIntoStateAndCache = (featuresArray) => {
+        if (!featuresArray || featuresArray.length === 0) return;
+        setAudioFeaturesById(prev => {
+            const updated = { ...prev };
+            const cache = loadAudioFeaturesCache();
+            featuresArray.forEach(f => {
+                if (!f || !f.id) return;
+                const enriched = { ...f, _ts: Date.now() };
+                updated[f.id] = enriched;
+                cache[f.id] = enriched;
+            });
+            saveAudioFeaturesCache(cache);
+            return updated;
+        });
+    };
+
+    const fetchAudioFeaturesBatch = async (token, ids) => {
+        if (!ids || ids.length === 0) return [];
+        const unique = Array.from(new Set(ids.filter(Boolean)));
+        const chunks = [];
+        for (let i = 0; i < unique.length; i += 100) {
+            chunks.push(unique.slice(i, i + 100));
+        }
+        const results = [];
+        for (const chunk of chunks) {
+            try {
+                const res = await apiCallWithBackoff(() =>
+                    axios.get(`https://api.spotify.com/v1/audio-features?ids=${chunk.join(',')}`,
+                        { headers: { Authorization: `Bearer ${token}` } })
+                );
+                if (res.data && Array.isArray(res.data.audio_features)) {
+                    results.push(...res.data.audio_features.filter(Boolean));
+                }
+            } catch (err) {
+                console.error('Failed to fetch audio features chunk:', err);
+            }
+        }
+        return results;
+    };
+
+    const ensureAudioFeaturesForSongs = async (token, songsList) => {
+        try {
+            const ids = (songsList || []).map(s => s?.id).filter(Boolean);
+            if (ids.length === 0) return;
+            // determine missing
+            const cache = loadAudioFeaturesCache();
+            const missing = ids.filter(id => !audioFeaturesById[id] && !cache[id]);
+            if (missing.length === 0) return;
+            const fetched = await fetchAudioFeaturesBatch(token, missing);
+            mergeFeaturesIntoStateAndCache(fetched);
+        } catch (e) {
+            console.warn('ensureAudioFeaturesForSongs error:', e);
+        }
+    };
+
+    // Shared cosine similarity
+    const cosineSim = (a, b) => {
+        if (!a || !b || a.length !== b.length) return 0;
+        let dot = 0, ma = 0, mb = 0;
+        for (let i = 0; i < a.length; i++) {
+            const x = a[i] || 0;
+            const y = b[i] || 0;
+            dot += x * y;
+            ma += x * x;
+            mb += y * y;
+        }
+        if (!ma || !mb) return 0;
+        return dot / (Math.sqrt(ma) * Math.sqrt(mb));
+    };
+
+    const clamp01 = (v) => Math.max(0, Math.min(1, v));
+
+    const vectorFromAudioFeatures = (song) => {
+        const f = audioFeaturesById[song.id];
+        if (!f) return null;
+        // Normalize tempo to ~ [0,1] assuming 0..200 BPM
+        const tempo = clamp01((f.tempo || 0) / 200);
+        // Normalize loudness: Spotify loudness ~ [-60,0] dB
+        const loud = clamp01(((f.loudness || -60) + 60) / 60);
+        // One-hot key (0..11)
+        const keyVec = new Array(12).fill(0);
+        if (typeof f.key === 'number' && f.key >= 0 && f.key < 12) keyVec[f.key] = 1;
+        const mode = f.mode === 1 ? 1 : 0;
+        return [
+            clamp01(f.danceability || 0),
+            clamp01(f.energy || 0),
+            clamp01(f.valence || 0),
+            clamp01(f.acousticness || 0),
+            clamp01(f.instrumentalness || 0),
+            clamp01(f.liveness || 0),
+            clamp01(f.speechiness || 0),
+            tempo,
+            loud,
+            mode,
+            ...keyVec,
+        ];
+    };
+
+    const generateMLRecommendations = (allSongs) => {
+        if (!allSongs || allSongs.length === 0) return [];
+        const prefSongs = [
+            ...recentlyPlayed,
+            ...Array.from(likedSongs).map(id => allSongs.find(s => s.id === id)).filter(Boolean)
+        ];
+        const uniquePref = [];
+        const seen = new Set();
+        for (const s of prefSongs) {
+            if (s && !seen.has(s.id)) { seen.add(s.id); uniquePref.push(s); }
+        }
+        if (uniquePref.length === 0) return [];
+
+        // Build weighted user vector (recent first higher weight)
+        const vectors = [];
+        const weights = [];
+        const decay = 0.92; // exponential decay per rank
+        uniquePref.forEach((song, idx) => {
+            const vec = vectorFromAudioFeatures(song);
+            if (!vec) return; // skip songs without features
+            const likeBoost = likedSongs.has(song.id) ? 1.3 : 1.0;
+            const w = Math.pow(decay, idx) * likeBoost;
+            vectors.push(vec);
+            weights.push(w);
+        });
+        if (vectors.length === 0) return [];
+        const dim = vectors[0].length;
+        const userVec = new Array(dim).fill(0);
+        let sumW = 0;
+        for (let i = 0; i < vectors.length; i++) {
+            const v = vectors[i];
+            const w = weights[i];
+            sumW += w;
+            for (let j = 0; j < dim; j++) userVec[j] += v[j] * w;
+        }
+        if (sumW > 0) for (let j = 0; j < dim; j++) userVec[j] /= sumW;
+
+        // Score candidates
+        const prefIds = new Set(uniquePref.map(s => s.id));
+        const scored = [];
+        for (const s of allSongs) {
+            if (!s || prefIds.has(s.id)) continue;
+            const vec = vectorFromAudioFeatures(s);
+            if (!vec) continue;
+            const score = cosineSim(userVec, vec);
+            // small tie-breaker using popularity/plays if present
+            const popularity = typeof s.plays === 'number' ? s.plays : 0;
+            scored.push({ song: s, score: score + (popularity ? (Math.log10(popularity + 1) / 1000) : 0) });
+        }
+        scored.sort((a, b) => b.score - a.score);
+        return scored.slice(0, 8).map(x => x.song);
     };
 
     const generateCodeVerifier = () => {
@@ -673,6 +860,16 @@ export default function Page() {
         }
     }, [fetchUserProfile, generateRecommendations]);
 
+    // Load cached audio features into state on mount
+    useEffect(() => {
+        try {
+            const cache = loadAudioFeaturesCache();
+            if (cache && Object.keys(cache).length > 0) {
+                setAudioFeaturesById(cache);
+            }
+        } catch {}
+    }, []);
+
     // Recompute recommendations when recent plays, likes, or library change
     useEffect(() => {
         // Build a pool of known songs from loaded songs, playlists, and recent plays
@@ -684,8 +881,27 @@ export default function Page() {
             }
         });
         const pool = Array.from(poolMap.values());
-        generateRecommendations(pool);
-    }, [recentlyPlayed, likedSongs, songs, playlists, generateRecommendations]);
+
+        // If we have Spotify token, try ML-based recommendations using audio features; otherwise fallback
+        if (accessToken && pool.length > 0) {
+            (async () => {
+                try {
+                    await ensureAudioFeaturesForSongs(accessToken, [...pool, ...recentlyPlayed]);
+                    const mlRecs = generateMLRecommendations(pool);
+                    if (mlRecs && mlRecs.length > 0) {
+                        setRecommendations(mlRecs);
+                        return;
+                    }
+                } catch (e) {
+                    console.warn('ML recommendations failed, falling back:', e);
+                }
+                // Fallback to metadata-based recommendations
+                generateRecommendations(pool);
+            })();
+        } else {
+            generateRecommendations(pool);
+        }
+    }, [recentlyPlayed, likedSongs, songs, playlists, generateRecommendations, accessToken, audioFeaturesById]);
 
     useEffect(() => {
         if (!accessToken || !isPremium) return;
