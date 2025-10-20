@@ -62,6 +62,7 @@ export default function Page() {
     const [playerReady, setPlayerReady] = useState(false);
     const searchTimerRef = useRef(null);
     const isLoadingRef = useRef(false);
+    const volumeTimeoutRef = useRef(null);
     const CLIENT_ID = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID;
     const REDIRECT_URI = process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI;
     const AUTH_ENDPOINT = 'https://accounts.spotify.com/authorize';
@@ -784,17 +785,41 @@ export default function Page() {
                 document.body.removeChild(scriptElement);
             }
         };
-    }, [accessToken, isPremium, volume]);
+    // Note: we intentionally do NOT include `volume` here. Changing volume should
+    // update the existing player via spotifyPlayer.setVolume in a separate effect
+    // below. Including `volume` would reinitialize the Spotify Player and disrupt
+    // playback whenever the user adjusts the volume.
+    }, [accessToken, isPremium]);
 
     useEffect(() => {
+        // Clamp volume and apply safely to both HTML audio and Spotify SDK.
+        const clamped = Math.max(0, Math.min(100, Number(volume) || 0));
+        const volFraction = clamped / 100;
+
         if (audioRef.current) {
-            audioRef.current.volume = volume / 100;
+            try {
+                audioRef.current.volume = volFraction;
+            } catch (err) {
+                console.warn('Unable to set HTMLAudioElement volume:', err);
+            }
         }
-        if (spotifyPlayer) {
-            spotifyPlayer.setVolume(volume / 100).catch(err =>
-                console.error('Failed to set volume:', err)
-            );
-        }
+
+        // Debounce rapid volume changes before calling the Spotify SDK
+        if (volumeTimeoutRef.current) clearTimeout(volumeTimeoutRef.current);
+        volumeTimeoutRef.current = setTimeout(() => {
+            if (spotifyPlayer && typeof spotifyPlayer.setVolume === 'function' && playerReady) {
+                spotifyPlayer.setVolume(volFraction).catch(err =>
+                    console.error('Failed to set volume on Spotify player:', err)
+                );
+            }
+        }, 120);
+
+        return () => {
+            if (volumeTimeoutRef.current) {
+                clearTimeout(volumeTimeoutRef.current);
+                volumeTimeoutRef.current = null;
+            }
+        };
     }, [volume, spotifyPlayer]);
 
     useEffect(() => {
@@ -1043,23 +1068,11 @@ export default function Page() {
             const audio = audioRef.current;
             if (audio) {
                 if (isPlaying) {
-                    audio.pause();
+                    await audio.pause();
                     setIsPlaying(false);
                 } else {
-                    // Ensure source is set before trying to play (for preview mode)
-                    if (!audio.src && currentSong?.preview_url) {
-                        audio.src = currentSong.preview_url;
-                        audio.load();
-                    }
-                    audio.volume = volume / 100;
-                    try {
-                        await audio.play();
-                        setIsPlaying(true);
-                    } catch (err) {
-                        console.error('Audio play() failed:', err);
-                        setError('Playback blocked. Please click play again.');
-                        setIsPlaying(false);
-                    }
+                    await audio.play();
+                    setIsPlaying(true);
                 }
                 return;
             }
@@ -1233,9 +1246,6 @@ export default function Page() {
         <div className="app-container">
             <audio
                 ref={audioRef}
-                src={!isPremium ? (currentSong?.preview_url || '') : undefined}
-                preload="auto"
-                crossOrigin="anonymous"
                 onTimeUpdate={() => !isPremium && setCurrentTime(audioRef.current?.currentTime || 0)}
                 onLoadedMetadata={() => {
                     if (!isPremium && audioRef.current) {
