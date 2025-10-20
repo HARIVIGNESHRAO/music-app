@@ -51,6 +51,7 @@ export default function Page() {
     const [filterYear, setFilterYear] = useState('all');
     const [albums, setAlbums] = useState([]);
     const [years, setYears] = useState([]);
+    const [genres, setGenres] = useState([]);
     const [recommendations, setRecommendations] = useState([]);
     const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);
     const [selectedSongForPlaylist, setSelectedSongForPlaylist] = useState(null);
@@ -371,6 +372,8 @@ export default function Page() {
                     explicit: !!track.explicit,
                     release_date: track.album?.release_date || null,
                 }));
+                // Set songs so derived lists (artists, albums, years) update, then apply filters
+                setSongs(mappedSongs);
                 setFilteredSongs(mappedSongs);
             } catch (err) {
                 console.error('Search failed:', err);
@@ -1211,7 +1214,7 @@ export default function Page() {
         }
 
         setFilteredSongs(filtered);
-    }, [songs, filterGenre, filterArtist, searchQuery]);
+    }, [songs, filterGenre, filterArtist, filterAlbum, filterPopularityMin, filterDuration, filterExplicit, filterYear, searchQuery]);
 
     useEffect(() => {
         applyFilters();
@@ -1221,15 +1224,21 @@ export default function Page() {
     useEffect(() => {
         const albumSet = new Set();
         const yearSet = new Set();
+        const artistSet = new Set();
+        const genreSet = new Set();
         songs.forEach(s => {
             if (s.album) albumSet.add(s.album);
             if (s.release_date) {
                 const y = s.release_date.split('-')[0];
                 if (y) yearSet.add(y);
             }
+            if (s.artist) artistSet.add(s.artist);
+            if (s.genre) genreSet.add(s.genre);
         });
         setAlbums(Array.from(albumSet).sort());
         setYears(Array.from(yearSet).sort((a, b) => Number(b) - Number(a)));
+        setArtists(Array.from(artistSet).map((name, idx) => ({ id: idx + 1, name })).sort((a, b) => a.name.localeCompare(b.name)));
+        setGenres(Array.from(genreSet).sort());
     }, [songs]);
 
     const addSongToPlaylist = (playlistId) => {
@@ -1556,6 +1565,12 @@ export default function Page() {
                                         </div>
                                     </>
                                 )}
+                            </div>
+                            <div style={{ marginTop: 12 }}>
+                                <button className="reset-filters-btn" onClick={() => {
+                                    setFilterGenre('all'); setFilterArtist('all'); setFilterAlbum('all'); setFilterPopularityMin(0);
+                                    setFilterDuration('any'); setFilterExplicit('all'); setFilterYear('all'); setSearchQuery('');
+                                }}>Reset filters</button>
                             </div>
                         </div>
                     )}
