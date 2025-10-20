@@ -302,7 +302,7 @@ export default function Page() {
         } else {
             setQueue(prev => {
                 if (prev.length === 0) {
-                    const validSongs = (filteredSongs.length > 0 ? filteredSongs : songs).filter(s => s.id);
+                    const validSongs = (filteredSongsRef.current.length > 0 ? filteredSongsRef.current : songsRef.current).filter(s => s.id);
                     const index = validSongs.findIndex(s => s.id === song.id);
                     setCurrentIndex(index >= 0 ? index : 0);
                     return validSongs;
@@ -323,8 +323,14 @@ export default function Page() {
             return newPlayed.slice(0, 5);
         });
 
-        generateRecommendations([...songs, ...filteredSongs]);
-    }, [filteredSongs, songs, generateRecommendations]);
+        generateRecommendationsRef.current([...songsRef.current, ...filteredSongsRef.current]);
+    }, []);
+
+    const selectSongRef = useRef();
+
+    useEffect(() => {
+        selectSongRef.current = selectSong;
+    }, [selectSong]);
 
     const playNext = useCallback(() => {
         setQueue(currentQueue => {
@@ -346,13 +352,13 @@ export default function Page() {
                     }
                 }
 
-                selectSong(currentQueue[nextIndex]);
+                selectSongRef.current(currentQueue[nextIndex]);
                 return nextIndex;
             });
 
             return currentQueue;
         });
-    }, [shuffle, repeat, selectSong]);
+    }, [shuffle, repeat]);
 
     const playPrevious = useCallback(() => {
         if (queue.length === 0) return;
@@ -569,6 +575,21 @@ export default function Page() {
 
     const playNextRef = useRef();
     const repeatRef = useRef();
+    const filteredSongsRef = useRef(filteredSongs);
+    const songsRef = useRef(songs);
+    const generateRecommendationsRef = useRef();
+
+    useEffect(() => {
+        filteredSongsRef.current = filteredSongs;
+    }, [filteredSongs]);
+
+    useEffect(() => {
+        songsRef.current = songs;
+    }, [songs]);
+
+    useEffect(() => {
+        generateRecommendationsRef.current = generateRecommendations;
+    }, [generateRecommendations]);
 
     useEffect(() => {
         playNextRef.current = playNext;
