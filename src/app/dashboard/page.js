@@ -121,72 +121,6 @@ export default function Page() {
         window.localStorage.setItem(key, JSON.stringify({ data, timestamp: Date.now() }));
     };
 
-    // Artist genre cache utilities (per-artist cache to reduce API calls)
-    const ARTIST_GENRE_PREFIX = 'artist_genres_';
-    const ARTIST_GENRE_TTL = 24 * 60 * 60 * 1000; // 24 hours
-
-    const getCachedArtistGenres = (artistId) => {
-        try {
-            const raw = window.localStorage.getItem(ARTIST_GENRE_PREFIX + artistId);
-            if (!raw) return null;
-            const parsed = JSON.parse(raw);
-            if (!parsed || !parsed.timestamp) return null;
-            if (Date.now() - parsed.timestamp > ARTIST_GENRE_TTL) {
-                window.localStorage.removeItem(ARTIST_GENRE_PREFIX + artistId);
-                return null;
-            }
-            return parsed.genres || [];
-        } catch (e) {
-            return null;
-        }
-    };
-
-    const setCachedArtistGenres = (artistId, genresArr) => {
-        try {
-            window.localStorage.setItem(ARTIST_GENRE_PREFIX + artistId, JSON.stringify({ genres: genresArr || [], timestamp: Date.now() }));
-        } catch (e) {
-            // ignore localStorage failures
-        }
-    };
-
-    const fetchArtistGenres = async (token, artistIds = []) => {
-        if (!token || !artistIds || artistIds.length === 0) return {};
-        const result = {};
-        const missing = [];
-        for (const id of artistIds) {
-            const cached = getCachedArtistGenres(id);
-            if (cached && cached.length > 0) {
-                result[id] = cached;
-            } else {
-                missing.push(id);
-            }
-        }
-
-        // Spotify artists endpoint supports up to 50 ids per request
-        const BATCH = 50;
-        for (let i = 0; i < missing.length; i += BATCH) {
-            const batchIds = missing.slice(i, i + BATCH);
-            try {
-                const resp = await apiCallWithBackoff(() =>
-                    axios.get(`https://api.spotify.com/v1/artists?ids=${batchIds.join(',')}`, {
-                        headers: { Authorization: `Bearer ${token}` }
-                    })
-                );
-                (resp.data.artists || []).forEach(a => {
-                    const genres = a.genres || [];
-                    result[a.id] = genres;
-                    setCachedArtistGenres(a.id, genres);
-                });
-            } catch (err) {
-                console.warn('Failed to fetch artist genres batch:', batchIds, err);
-                // ensure missing ids exist in result as empty arrays to avoid undefined checks later
-                batchIds.forEach(id => { if (!result[id]) result[id] = []; });
-            }
-        }
-
-        return result;
-    };
-
     const generateCodeVerifier = () => {
         const array = new Uint8Array(32);
         window.crypto.getRandomValues(array);
@@ -345,8 +279,23 @@ export default function Page() {
                 )
             );
 
+            // Fetch genres for the artists referenced by these tracks
             const artistIds = Array.from(new Set(response.data.items.flatMap(t => (t.artists || []).map(a => a.id)).filter(Boolean)));
-            const artistMap = await fetchArtistGenres(token, artistIds);
+            let artistMap = {};
+            if (artistIds.length > 0) {
+                try {
+                    const artistsResp = await apiCallWithBackoff(() =>
+                        axios.get(`https://api.spotify.com/v1/artists?ids=${artistIds.join(',')}`, {
+                            headers: { Authorization: `Bearer ${token}` }
+                        })
+                    );
+                    (artistsResp.data.artists || []).forEach(a => {
+                        artistMap[a.id] = (a.genres || []);
+                    });
+                } catch (err) {
+                    console.warn('Failed to fetch artist genres:', err);
+                }
+            }
 
             const mappedSongs = response.data.items.map(track => {
                 const primaryArtistId = track.artists?.[0]?.id;
@@ -357,7 +306,7 @@ export default function Page() {
                     title: track.name,
                     artist: track.artists.map(a => a.name).join(', '),
                     album: track.album.name,
-                    duration: msToTime(track.duration_ms),
+                    duration: new Date(track.duration_ms).toISOString().substr(14, 5),
                     cover: track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
                     genre,
                     plays: track.popularity * 10000,
@@ -417,7 +366,21 @@ export default function Page() {
 
                     // gather artist ids for genre lookup
                     const playlistArtistIds = Array.from(new Set(tracksResponse.data.items.flatMap(i => (i.track?.artists || []).map(a => a.id)).filter(Boolean)));
-                    const playlistArtistMap = await fetchArtistGenres(token, playlistArtistIds);
+                    let playlistArtistMap = {};
+                    if (playlistArtistIds.length > 0) {
+                        try {
+                            const artistsResp = await apiCallWithBackoff(() =>
+                                axios.get(`https://api.spotify.com/v1/artists?ids=${playlistArtistIds.join(',')}`, {
+                                    headers: { Authorization: `Bearer ${token}` }
+                                })
+                            );
+                            (artistsResp.data.artists || []).forEach(a => {
+                                playlistArtistMap[a.id] = (a.genres || []);
+                            });
+                        } catch (err) {
+                            console.warn('Failed to fetch playlist artist genres:', err);
+                        }
+                    }
 
                     const playlistSongs = tracksResponse.data.items
                         .filter(item => item.track && item.track.id)
@@ -431,7 +394,7 @@ export default function Page() {
                                 title: t.name,
                                 artist: t.artists.map(a => a.name).join(', '),
                                 album: t.album.name,
-                                duration: msToTime(t.duration_ms),
+                                duration: new Date(t.duration_ms).toISOString().substr(14, 5),
                                 cover: t.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
                                 genre,
                                 plays: 0,
@@ -494,7 +457,7 @@ export default function Page() {
                 setError(null);
                 const response = await apiCallWithBackoff(() =>
                     axios.get(
-                        `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10&fields=tracks(items(id,name,artists(id,name,uri),album(name,images),duration_ms,preview_url,uri,popularity))`,
+                        `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10&fields=tracks(items(id,name,artists(name),album(name,images),duration_ms,preview_url,uri,popularity))`,
                         {
                             headers: { Authorization: `Bearer ${accessToken}` },
                         }
@@ -502,7 +465,21 @@ export default function Page() {
                 );
                 // Ensure we requested artist ids in the search fields
                 const trackArtistIds = Array.from(new Set(response.data.tracks.items.flatMap(t => (t.artists || []).map(a => a.id)).filter(Boolean)));
-                const searchArtistMap = await fetchArtistGenres(accessToken, trackArtistIds);
+                let searchArtistMap = {};
+                if (trackArtistIds.length > 0) {
+                    try {
+                        const artistsResp = await apiCallWithBackoff(() =>
+                            axios.get(`https://api.spotify.com/v1/artists?ids=${trackArtistIds.join(',')}`, {
+                                headers: { Authorization: `Bearer ${accessToken}` }
+                            })
+                        );
+                        (artistsResp.data.artists || []).forEach(a => {
+                            searchArtistMap[a.id] = (a.genres || []);
+                        });
+                    } catch (err) {
+                        console.warn('Failed to fetch artist genres for search results:', err);
+                    }
+                }
 
                 const mappedSongs = response.data.tracks.items.map(track => {
                     const primaryArtistId = track.artists?.[0]?.id;
@@ -513,7 +490,7 @@ export default function Page() {
                         title: track.name,
                         artist: track.artists.map(a => a.name).join(', '),
                         album: track.album.name,
-                        duration: msToTime(track.duration_ms),
+                        duration: new Date(track.duration_ms).toISOString().substr(14, 5),
                         cover: track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
                         genre,
                         plays: track.popularity * 10000,
@@ -908,36 +885,22 @@ export default function Page() {
 
                     if (state.track_window.current_track) {
                         const track = state.track_window.current_track;
-                        (async () => {
-                            let genre = 'Unknown';
-                            try {
-                                const artistId = track.artists?.[0]?.id;
-                                if (artistId && accessToken) {
-                                    const map = await fetchArtistGenres(accessToken, [artistId]);
-                                    const g = map[artistId] || [];
-                                    if (g.length > 0) genre = g[0];
-                                }
-                            } catch (err) {
-                                console.warn('Failed to fetch artist genre for SDK track:', err);
-                            }
-
-                            const newSong = {
-                                id: track.id,
-                                title: track.name,
-                                artist: track.artists.map(a => a.name).join(', '),
-                                album: track.album.name,
-                                duration: msToTime(track.duration),
-                                cover: track.album.images[0]?.url || 'default-cover',
-                                genre,
-                                plays: 0,
-                                spotify_uri: track.uri
-                            };
-                            setCurrentSong(prev => (prev && prev.id === newSong.id) ? prev : newSong);
-                            setRecentlyPlayed(prev => {
-                                const newPlayed = [newSong, ...prev.filter(s => s.id !== track.id)];
-                                return newPlayed; // keep full session history for recommendations
-                            });
-                        })();
+                        const newSong = {
+                            id: track.id,
+                            title: track.name,
+                            artist: track.artists.map(a => a.name).join(', '),
+                            album: track.album.name,
+                            duration: new Date(track.duration).toISOString().substr(14, 5),
+                            cover: track.album.images[0]?.url || 'default-cover',
+                            genre: 'Unknown',
+                            plays: 0,
+                            spotify_uri: track.uri
+                        };
+                        setCurrentSong(newSong);
+                        setRecentlyPlayed(prev => {
+                            const newPlayed = [newSong, ...prev.filter(s => s.id !== track.id)];
+                            return newPlayed; // keep full session history for recommendations
+                        });
                     }
                 });
 
