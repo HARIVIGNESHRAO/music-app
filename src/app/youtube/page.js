@@ -463,15 +463,40 @@ export default function Page() {
     const handleVolumeChange = (e) => {
         const newVolume = Number(e.target.value);
         setVolume(newVolume);
+        // Use safe setter to avoid calling into the YouTube iframe API
+        // before the internal iframe is attached/has a valid src. This
+        // prevents uncaught errors from inside the widget API (eg. reading
+        // 'src' of null) which can happen in some race conditions.
+        safeSetVolume(newVolume);
+    };
 
-        if (youtubePlayer && typeof youtubePlayer.setVolume === 'function') {
-            try {
-                youtubePlayer.setVolume(newVolume);
-            } catch (err) {
-                console.error('Failed to set volume:', err);
+    // Safely set volume on the YouTube player when the internal iframe is ready.
+    // Retries a few times if the iframe isn't available yet.
+    const safeSetVolume = useCallback((vol, player = youtubePlayer, maxAttempts = 20, attempt = 0) => {
+        if (!player || typeof player.setVolume !== 'function') return;
+
+        try {
+            const iframe = typeof player.getIframe === 'function'
+                ? player.getIframe()
+                : playerRef.current && playerRef.current.querySelector('iframe');
+
+            if (!iframe || iframe.src == null) {
+                if (attempt < maxAttempts) {
+                    return setTimeout(() => safeSetVolume(vol, player, maxAttempts, attempt + 1), 100);
+                }
+                console.error('safeSetVolume: iframe not ready or src is null/undefined');
+                return;
+            }
+
+            // iframe exists and has src - call player API
+            player.setVolume(vol);
+        } catch (err) {
+            console.error('safeSetVolume error:', err);
+            if (attempt < maxAttempts) {
+                return setTimeout(() => safeSetVolume(vol, player, maxAttempts, attempt + 1), 150);
             }
         }
-    };
+    }, [youtubePlayer]);
     const handleSharePlaylist = async (playlist) => {
         if (!playlist || !playlist.id) {
             console.error('Invalid playlist:', playlist);
@@ -591,7 +616,8 @@ export default function Page() {
                     events: {
                         onReady: (event) => {
                             setYoutubePlayer(event.target);
-                            try { event.target.setVolume(volume); } catch (err) { console.error('Failed to set initial volume:', err); }
+                            // Use safeSetVolume to avoid iframe race issues
+                            try { safeSetVolume(volume, event.target); } catch (err) { console.error('Failed to set initial volume:', err); }
                         },
                         onStateChange: handleStateChange,
                         onError: (event) => {
@@ -653,9 +679,10 @@ export default function Page() {
 
     useEffect(() => {
         if (youtubePlayer) {
-            youtubePlayer.setVolume(volume);
+            // Defer to safeSetVolume which will retry until the iframe is ready
+            safeSetVolume(volume);
         }
-    }, [volume, youtubePlayer]);
+    }, [volume, youtubePlayer, safeSetVolume]);
 
     useEffect(() => {
         if (youtubePlayer && currentSong?.id) {
@@ -719,7 +746,7 @@ export default function Page() {
                 try {
                     youtubePlayer.loadVideoById(song.id);
                     if (typeof youtubePlayer.setVolume === 'function') {
-                        try { youtubePlayer.setVolume(volume); } catch (err) { console.error('setVolume failed', err); }
+                        try { safeSetVolume(volume); } catch (err) { console.error('setVolume failed', err); }
                     }
                     if (typeof youtubePlayer.playVideo === 'function') {
                         youtubePlayer.playVideo();
