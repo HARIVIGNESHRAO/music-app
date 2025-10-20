@@ -1517,31 +1517,37 @@ export default function Page() {
                                 <div className="filter-group">
                                     <label className="filter-label">Genres:</label>
                                     <div className="filter-checkboxes">
-                                        {AVAILABLE_GENRES.map(genre => (
+                                        {availableGenres && availableGenres.length > 0 ? availableGenres.map(genre => (
                                             <label key={genre} className="checkbox-label">
                                                 <input
                                                     type="checkbox"
                                                     checked={filterGenres.includes(genre)}
                                                     onChange={() => toggleGenreFilter(genre)}
+                                                    disabled={!availableGenres.includes(genre)}
                                                 />
                                                 {genre}
                                             </label>
-                                        ))}
+                                        )) : (
+                                            <p className="no-options">No genres available</p>
+                                        )}
                                     </div>
                                 </div>
                                 <div className="filter-group">
                                     <label className="filter-label">Artists:</label>
                                     <div className="filter-checkboxes">
-                                        {allArtists.map(artist => (
+                                        {availableArtists && availableArtists.length > 0 ? availableArtists.map(artist => (
                                             <label key={artist} className="checkbox-label">
                                                 <input
                                                     type="checkbox"
                                                     checked={filterArtists.includes(artist)}
                                                     onChange={() => toggleArtistFilter(artist)}
+                                                    disabled={!availableArtists.includes(artist)}
                                                 />
                                                 {artist}
                                             </label>
-                                        ))}
+                                        )) : (
+                                            <p className="no-options">No artists available</p>
+                                        )}
                                     </div>
                                 </div>
                                 <div className="filter-group">
