@@ -51,6 +51,7 @@ export default function Page() {
     const [recentlyPlayed, setRecentlyPlayed] = useState([]);
     const [youtubePlayer, setYoutubePlayer] = useState(null);
     const [isListening, setIsListening] = useState(false);
+    const [micDiagnostic, setMicDiagnostic] = useState(null);
     const playerRef = useRef(null);
     const searchTimerRef = useRef(null);
     const recognitionRef = useRef(null);
@@ -187,8 +188,8 @@ export default function Page() {
         setRecommendations(recommendedSongs);
     }, [recentlyPlayed, likedSongs, songs, filteredSongs]);
 
-    const startVoiceSearch = () => {
-        // Check browser support
+    const startVoiceSearch = async () => {
+        // Check browser support for SpeechRecognition
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
         if (!SpeechRecognition) {
@@ -196,17 +197,68 @@ export default function Page() {
             return;
         }
 
-        // Check if already listening
-        if (isListening && recognitionRef.current) {
+        if (isListening && recognitionRef.current) return;
+
+        // Ensure we're in a secure context: getUserMedia requires HTTPS or localhost
+        const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        if (!window.isSecureContext && !isLocalhost) {
+            setError('Voice search requires a secure connection (HTTPS) or running on localhost. Please open the app over HTTPS or use localhost.');
             return;
         }
 
         try {
-            // Create new recognition instance
+            // Prefer to request microphone access directly. This reliably triggers the browser prompt.
+            if (navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function') {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true
+                        }
+                    });
+
+                    // Immediately stop tracks; we only wanted permission prompt
+                    stream.getTracks().forEach(t => t.stop());
+                } catch (mediaError) {
+                    console.error('getUserMedia error:', mediaError);
+                    if (mediaError.name === 'NotAllowedError' || mediaError.name === 'PermissionDeniedError') {
+                        setError('Microphone access denied. When the browser asks, click "Allow". If you previously blocked, enable microphone for this site in browser settings and refresh.');
+                        return;
+                    }
+                    if (mediaError.name === 'NotFoundError') {
+                        setError('No microphone found. Please connect a microphone and try again.');
+                        return;
+                    }
+                    if (mediaError.name === 'NotReadableError') {
+                        setError('Microphone is already in use by another application.');
+                        return;
+                    }
+                    setError('Unable to access microphone. Please check your browser settings.');
+                    return;
+                }
+            } else {
+                // If getUserMedia isn't available, try Permissions API, otherwise show an informative message
+                if (navigator.permissions && navigator.permissions.query) {
+                    try {
+                        const permissionResult = await navigator.permissions.query({ name: 'microphone' });
+                        if (permissionResult.state === 'denied') {
+                            setError('Microphone access is blocked. Please allow microphone access in your browser settings and refresh the page.');
+                            return;
+                        }
+                    } catch (permErr) {
+                        console.warn('Permissions API failed:', permErr);
+                    }
+                } else {
+                    setError('Your browser does not support microphone access APIs. Please use a modern browser.');
+                    return;
+                }
+            }
+
+            // At this point permission has either been granted or will be requested by the browser.
             const recognition = new SpeechRecognition();
             recognitionRef.current = recognition;
 
-            // Configure recognition
             recognition.continuous = false;
             recognition.interimResults = false;
             recognition.lang = 'en-US';
@@ -228,26 +280,15 @@ export default function Page() {
             recognition.onerror = (event) => {
                 console.error('Voice recognition error:', event.error);
                 setIsListening(false);
-
-                // Provide specific error messages
                 switch (event.error) {
                     case 'not-allowed':
-                        setError('Microphone access denied. Please enable microphone permissions.');
+                        setError('Microphone access denied. Please enable microphone permissions in your browser.');
                         break;
                     case 'no-speech':
                         setError('No speech detected. Please try again.');
                         break;
                     case 'network':
                         setError('Network error. Voice search requires internet connection.');
-                        break;
-                    case 'aborted':
-                        setError('Voice recognition was aborted.');
-                        break;
-                    case 'audio-capture':
-                        setError('No microphone found. Please connect a microphone.');
-                        break;
-                    case 'language-not-supported':
-                        setError('Language not supported by your browser.');
                         break;
                     default:
                         setError(`Voice recognition failed: ${event.error}`);
@@ -260,9 +301,7 @@ export default function Page() {
                 recognitionRef.current = null;
             };
 
-            // Start recognition
             recognition.start();
-
         } catch (err) {
             console.error('Failed to start voice recognition:', err);
             setError('Failed to start voice search. Please try again.');
@@ -302,7 +341,7 @@ export default function Page() {
         } else {
             setQueue(prev => {
                 if (prev.length === 0) {
-                    const validSongs = (filteredSongs.length > 0 ? filteredSongs : songs).filter(s => s.id);
+                    const validSongs = (filteredSongsRef.current.length > 0 ? filteredSongsRef.current : songsRef.current).filter(s => s.id);
                     const index = validSongs.findIndex(s => s.id === song.id);
                     setCurrentIndex(index >= 0 ? index : 0);
                     return validSongs;
@@ -323,8 +362,14 @@ export default function Page() {
             return newPlayed.slice(0, 5);
         });
 
-        generateRecommendations([...songs, ...filteredSongs]);
-    }, [filteredSongs, songs, generateRecommendations]);
+        generateRecommendationsRef.current([...songsRef.current, ...filteredSongsRef.current]);
+    }, []);
+
+    const selectSongRef = useRef();
+
+    useEffect(() => {
+        selectSongRef.current = selectSong;
+    }, [selectSong]);
 
     const playNext = useCallback(() => {
         setQueue(currentQueue => {
@@ -346,13 +391,13 @@ export default function Page() {
                     }
                 }
 
-                selectSong(currentQueue[nextIndex]);
+                selectSongRef.current(currentQueue[nextIndex]);
                 return nextIndex;
             });
 
             return currentQueue;
         });
-    }, [shuffle, repeat, selectSong]);
+    }, [shuffle, repeat]);
 
     const playPrevious = useCallback(() => {
         if (queue.length === 0) return;
@@ -567,6 +612,32 @@ export default function Page() {
         window.open(shareLink, '_blank', 'width=600,height=400');
     };
 
+    const playNextRef = useRef();
+    const repeatRef = useRef();
+    const filteredSongsRef = useRef(filteredSongs);
+    const songsRef = useRef(songs);
+    const generateRecommendationsRef = useRef();
+
+    useEffect(() => {
+        filteredSongsRef.current = filteredSongs;
+    }, [filteredSongs]);
+
+    useEffect(() => {
+        songsRef.current = songs;
+    }, [songs]);
+
+    useEffect(() => {
+        generateRecommendationsRef.current = generateRecommendations;
+    }, [generateRecommendations]);
+
+    useEffect(() => {
+        playNextRef.current = playNext;
+    }, [playNext]);
+
+    useEffect(() => {
+        repeatRef.current = repeat;
+    }, [repeat]);
+
     const handleStateChange = useCallback((event) => {
         if (event.data === window.YT.PlayerState.PLAYING) {
             setIsPlaying(true);
@@ -576,11 +647,11 @@ export default function Page() {
         } else if (event.data === window.YT.PlayerState.PAUSED) {
             setIsPlaying(false);
         } else if (event.data === window.YT.PlayerState.ENDED) {
-            if (repeat === 'one') {
+            if (repeatRef.current === 'one') {
                 event.target.seekTo(0);
                 event.target.playVideo();
             } else {
-                playNext();
+                playNextRef.current();
             }
         } else if (event.data === window.YT.PlayerState.BUFFERING) {
             setIsLoadingSong(true);
@@ -588,7 +659,7 @@ export default function Page() {
         } else if (event.data === window.YT.PlayerState.UNSTARTED) {
             setIsLoadingSong(true);
         }
-    }, [repeat, playNext]);
+    }, []);
 
     useEffect(() => {
         // Create the YouTube Player only after the playerRef node exists.
@@ -1066,8 +1137,44 @@ export default function Page() {
         searchSongs(query);
     };
 
+    // currentPool represents the dataset we should apply filters against.
+    // When a search is active we use the search results (filteredSongs), otherwise the full songs list.
+    const currentPool = React.useMemo(() => {
+        try {
+            if (searchQuery && filteredSongs && filteredSongs.length > 0) return filteredSongs;
+            // If searchQuery exists but filteredSongs is empty it means no results; still return []
+            if (searchQuery) return filteredSongs;
+        } catch (e) {
+            // fallback
+        }
+        return songs || [];
+    }, [searchQuery, filteredSongs, songs]);
+
+    // Available genres derived from the current pool and other active filter constraints (artists/popularity)
+    const availableGenres = React.useMemo(() => {
+        const pool = currentPool || [];
+        let p = pool;
+        if (filterArtists.length > 0) {
+            p = p.filter(s => filterArtists.includes(s.artist));
+        }
+        p = p.filter(s => (s.plays || 0) >= (filterPopularity[0] || 0) && (s.plays || 0) <= (filterPopularity[1] || Infinity));
+        return [...new Set(p.map(s => s.genre || 'Music'))].sort();
+    }, [currentPool, filterArtists, filterPopularity]);
+
+    // Available artists derived from the current pool and other active filter constraints (genres/popularity)
+    const availableArtists = React.useMemo(() => {
+        const pool = currentPool || [];
+        let p = pool;
+        if (filterGenres.length > 0) {
+            p = p.filter(s => filterGenres.includes(s.genre));
+        }
+        p = p.filter(s => (s.plays || 0) >= (filterPopularity[0] || 0) && (s.plays || 0) <= (filterPopularity[1] || Infinity));
+        return [...new Set(p.map(s => s.artist || 'Unknown Artist'))].sort();
+    }, [currentPool, filterGenres, filterPopularity]);
+
     const applyFilters = useCallback(() => {
-        let filtered = [...songs];
+        let base = currentPool || songs || [];
+        let filtered = [...base];
 
         if (filterGenres.length > 0) {
             filtered = filtered.filter(song => filterGenres.includes(song.genre));
@@ -1083,11 +1190,11 @@ export default function Page() {
             );
         }
         filtered = filtered.filter(song =>
-            song.plays >= filterPopularity[0] && song.plays <= filterPopularity[1]
+            (song.plays || 0) >= (filterPopularity[0] || 0) && (song.plays || 0) <= (filterPopularity[1] || Infinity)
         );
 
         setFilteredSongs(filtered);
-    }, [songs, filterGenres, filterArtists, searchQuery, filterPopularity]);
+    }, [currentPool, songs, filterGenres, filterArtists, searchQuery, filterPopularity]);
 
     useEffect(() => {
         applyFilters();
@@ -1411,31 +1518,37 @@ export default function Page() {
                                 <div className="filter-group">
                                     <label className="filter-label">Genres:</label>
                                     <div className="filter-checkboxes">
-                                        {AVAILABLE_GENRES.map(genre => (
+                                        {availableGenres && availableGenres.length > 0 ? availableGenres.map(genre => (
                                             <label key={genre} className="checkbox-label">
                                                 <input
                                                     type="checkbox"
                                                     checked={filterGenres.includes(genre)}
                                                     onChange={() => toggleGenreFilter(genre)}
+                                                    disabled={!availableGenres.includes(genre)}
                                                 />
                                                 {genre}
                                             </label>
-                                        ))}
+                                        )) : (
+                                            <p className="no-options">No genres available</p>
+                                        )}
                                     </div>
                                 </div>
                                 <div className="filter-group">
                                     <label className="filter-label">Artists:</label>
                                     <div className="filter-checkboxes">
-                                        {allArtists.map(artist => (
+                                        {availableArtists && availableArtists.length > 0 ? availableArtists.map(artist => (
                                             <label key={artist} className="checkbox-label">
                                                 <input
                                                     type="checkbox"
                                                     checked={filterArtists.includes(artist)}
                                                     onChange={() => toggleArtistFilter(artist)}
+                                                    disabled={!availableArtists.includes(artist)}
                                                 />
                                                 {artist}
                                             </label>
-                                        ))}
+                                        )) : (
+                                            <p className="no-options">No artists available</p>
+                                        )}
                                     </div>
                                 </div>
                                 <div className="filter-group">
