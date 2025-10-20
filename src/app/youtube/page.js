@@ -52,6 +52,9 @@ export default function Page() {
     const [youtubePlayer, setYoutubePlayer] = useState(null);
     const [isListening, setIsListening] = useState(false);
     const playerRef = useRef(null);
+    const youtubePlayerRef = useRef(null);
+    const playNextRef = useRef(null);
+    const handleStateChangeRef = useRef(null);
     const searchTimerRef = useRef(null);
     const recognitionRef = useRef(null);
     const [searchCache, setSearchCache] = useState({});
@@ -333,6 +336,10 @@ export default function Page() {
         });
     }, [shuffle, repeat, selectSong]);
 
+    // Keep a ref to the latest playNext so event handlers can call it without
+    // forcing player re-creation when callbacks change.
+    useEffect(() => { playNextRef.current = playNext; }, [playNext]);
+
     const playPrevious = useCallback(() => {
         if (queue.length === 0) return;
 
@@ -599,6 +606,10 @@ export default function Page() {
         }
     }, [repeat, playNext]);
 
+    // Keep a ref to the latest handleStateChange so the player can call the
+    // newest handler without depending on its identity in the create effect.
+    useEffect(() => { handleStateChangeRef.current = handleStateChange; }, [handleStateChange]);
+
     useEffect(() => {
         // Create the YouTube Player only after the playerRef node exists.
         // Some race conditions cause the YouTube widget to access an iframe
@@ -610,16 +621,21 @@ export default function Page() {
             if (!playerRef.current || !window.YT || !window.YT.Player) return false;
             try {
                 /* eslint-disable no-new */
-                new window.YT.Player(playerRef.current, {
+                const playerInstance = new window.YT.Player(playerRef.current, {
                     height: '0',
                     width: '0',
                     events: {
                         onReady: (event) => {
                             setYoutubePlayer(event.target);
+                            youtubePlayerRef.current = event.target;
                             // Use safeSetVolume to avoid iframe race issues
                             try { safeSetVolume(volume, event.target); } catch (err) { console.error('Failed to set initial volume:', err); }
                         },
-                        onStateChange: handleStateChange,
+                        onStateChange: (event) => {
+                            // Call latest handler from ref to avoid stale closures
+                            if (handleStateChangeRef.current) return handleStateChangeRef.current(event);
+                            return handleStateChange(event);
+                        },
                         onError: (event) => {
                             console.error('YouTube Player error:', event.data);
                             if ([2, 5, 100, 101, 150].includes(event.data)) {
@@ -630,6 +646,8 @@ export default function Page() {
                         }
                     }
                 });
+                // keep a stable ref
+                youtubePlayerRef.current = playerInstance;
                 return true;
             } catch (err) {
                 console.error('createPlayerIfReady error:', err);
@@ -661,36 +679,37 @@ export default function Page() {
         return () => {
             if (retryTimer) clearTimeout(retryTimer);
             if (scriptTag && scriptTag.parentNode) scriptTag.parentNode.removeChild(scriptTag);
-            if (youtubePlayer && typeof youtubePlayer.destroy === 'function') {
-                try { youtubePlayer.destroy(); } catch (err) { console.error('Error destroying player:', err); }
+            const p = youtubePlayerRef.current;
+            if (p && typeof p.destroy === 'function') {
+                try { p.destroy(); } catch (err) { console.error('Error destroying player:', err); }
             }
         };
     }, [handleStateChange, playNext]);
 
     useEffect(() => {
         let interval;
-        if (isPlaying && youtubePlayer) {
+        const p = youtubePlayerRef.current;
+        if (isPlaying && p) {
             interval = setInterval(() => {
-                setCurrentTime(youtubePlayer.getCurrentTime());
+                try { setCurrentTime(p.getCurrentTime()); } catch (err) { console.error('getCurrentTime error', err); }
             }, 1000);
         }
         return () => clearInterval(interval);
-    }, [isPlaying, youtubePlayer]);
+    }, [isPlaying]);
 
     useEffect(() => {
-        if (youtubePlayer) {
-            // Defer to safeSetVolume which will retry until the iframe is ready
-            safeSetVolume(volume);
-        }
-    }, [volume, youtubePlayer, safeSetVolume]);
+        const p = youtubePlayerRef.current;
+        if (p) safeSetVolume(volume, p);
+    }, [volume, safeSetVolume]);
 
     useEffect(() => {
-        if (youtubePlayer && currentSong?.id) {
+        const p = youtubePlayerRef.current;
+        if (p && currentSong?.id) {
             setIsLoadingSong(true);        
             const tryLoad = (attempt = 0) => {
                 try {
-                    const iframe = youtubePlayer && typeof youtubePlayer.getIframe === 'function'
-                        ? youtubePlayer.getIframe()
+                    const iframe = p && typeof p.getIframe === 'function'
+                        ? p.getIframe()
                         : playerRef.current && playerRef.current.querySelector('iframe');
 
                     if (!iframe) {
@@ -707,7 +726,7 @@ export default function Page() {
                         return;
                     }
 
-                    youtubePlayer.loadVideoById(currentSong.id);
+                    p.loadVideoById(currentSong.id);
                 } catch (err) {
                     console.error('tryLoad error:', err);
                     if (attempt < 20) return setTimeout(() => tryLoad(attempt + 1), 150);
@@ -717,10 +736,11 @@ export default function Page() {
 
             tryLoad(0);
         }
-    }, [currentSong, youtubePlayer]);
+    }, [currentSong]);
 
     const playSong = useCallback(async (song) => {
-        if (!youtubePlayer || !song) return;
+        const p = youtubePlayerRef.current;
+        if (!p || !song) return;
 
         setIsLoadingSong(true);
         setCurrentSong(song);
@@ -728,8 +748,8 @@ export default function Page() {
         // Retry a few times to ensure the internal iframe is attached
         const tryPlay = (attempt = 0) => {
             try {
-                const iframe = youtubePlayer && typeof youtubePlayer.getIframe === 'function'
-                    ? youtubePlayer.getIframe()
+                const iframe = p && typeof p.getIframe === 'function'
+                    ? p.getIframe()
                     : playerRef.current && playerRef.current.querySelector('iframe');
 
                 if (!iframe) {
@@ -744,12 +764,12 @@ export default function Page() {
 
                 // Safe to call player API
                 try {
-                    youtubePlayer.loadVideoById(song.id);
-                    if (typeof youtubePlayer.setVolume === 'function') {
-                        try { safeSetVolume(volume); } catch (err) { console.error('setVolume failed', err); }
+                    p.loadVideoById(song.id);
+                    if (typeof p.setVolume === 'function') {
+                        try { safeSetVolume(volume, p); } catch (err) { console.error('setVolume failed', err); }
                     }
-                    if (typeof youtubePlayer.playVideo === 'function') {
-                        youtubePlayer.playVideo();
+                    if (typeof p.playVideo === 'function') {
+                        p.playVideo();
                     }
                 } catch (innerErr) {
                     console.error('player API error:', innerErr);
@@ -764,7 +784,7 @@ export default function Page() {
         };
 
         tryPlay(0);
-    }, [youtubePlayer, volume]);
+    }, [volume]);
 
     const fetchPopularSongs = useCallback(async () => {
         try {
@@ -994,17 +1014,14 @@ export default function Page() {
     };
 
     const togglePlay = () => {
-        if (!youtubePlayer || !currentSong) return;
+        const p = youtubePlayerRef.current;
+        if (!p || !currentSong) return;
 
         try {
             if (isPlaying) {
-                if (typeof youtubePlayer.pauseVideo === 'function') {
-                    youtubePlayer.pauseVideo();
-                }
+                if (typeof p.pauseVideo === 'function') p.pauseVideo();
             } else {
-                if (typeof youtubePlayer.playVideo === 'function') {
-                    youtubePlayer.playVideo();
-                }
+                if (typeof p.playVideo === 'function') p.playVideo();
             }
         } catch (err) {
             console.error('Failed to toggle play/pause:', err);
@@ -1012,15 +1029,14 @@ export default function Page() {
     };
 
     const handleSeek = (e) => {
-        if (!youtubePlayer) return;
+        const p = youtubePlayerRef.current;
+        if (!p) return;
 
         const seekTime = Number(e.target.value);
         setCurrentTime(seekTime);
 
         try {
-            if (typeof youtubePlayer.seekTo === 'function') {
-                youtubePlayer.seekTo(seekTime, true);
-            }
+            if (typeof p.seekTo === 'function') p.seekTo(seekTime, true);
         } catch (err) {
             console.error('Failed to seek:', err);
         }
