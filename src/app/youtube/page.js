@@ -1142,8 +1142,44 @@ export default function Page() {
         searchSongs(query);
     };
 
+    // currentPool represents the dataset we should apply filters against.
+    // When a search is active we use the search results (filteredSongs), otherwise the full songs list.
+    const currentPool = React.useMemo(() => {
+        try {
+            if (searchQuery && filteredSongs && filteredSongs.length > 0) return filteredSongs;
+            // If searchQuery exists but filteredSongs is empty it means no results; still return []
+            if (searchQuery) return filteredSongs;
+        } catch (e) {
+            // fallback
+        }
+        return songs || [];
+    }, [searchQuery, filteredSongs, songs]);
+
+    // Available genres derived from the current pool and other active filter constraints (artists/popularity)
+    const availableGenres = React.useMemo(() => {
+        const pool = currentPool || [];
+        let p = pool;
+        if (filterArtists.length > 0) {
+            p = p.filter(s => filterArtists.includes(s.artist));
+        }
+        p = p.filter(s => (s.plays || 0) >= (filterPopularity[0] || 0) && (s.plays || 0) <= (filterPopularity[1] || Infinity));
+        return [...new Set(p.map(s => s.genre || 'Music'))].sort();
+    }, [currentPool, filterArtists, filterPopularity]);
+
+    // Available artists derived from the current pool and other active filter constraints (genres/popularity)
+    const availableArtists = React.useMemo(() => {
+        const pool = currentPool || [];
+        let p = pool;
+        if (filterGenres.length > 0) {
+            p = p.filter(s => filterGenres.includes(s.genre));
+        }
+        p = p.filter(s => (s.plays || 0) >= (filterPopularity[0] || 0) && (s.plays || 0) <= (filterPopularity[1] || Infinity));
+        return [...new Set(p.map(s => s.artist || 'Unknown Artist'))].sort();
+    }, [currentPool, filterGenres, filterPopularity]);
+
     const applyFilters = useCallback(() => {
-        let filtered = [...songs];
+        let base = currentPool || songs || [];
+        let filtered = [...base];
 
         if (filterGenres.length > 0) {
             filtered = filtered.filter(song => filterGenres.includes(song.genre));
@@ -1159,11 +1195,11 @@ export default function Page() {
             );
         }
         filtered = filtered.filter(song =>
-            song.plays >= filterPopularity[0] && song.plays <= filterPopularity[1]
+            (song.plays || 0) >= (filterPopularity[0] || 0) && (song.plays || 0) <= (filterPopularity[1] || Infinity)
         );
 
         setFilteredSongs(filtered);
-    }, [songs, filterGenres, filterArtists, searchQuery, filterPopularity]);
+    }, [currentPool, songs, filterGenres, filterArtists, searchQuery, filterPopularity]);
 
     useEffect(() => {
         applyFilters();
