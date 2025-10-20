@@ -187,7 +187,7 @@ export default function Page() {
         setRecommendations(recommendedSongs);
     }, [recentlyPlayed, likedSongs, songs, filteredSongs]);
 
-    const startVoiceSearch = () => {
+    const startVoiceSearch = async () => {
         // Check browser support
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
@@ -202,6 +202,27 @@ export default function Page() {
         }
 
         try {
+            // First, check if we have microphone permission
+            const permissionResult = await navigator.permissions.query({ name: 'microphone' });
+            
+            if (permissionResult.state === 'denied') {
+                setError('Microphone access is blocked. Please allow microphone access in your browser settings.');
+                return;
+            }
+
+            // If permission is not granted yet, request it
+            if (permissionResult.state === 'prompt') {
+                try {
+                    await navigator.mediaDevices.getUserMedia({ audio: true });
+                } catch (err) {
+                    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                        setError('Please allow microphone access when prompted to use voice search.');
+                        return;
+                    }
+                    throw err;
+                }
+            }
+
             // Create new recognition instance
             const recognition = new SpeechRecognition();
             recognitionRef.current = recognition;
