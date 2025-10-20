@@ -1028,7 +1028,7 @@ export default function Page() {
         window.localStorage.removeItem('spotify_token');
         window.localStorage.removeItem('spotify_code_verifier');
         window.localStorage.removeItem('user');
-        router.push('/login');
+        router.push('/dashboard');
     };
 
     const togglePlay = async () => {
@@ -1043,11 +1043,23 @@ export default function Page() {
             const audio = audioRef.current;
             if (audio) {
                 if (isPlaying) {
-                    await audio.pause();
+                    audio.pause();
                     setIsPlaying(false);
                 } else {
-                    await audio.play();
-                    setIsPlaying(true);
+                    // Ensure source is set before trying to play (for preview mode)
+                    if (!audio.src && currentSong?.preview_url) {
+                        audio.src = currentSong.preview_url;
+                        audio.load();
+                    }
+                    audio.volume = volume / 100;
+                    try {
+                        await audio.play();
+                        setIsPlaying(true);
+                    } catch (err) {
+                        console.error('Audio play() failed:', err);
+                        setError('Playback blocked. Please click play again.');
+                        setIsPlaying(false);
+                    }
                 }
                 return;
             }
@@ -1221,6 +1233,9 @@ export default function Page() {
         <div className="app-container">
             <audio
                 ref={audioRef}
+                src={!isPremium ? (currentSong?.preview_url || '') : undefined}
+                preload="auto"
+                crossOrigin="anonymous"
                 onTimeUpdate={() => !isPremium && setCurrentTime(audioRef.current?.currentTime || 0)}
                 onLoadedMetadata={() => {
                     if (!isPremium && audioRef.current) {
