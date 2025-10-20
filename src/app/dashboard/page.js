@@ -146,59 +146,117 @@ export default function Page() {
             return;
         }
 
-        const allGenres = [...new Set(allSongs.map(song => song.genre))];
-        const allArtists = [...new Set(allSongs.map(song => song.artist))];
+        // Build feature space
+        const allGenres = [...new Set(allSongs.map(song => song.genre).filter(Boolean))];
+        const allArtists = [...new Set(allSongs.map(song => song.artist).filter(Boolean))];
+
+        const toSeconds = (d) => {
+            if (!d) return 0;
+            const parts = d.split(':').map(Number);
+            return parts[0] * 60 + (parts[1] || 0);
+        };
+
+        const maxPlays = Math.max(...allSongs.map(s => s.plays || 0), 1);
+        const maxPopularity = Math.max(...allSongs.map(s => s.popularity || 0), 1);
+        const maxDuration = Math.max(...allSongs.map(s => toSeconds(s.duration) || 0), 1);
 
         const createFeatureVector = (song) => {
-            const genreVector = allGenres.map(genre => song.genre === genre ? 1 : 0);
-            const artistVector = allArtists.map(artist => song.artist === artist ? 1 : 0);
-            const maxPlays = Math.max(...allSongs.map(s => s.plays), 1);
-            const plays = song.plays / maxPlays;
-            return [...genreVector, ...artistVector, plays];
+            const genreVector = allGenres.map(g => song.genre === g ? 1 : 0);
+            const artistVector = allArtists.map(a => song.artist === a ? 1 : 0);
+            const popularity = (song.popularity || 0) / maxPopularity;
+            const duration = (toSeconds(song.duration) || 0) / Math.max(240, maxDuration); // normalize
+            return [...genreVector, ...artistVector, popularity, duration];
         };
 
-        const cosineSimilarity = (vecA, vecB) => {
-            const dotProduct = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
-            const magnitudeA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
-            const magnitudeB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
-            return magnitudeA && magnitudeB ? dotProduct / (magnitudeA * magnitudeB) : 0;
+        const dot = (A, B) => A.reduce((s, a, i) => s + a * (B[i] || 0), 0);
+        const magnitude = (A) => Math.sqrt(A.reduce((s, a) => s + a * a, 0));
+        const cosine = (A, B) => {
+            const magA = magnitude(A); const magB = magnitude(B);
+            return (magA && magB) ? dot(A, B) / (magA * magB) : 0;
         };
 
-        const songVectors = allSongs.map(song => ({
-            song,
-            vector: createFeatureVector(song)
-        }));
+        // Build song vectors
+        const songVectors = allSongs.map(s => ({ song: s, vec: createFeatureVector(s) }));
 
-        const userPreferenceSongs = [
-            ...recentlyPlayed,
-            ...Array.from(likedSongs).map(songId => allSongs.find(s => s.id === songId)).filter(s => s)
-        ].filter((song, index, self) => song && self.findIndex(s => s.id === song.id) === index);
+        // Build weighted user preference vector: recentlyPlayed weighted by recency + liked songs
+        const recentWeights = recentlyPlayed.map((s, idx) => 1 / (idx + 1)); // more recent higher weight
+        const likedArray = Array.from(likedSongs).map(id => allSongs.find(s => s.id === id)).filter(Boolean);
 
-        if (userPreferenceSongs.length === 0) {
-            const shuffled = [...allSongs].sort(() => 0.5 - Math.random());
-            setRecommendations(shuffled.slice(0, 4));
+        const preferencePool = [];
+        recentlyPlayed.forEach((s, idx) => { if (s) preferencePool.push({ song: s, weight: 1 / (idx + 1) }); });
+        likedArray.forEach((s) => preferencePool.push({ song: s, weight: 0.9 }));
+
+        if (preferencePool.length === 0) {
+            // no user context — return a small curated set by popularity, but add some randomness
+            const fallback = [...allSongs]
+                .sort((a, b) => (b.popularity || 0) - (a.popularity || 0))
+                .slice(0, 50)
+                .sort(() => 0.7 - Math.random())
+                .slice(0, 6);
+            setRecommendations(fallback);
             return;
         }
 
-        const userVectors = userPreferenceSongs.map(song => createFeatureVector(song));
-        const userVector = userVectors.reduce(
-            (avg, vec) => avg.map((val, i) => val + vec[i] / userVectors.length),
-            new Array(allGenres.length + allArtists.length + 1).fill(0)
-        );
+        // aggregate weighted vector
+        const prefVectors = preferencePool.map(p => createFeatureVector(p.song).map(v => v * p.weight));
+        const sumVector = prefVectors.reduce((acc, vec) => acc.map((val, i) => val + (vec[i] || 0)), new Array(prefVectors[0].length).fill(0));
+        const totalWeight = preferencePool.reduce((s, p) => s + p.weight, 0) || 1;
+        const userVector = sumVector.map(v => v / totalWeight);
 
-        const scores = songVectors.map(({ song, vector }) => ({
-            song,
-            score: cosineSimilarity(userVector, vector)
-        }));
+        // build set of excluded ids (recently played + queue neighbors)
+        const excludedIds = new Set(recentlyPlayed.map(s => s.id).filter(Boolean));
+        (queue || []).forEach(s => s && s.id && excludedIds.add(s.id));
+        // exclude immediate neighbors to avoid recommending the next track from the same playlist
+        if (typeof currentIndex === 'number' && queue && queue.length > 0) {
+            [currentIndex - 1, currentIndex + 1].forEach(i => {
+                const t = queue[i]; if (t && t.id) excludedIds.add(t.id);
+            });
+        }
 
-        const recommendedSongs = scores
-            .sort((a, b) => b.score - a.score)
-            .map(item => item.song)
-            .filter(song => !userPreferenceSongs.some(s => s.id === song.id))
-            .slice(0, 4);
+        // Score each candidate
+        const candidates = songVectors.map(({ song, vec }) => {
+            const sim = cosine(userVector, vec);
+            const pop = (song.popularity || 0) / 100; // 0..1
+            // exploration factor
+            const explore = Math.random() * 0.08;
+            let score = 0.7 * sim + 0.25 * pop + explore;
+            // Penalize songs recently played
+            if (recentlyPlayed.some(r => r.id === song.id)) score *= 0.4;
+            return { song, score, sim, pop };
+        })
+            .filter(c => c.song && !excludedIds.has(c.song.id));
 
-        setRecommendations(recommendedSongs);
-    }, [recentlyPlayed, likedSongs]);
+        // Sort and select while enforcing diversity (artist + genre)
+        candidates.sort((a, b) => b.score - a.score);
+
+        const selected = [];
+        const seenArtists = new Set();
+        const seenGenres = new Set();
+        for (const c of candidates) {
+            if (selected.length >= 8) break;
+            const artist = c.song.artist;
+            const genre = c.song.genre;
+            // allow same artist only once (but allow up to 2 if not many options)
+            if (seenArtists.has(artist) && selected.length >= 4) continue;
+            // avoid exact same genre too many times
+            const genreCount = [...selected].filter(s => s.genre === genre).length;
+            if (genreCount >= 3) continue;
+            selected.push(c.song);
+            seenArtists.add(artist);
+            seenGenres.add(genre);
+        }
+
+        // If not enough selected, fill from top candidates ignoring diversity
+        if (selected.length < 6) {
+            for (const c of candidates) {
+                if (selected.find(s => s.id === c.song.id)) continue;
+                selected.push(c.song);
+                if (selected.length >= 6) break;
+            }
+        }
+
+        setRecommendations(selected.slice(0, 8));
+    }, [recentlyPlayed, likedSongs, queue, currentIndex]);
 
     const fetchTopTracks = useCallback(async (token) => {
         try {
