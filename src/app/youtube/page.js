@@ -51,7 +51,6 @@ export default function Page() {
     const [recentlyPlayed, setRecentlyPlayed] = useState([]);
     const [youtubePlayer, setYoutubePlayer] = useState(null);
     const [isListening, setIsListening] = useState(false);
-    const [micDiagnostic, setMicDiagnostic] = useState(null);
     const playerRef = useRef(null);
     const searchTimerRef = useRef(null);
     const recognitionRef = useRef(null);
@@ -189,7 +188,7 @@ export default function Page() {
     }, [recentlyPlayed, likedSongs, songs, filteredSongs]);
 
     const startVoiceSearch = async () => {
-        // Check browser support for SpeechRecognition
+        // Check browser support
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
         if (!SpeechRecognition) {
@@ -197,68 +196,61 @@ export default function Page() {
             return;
         }
 
-        if (isListening && recognitionRef.current) return;
-
-        // Ensure we're in a secure context: getUserMedia requires HTTPS or localhost
-        const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-        if (!window.isSecureContext && !isLocalhost) {
-            setError('Voice search requires a secure connection (HTTPS) or running on localhost. Please open the app over HTTPS or use localhost.');
+        // Check if already listening
+        if (isListening && recognitionRef.current) {
             return;
         }
 
         try {
-            // Prefer to request microphone access directly. This reliably triggers the browser prompt.
-            if (navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function') {
+            // Check microphone permission if permissions API is available
+            if (navigator.permissions && navigator.permissions.query) {
                 try {
-                    const stream = await navigator.mediaDevices.getUserMedia({
-                        audio: {
-                            echoCancellation: true,
-                            noiseSuppression: true,
-                            autoGainControl: true
-                        }
-                    });
-
-                    // Immediately stop tracks; we only wanted permission prompt
-                    stream.getTracks().forEach(t => t.stop());
-                } catch (mediaError) {
-                    console.error('getUserMedia error:', mediaError);
-                    if (mediaError.name === 'NotAllowedError' || mediaError.name === 'PermissionDeniedError') {
-                        setError('Microphone access denied. When the browser asks, click "Allow". If you previously blocked, enable microphone for this site in browser settings and refresh.');
+                    const permissionResult = await navigator.permissions.query({ name: 'microphone' });
+                    
+                    if (permissionResult.state === 'denied') {
+                        setError('Microphone access is blocked. Please allow microphone access in your browser settings and refresh the page.');
                         return;
                     }
-                    if (mediaError.name === 'NotFoundError') {
-                        setError('No microphone found. Please connect a microphone and try again.');
-                        return;
-                    }
-                    if (mediaError.name === 'NotReadableError') {
-                        setError('Microphone is already in use by another application.');
-                        return;
-                    }
-                    setError('Unable to access microphone. Please check your browser settings.');
-                    return;
+                } catch (permError) {
+                    // Permissions API failed, continue with direct request
+                    console.warn('Permissions API failed:', permError);
                 }
-            } else {
-                // If getUserMedia isn't available, try Permissions API, otherwise show an informative message
-                if (navigator.permissions && navigator.permissions.query) {
-                    try {
-                        const permissionResult = await navigator.permissions.query({ name: 'microphone' });
-                        if (permissionResult.state === 'denied') {
-                            setError('Microphone access is blocked. Please allow microphone access in your browser settings and refresh the page.');
-                            return;
-                        }
-                    } catch (permErr) {
-                        console.warn('Permissions API failed:', permErr);
-                    }
+            }
+
+            // Try to request microphone access directly
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: { 
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    } 
+                });
+                
+                // Stop the stream immediately after getting permission
+                stream.getTracks().forEach(track => track.stop());
+                
+            } catch (mediaError) {
+                if (mediaError.name === 'NotAllowedError' || mediaError.name === 'PermissionDeniedError') {
+                    setError('Microphone access denied. Please click "Allow" when your browser asks for microphone permission.');
+                    return;
+                } else if (mediaError.name === 'NotFoundError') {
+                    setError('No microphone found. Please connect a microphone and try again.');
+                    return;
+                } else if (mediaError.name === 'NotReadableError') {
+                    setError('Microphone is already in use by another application.');
+                    return;
                 } else {
-                    setError('Your browser does not support microphone access APIs. Please use a modern browser.');
+                    setError('Unable to access microphone. Please check your browser settings.');
                     return;
                 }
             }
 
-            // At this point permission has either been granted or will be requested by the browser.
+            // Create new recognition instance
             const recognition = new SpeechRecognition();
             recognitionRef.current = recognition;
 
+            // Configure recognition
             recognition.continuous = false;
             recognition.interimResults = false;
             recognition.lang = 'en-US';
@@ -280,15 +272,26 @@ export default function Page() {
             recognition.onerror = (event) => {
                 console.error('Voice recognition error:', event.error);
                 setIsListening(false);
+
+                // Provide specific error messages
                 switch (event.error) {
                     case 'not-allowed':
-                        setError('Microphone access denied. Please enable microphone permissions in your browser.');
+                        setError('Microphone access denied. Please enable microphone permissions.');
                         break;
                     case 'no-speech':
                         setError('No speech detected. Please try again.');
                         break;
                     case 'network':
                         setError('Network error. Voice search requires internet connection.');
+                        break;
+                    case 'aborted':
+                        setError('Voice recognition was aborted.');
+                        break;
+                    case 'audio-capture':
+                        setError('No microphone found. Please connect a microphone.');
+                        break;
+                    case 'language-not-supported':
+                        setError('Language not supported by your browser.');
                         break;
                     default:
                         setError(`Voice recognition failed: ${event.error}`);
@@ -301,7 +304,9 @@ export default function Page() {
                 recognitionRef.current = null;
             };
 
+            // Start recognition
             recognition.start();
+
         } catch (err) {
             console.error('Failed to start voice recognition:', err);
             setError('Failed to start voice search. Please try again.');
@@ -1137,44 +1142,8 @@ export default function Page() {
         searchSongs(query);
     };
 
-    // currentPool represents the dataset we should apply filters against.
-    // When a search is active we use the search results (filteredSongs), otherwise the full songs list.
-    const currentPool = React.useMemo(() => {
-        try {
-            if (searchQuery && filteredSongs && filteredSongs.length > 0) return filteredSongs;
-            // If searchQuery exists but filteredSongs is empty it means no results; still return []
-            if (searchQuery) return filteredSongs;
-        } catch (e) {
-            // fallback
-        }
-        return songs || [];
-    }, [searchQuery, filteredSongs, songs]);
-
-    // Available genres derived from the current pool and other active filter constraints (artists/popularity)
-    const availableGenres = React.useMemo(() => {
-        const pool = currentPool || [];
-        let p = pool;
-        if (filterArtists.length > 0) {
-            p = p.filter(s => filterArtists.includes(s.artist));
-        }
-        p = p.filter(s => (s.plays || 0) >= (filterPopularity[0] || 0) && (s.plays || 0) <= (filterPopularity[1] || Infinity));
-        return [...new Set(p.map(s => s.genre || 'Music'))].sort();
-    }, [currentPool, filterArtists, filterPopularity]);
-
-    // Available artists derived from the current pool and other active filter constraints (genres/popularity)
-    const availableArtists = React.useMemo(() => {
-        const pool = currentPool || [];
-        let p = pool;
-        if (filterGenres.length > 0) {
-            p = p.filter(s => filterGenres.includes(s.genre));
-        }
-        p = p.filter(s => (s.plays || 0) >= (filterPopularity[0] || 0) && (s.plays || 0) <= (filterPopularity[1] || Infinity));
-        return [...new Set(p.map(s => s.artist || 'Unknown Artist'))].sort();
-    }, [currentPool, filterGenres, filterPopularity]);
-
     const applyFilters = useCallback(() => {
-        let base = currentPool || songs || [];
-        let filtered = [...base];
+        let filtered = [...songs];
 
         if (filterGenres.length > 0) {
             filtered = filtered.filter(song => filterGenres.includes(song.genre));
@@ -1190,11 +1159,11 @@ export default function Page() {
             );
         }
         filtered = filtered.filter(song =>
-            (song.plays || 0) >= (filterPopularity[0] || 0) && (song.plays || 0) <= (filterPopularity[1] || Infinity)
+            song.plays >= filterPopularity[0] && song.plays <= filterPopularity[1]
         );
 
         setFilteredSongs(filtered);
-    }, [currentPool, songs, filterGenres, filterArtists, searchQuery, filterPopularity]);
+    }, [songs, filterGenres, filterArtists, searchQuery, filterPopularity]);
 
     useEffect(() => {
         applyFilters();
@@ -1518,37 +1487,31 @@ export default function Page() {
                                 <div className="filter-group">
                                     <label className="filter-label">Genres:</label>
                                     <div className="filter-checkboxes">
-                                        {availableGenres && availableGenres.length > 0 ? availableGenres.map(genre => (
+                                        {AVAILABLE_GENRES.map(genre => (
                                             <label key={genre} className="checkbox-label">
                                                 <input
                                                     type="checkbox"
                                                     checked={filterGenres.includes(genre)}
                                                     onChange={() => toggleGenreFilter(genre)}
-                                                    disabled={!availableGenres.includes(genre)}
                                                 />
                                                 {genre}
                                             </label>
-                                        )) : (
-                                            <p className="no-options">No genres available</p>
-                                        )}
+                                        ))}
                                     </div>
                                 </div>
                                 <div className="filter-group">
                                     <label className="filter-label">Artists:</label>
                                     <div className="filter-checkboxes">
-                                        {availableArtists && availableArtists.length > 0 ? availableArtists.map(artist => (
+                                        {allArtists.map(artist => (
                                             <label key={artist} className="checkbox-label">
                                                 <input
                                                     type="checkbox"
                                                     checked={filterArtists.includes(artist)}
                                                     onChange={() => toggleArtistFilter(artist)}
-                                                    disabled={!availableArtists.includes(artist)}
                                                 />
                                                 {artist}
                                             </label>
-                                        )) : (
-                                            <p className="no-options">No artists available</p>
-                                        )}
+                                        ))}
                                     </div>
                                 </div>
                                 <div className="filter-group">
