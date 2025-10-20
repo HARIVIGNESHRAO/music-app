@@ -76,6 +76,27 @@ export default function Page() {
         return hours * 3600 + mins * 60 + secs;
     };
 
+    // Ensure volume values are valid integers between 0 and 100
+    const clampVolume = (v) => {
+        let n = Number(v);
+        if (!isFinite(n)) n = 0;
+        n = Math.round(n);
+        return Math.max(0, Math.min(100, n));
+    };
+
+    // Safely apply volume to a YouTube player instance (or the stored youtubePlayer)
+    const safeSetVolume = (vol, playerInstance = youtubePlayer) => {
+        const v = clampVolume(vol);
+        if (playerInstance && typeof playerInstance.setVolume === 'function') {
+            try {
+                playerInstance.setVolume(v);
+            } catch (err) {
+                console.error('safeSetVolume failed:', err, 'volume:', v);
+            }
+        }
+        return v;
+    };
+
     const formatDuration = (seconds) => {
         if (!seconds || isNaN(seconds)) return '0:00';
         const mins = Math.floor(seconds / 60);
@@ -461,16 +482,11 @@ export default function Page() {
     };
 
     const handleVolumeChange = (e) => {
-        const newVolume = Number(e.target.value);
+        const newVolume = clampVolume(e?.target?.value);
+        // update UI immediately
         setVolume(newVolume);
-
-        if (youtubePlayer && typeof youtubePlayer.setVolume === 'function') {
-            try {
-                youtubePlayer.setVolume(newVolume);
-            } catch (err) {
-                console.error('Failed to set volume:', err);
-            }
-        }
+        // attempt to apply to player if ready
+        safeSetVolume(newVolume);
     };
     const handleSharePlaylist = async (playlist) => {
         if (!playlist || !playlist.id) {
@@ -591,7 +607,8 @@ export default function Page() {
                     events: {
                         onReady: (event) => {
                             setYoutubePlayer(event.target);
-                            try { event.target.setVolume(volume); } catch (err) { console.error('Failed to set initial volume:', err); }
+                            // apply initial volume safely
+                            try { safeSetVolume(volume, event.target); } catch (err) { console.error('Failed to set initial volume via safeSetVolume:', err); }
                         },
                         onStateChange: handleStateChange,
                         onError: (event) => {
@@ -652,9 +669,8 @@ export default function Page() {
     }, [isPlaying, youtubePlayer]);
 
     useEffect(() => {
-        if (youtubePlayer) {
-            youtubePlayer.setVolume(volume);
-        }
+        // whenever volume or player changes, apply volume safely
+        safeSetVolume(volume);
     }, [volume, youtubePlayer]);
 
     useEffect(() => {
@@ -718,9 +734,8 @@ export default function Page() {
                 // Safe to call player API
                 try {
                     youtubePlayer.loadVideoById(song.id);
-                    if (typeof youtubePlayer.setVolume === 'function') {
-                        try { youtubePlayer.setVolume(volume); } catch (err) { console.error('setVolume failed', err); }
-                    }
+                    // set volume if possible, but use the safe helper
+                    safeSetVolume(volume);
                     if (typeof youtubePlayer.playVideo === 'function') {
                         youtubePlayer.playVideo();
                     }
