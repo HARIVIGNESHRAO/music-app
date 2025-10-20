@@ -23,6 +23,14 @@ const debounce = (func, wait) => {
     };
 };
 
+    const msToTime = (ms) => {
+        if (ms === null || ms === undefined || isNaN(Number(ms))) return '0:00';
+        const totalSeconds = Math.floor(Number(ms) / 1000);
+        const mins = Math.floor(totalSeconds / 60);
+        const secs = totalSeconds % 60;
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
+    };
+
 export default function Page() {
     const router = useRouter();
     const [currentUser, setCurrentUser] = useState(null);
@@ -57,6 +65,7 @@ export default function Page() {
     const [selectedSongForPlaylist, setSelectedSongForPlaylist] = useState(null);
     const [artists, setArtists] = useState([]);
     const audioRef = useRef(null);
+    const suppressPlayerStateRef = useRef(true);
     const [queue, setQueue] = useState([]);
     const [currentIndex, setCurrentIndex] = useState(0);
     const [shuffle, setShuffle] = useState(false);
@@ -306,7 +315,7 @@ export default function Page() {
                     title: track.name,
                     artist: track.artists.map(a => a.name).join(', '),
                     album: track.album.name,
-                    duration: new Date(track.duration_ms).toISOString().substr(14, 5),
+                    duration: msToTime(track.duration_ms),
                     cover: track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
                     genre,
                     plays: track.popularity * 10000,
@@ -394,7 +403,7 @@ export default function Page() {
                                 title: t.name,
                                 artist: t.artists.map(a => a.name).join(', '),
                                 album: t.album.name,
-                                duration: new Date(t.duration_ms).toISOString().substr(14, 5),
+                                duration: msToTime(t.duration_ms),
                                 cover: t.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
                                 genre,
                                 plays: 0,
@@ -490,7 +499,7 @@ export default function Page() {
                         title: track.name,
                         artist: track.artists.map(a => a.name).join(', '),
                         album: track.album.name,
-                        duration: new Date(track.duration_ms).toISOString().substr(14, 5),
+                        duration: msToTime(track.duration_ms),
                         cover: track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
                         genre,
                         plays: track.popularity * 10000,
@@ -596,6 +605,8 @@ export default function Page() {
             return prevQueue;
         });
 
+    // User explicitly selected a song — ensure we handle player state locally
+    suppressPlayerStateRef.current = false;
     setCurrentSong(song);
         setError(null);
 
@@ -866,6 +877,8 @@ export default function Page() {
                             { headers: { Authorization: `Bearer ${accessToken}` } }
                         )
                     ).catch(err => console.error('Failed to transfer playback:', err));
+                    // After transfer, allow SDK player state to be processed locally
+                    setTimeout(() => { suppressPlayerStateRef.current = false; }, 1200);
                 });
                 playerInstance.addListener('not_ready', ({ device_id }) => {
                     console.log('Device ID has gone offline', device_id);
@@ -878,12 +891,29 @@ export default function Page() {
                 });
                 playerInstance.addListener('player_state_changed', (state) => {
                     if (!state) return;
+
+                    // If we're suppressing external SDK states (e.g., initial state from another
+                    // browser/device), ignore it unless the track matches a song we know
+                    // or the user has already interacted on this client.
+                    const currentTrack = state.track_window?.current_track;
+                    const incomingTrackId = currentTrack?.id;
+
+                    const knownIds = new Set([...(queue || []).map(s => s.id), ...(recentlyPlayed || []).map(s => s.id)]);
+                    const isKnown = incomingTrackId && knownIds.has(incomingTrackId);
+
+                    if (suppressPlayerStateRef.current && !isKnown) {
+                        // Ignore this external state; do not flip playing state locally.
+                        console.log('Ignoring external SDK player state (suppressed) for track', incomingTrackId);
+                        return;
+                    }
+
+                    // Accept SDK state updates now
                     setIsPlaying(!state.paused);
                     setCurrentTime(state.position / 1000);
                     setDuration(state.duration / 1000);
 
-                    if (state.track_window.current_track) {
-                        const track = state.track_window.current_track;
+                    if (currentTrack) {
+                        const track = currentTrack;
                         // Attempt to fetch artist genres for the current track's primary artist
                         (async () => {
                             let genre = 'Unknown';
@@ -903,13 +933,16 @@ export default function Page() {
                                 title: track.name,
                                 artist: track.artists.map(a => a.name).join(', '),
                                 album: track.album.name,
-                                duration: new Date(track.duration).toISOString().substr(14, 5),
+                                duration: msToTime(track.duration),
                                 cover: track.album.images[0]?.url || 'default-cover',
                                 genre,
                                 plays: 0,
                                 spotify_uri: track.uri
                             };
-                            setCurrentSong(newSong);
+
+                            // If user just interacted (selectSong) we may have already set currentSong;
+                            // prefer local currentSong when ids match to avoid overwriting user intent.
+                            setCurrentSong(prev => (prev && prev.id === newSong.id) ? prev : newSong);
                             setRecentlyPlayed(prev => {
                                 const newPlayed = [newSong, ...prev.filter(s => s.id !== track.id)];
                                 return newPlayed; // keep full session history for recommendations
