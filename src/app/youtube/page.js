@@ -54,7 +54,6 @@ export default function Page() {
     const playerRef = useRef(null);
     const searchTimerRef = useRef(null);
     const recognitionRef = useRef(null);
-    const prevSongIdRef = useRef(null); // track last-loaded song id to avoid redundant reloads
     const [searchCache, setSearchCache] = useState({});
     const CACHE_DURATION = 3600000; // 1 hour
     const API_KEY = 'AIzaSyB6C6QO9Yd4IpW3ecaSg7BBY7JalpjDQ6s';
@@ -161,30 +160,46 @@ export default function Page() {
         const recommendedSongs = scores
             .sort((a, b) => b.score - a.score)
             .map(item => item.song)
-            .filter(song => !userPreferenceSongs.some(s => s.id === song.id));
+            .filter(song => !userPreferenceSongs.some(s => s.id === song.id))
+            .slice(0, 6);
 
-        // Pick top recommendations
-        setRecommendations(recommendedSongs.slice(0, 6));
-        return recommendedSongs.slice(0, 6);
+        setRecommendations(recommendedSongs);
     }, [recentlyPlayed, likedSongs, songs, filteredSongs]);
 
-    // Minimal, safe voice search starter using Web Speech API
-    const startVoiceSearch = async () => {
-        if (isListening) return;
+    const startVoiceSearch = () => {
+        // Check browser support
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
         if (!SpeechRecognition) {
-            setError('Voice search is not supported in this browser.');
+            setError('Voice search is not supported in this browser. Please use Chrome, Edge, or Safari.');
+            return;
+        }
+
+        // Check if already listening
+        if (isListening && recognitionRef.current) {
             return;
         }
 
         try {
+            // Create new recognition instance
             const recognition = new SpeechRecognition();
-            recognition.lang = 'en-US';
+            recognitionRef.current = recognition;
+
+            // Configure recognition
+            recognition.continuous = false;
             recognition.interimResults = false;
+            recognition.lang = 'en-US';
             recognition.maxAlternatives = 1;
+
+            recognition.onstart = () => {
+                console.log('Voice recognition started');
+                setIsListening(true);
+                setError(null);
+            };
 
             recognition.onresult = (event) => {
                 const transcript = event.results[0][0].transcript;
+                console.log('Voice recognition result:', transcript);
                 setSearchQuery(transcript);
                 searchSongs(transcript);
             };
@@ -192,6 +207,8 @@ export default function Page() {
             recognition.onerror = (event) => {
                 console.error('Voice recognition error:', event.error);
                 setIsListening(false);
+
+                // Provide specific error messages
                 switch (event.error) {
                     case 'not-allowed':
                         setError('Microphone access denied. Please enable microphone permissions.');
@@ -199,20 +216,32 @@ export default function Page() {
                     case 'no-speech':
                         setError('No speech detected. Please try again.');
                         break;
+                    case 'network':
+                        setError('Network error. Voice search requires internet connection.');
+                        break;
+                    case 'aborted':
+                        setError('Voice recognition was aborted.');
+                        break;
+                    case 'audio-capture':
+                        setError('No microphone found. Please connect a microphone.');
+                        break;
+                    case 'language-not-supported':
+                        setError('Language not supported by your browser.');
+                        break;
                     default:
                         setError(`Voice recognition failed: ${event.error}`);
                 }
             };
 
             recognition.onend = () => {
+                console.log('Voice recognition ended');
                 setIsListening(false);
                 recognitionRef.current = null;
             };
 
-            recognitionRef.current = recognition;
+            // Start recognition
             recognition.start();
-            setIsListening(true);
-            setError(null);
+
         } catch (err) {
             console.error('Failed to start voice recognition:', err);
             setError('Failed to start voice search. Please try again.');
@@ -235,13 +264,6 @@ export default function Page() {
 
     const selectSong = useCallback(async (song, songList = null) => {
         console.log('🎵 Selecting song:', song.title);
-
-        // If the user selects the song that's already playing, don't reload it.
-        if (song?.id && currentSong?.id === song.id && prevSongIdRef.current === song.id) {
-            // Ensure playback is active
-            try { if (youtubePlayer && typeof youtubePlayer.playVideo === 'function') youtubePlayer.playVideo(); } catch (e) { /* ignore */ }
-            return;
-        }
 
         setError(null);
         setIsPlaying(false);
@@ -617,7 +639,7 @@ export default function Page() {
                 try { youtubePlayer.destroy(); } catch (err) { console.error('Error destroying player:', err); }
             }
         };
-    }, [handleStateChange, volume, playNext]);
+    }, [handleStateChange, volume, playNext, youtubePlayer]);
 
     useEffect(() => {
         let interval;
@@ -637,11 +659,7 @@ export default function Page() {
 
     useEffect(() => {
         if (youtubePlayer && currentSong?.id) {
-            // If the currentSong is already loaded in the iframe, do not reload it.
-            if (prevSongIdRef.current === currentSong.id) return;
-            prevSongIdRef.current = currentSong.id;
-
-            setIsLoadingSong(true);
+            setIsLoadingSong(true);        
             const tryLoad = (attempt = 0) => {
                 try {
                     const iframe = youtubePlayer && typeof youtubePlayer.getIframe === 'function'
@@ -677,13 +695,6 @@ export default function Page() {
     const playSong = useCallback(async (song) => {
         if (!youtubePlayer || !song) return;
 
-        // If requested song is already the current one and loaded, do nothing
-        if (currentSong?.id === song.id && prevSongIdRef.current === song.id) {
-            // ensure playing
-            try { if (typeof youtubePlayer.playVideo === 'function') youtubePlayer.playVideo(); } catch (e) { /* ignore */ }
-            return;
-        }
-
         setIsLoadingSong(true);
         setCurrentSong(song);
         setError(null);
@@ -705,7 +716,7 @@ export default function Page() {
                 }
 
                 // Safe to call player API
-                    try {
+                try {
                     youtubePlayer.loadVideoById(song.id);
                     if (typeof youtubePlayer.setVolume === 'function') {
                         try { youtubePlayer.setVolume(volume); } catch (err) { console.error('setVolume failed', err); }
@@ -713,8 +724,6 @@ export default function Page() {
                     if (typeof youtubePlayer.playVideo === 'function') {
                         youtubePlayer.playVideo();
                     }
-                    // mark as loaded
-                    prevSongIdRef.current = song.id;
                 } catch (innerErr) {
                     console.error('player API error:', innerErr);
                     if (attempt < 20) return setTimeout(() => tryPlay(attempt + 1), 150);
