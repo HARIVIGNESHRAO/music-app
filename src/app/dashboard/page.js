@@ -457,7 +457,7 @@ export default function Page() {
                 setError(null);
                 const response = await apiCallWithBackoff(() =>
                     axios.get(
-                        `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10&fields=tracks(items(id,name,artists(name),album(name,images),duration_ms,preview_url,uri,popularity))`,
+                        `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10&fields=tracks(items(id,name,artists(id,name,uri),album(name,images),duration_ms,preview_url,uri,popularity))`,
                         {
                             headers: { Authorization: `Bearer ${accessToken}` },
                         }
@@ -885,22 +885,37 @@ export default function Page() {
 
                     if (state.track_window.current_track) {
                         const track = state.track_window.current_track;
-                        const newSong = {
-                            id: track.id,
-                            title: track.name,
-                            artist: track.artists.map(a => a.name).join(', '),
-                            album: track.album.name,
-                            duration: new Date(track.duration).toISOString().substr(14, 5),
-                            cover: track.album.images[0]?.url || 'default-cover',
-                            genre: 'Unknown',
-                            plays: 0,
-                            spotify_uri: track.uri
-                        };
-                        setCurrentSong(newSong);
-                        setRecentlyPlayed(prev => {
-                            const newPlayed = [newSong, ...prev.filter(s => s.id !== track.id)];
-                            return newPlayed; // keep full session history for recommendations
-                        });
+                        // Attempt to fetch artist genres for the current track's primary artist
+                        (async () => {
+                            let genre = 'Unknown';
+                            try {
+                                const artistId = track.artists?.[0]?.id;
+                                if (artistId && accessToken) {
+                                    const resp = await axios.get(`https://api.spotify.com/v1/artists/${artistId}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+                                    const g = resp.data.genres || [];
+                                    if (g.length > 0) genre = g[0];
+                                }
+                            } catch (err) {
+                                console.warn('Failed to fetch artist genre for SDK track:', err);
+                            }
+
+                            const newSong = {
+                                id: track.id,
+                                title: track.name,
+                                artist: track.artists.map(a => a.name).join(', '),
+                                album: track.album.name,
+                                duration: new Date(track.duration).toISOString().substr(14, 5),
+                                cover: track.album.images[0]?.url || 'default-cover',
+                                genre,
+                                plays: 0,
+                                spotify_uri: track.uri
+                            };
+                            setCurrentSong(newSong);
+                            setRecentlyPlayed(prev => {
+                                const newPlayed = [newSong, ...prev.filter(s => s.id !== track.id)];
+                                return newPlayed; // keep full session history for recommendations
+                            });
+                        })();
                     }
                 });
 
