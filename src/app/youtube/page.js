@@ -54,6 +54,7 @@ export default function Page() {
     const playerRef = useRef(null);
     const searchTimerRef = useRef(null);
     const recognitionRef = useRef(null);
+    const prevSongIdRef = useRef(null); // track last-loaded song id to avoid redundant reloads
     const [searchCache, setSearchCache] = useState({});
     const CACHE_DURATION = 3600000; // 1 hour
     const API_KEY = 'AIzaSyB6C6QO9Yd4IpW3ecaSg7BBY7JalpjDQ6s';
@@ -234,6 +235,13 @@ export default function Page() {
 
     const selectSong = useCallback(async (song, songList = null) => {
         console.log('🎵 Selecting song:', song.title);
+
+        // If the user selects the song that's already playing, don't reload it.
+        if (song?.id && currentSong?.id === song.id && prevSongIdRef.current === song.id) {
+            // Ensure playback is active
+            try { if (youtubePlayer && typeof youtubePlayer.playVideo === 'function') youtubePlayer.playVideo(); } catch (e) { /* ignore */ }
+            return;
+        }
 
         setError(null);
         setIsPlaying(false);
@@ -609,7 +617,7 @@ export default function Page() {
                 try { youtubePlayer.destroy(); } catch (err) { console.error('Error destroying player:', err); }
             }
         };
-    }, [handleStateChange, volume, playNext, youtubePlayer]);
+    }, [handleStateChange, volume, playNext]);
 
     useEffect(() => {
         let interval;
@@ -629,7 +637,11 @@ export default function Page() {
 
     useEffect(() => {
         if (youtubePlayer && currentSong?.id) {
-            setIsLoadingSong(true);        
+            // If the currentSong is already loaded in the iframe, do not reload it.
+            if (prevSongIdRef.current === currentSong.id) return;
+            prevSongIdRef.current = currentSong.id;
+
+            setIsLoadingSong(true);
             const tryLoad = (attempt = 0) => {
                 try {
                     const iframe = youtubePlayer && typeof youtubePlayer.getIframe === 'function'
@@ -665,6 +677,13 @@ export default function Page() {
     const playSong = useCallback(async (song) => {
         if (!youtubePlayer || !song) return;
 
+        // If requested song is already the current one and loaded, do nothing
+        if (currentSong?.id === song.id && prevSongIdRef.current === song.id) {
+            // ensure playing
+            try { if (typeof youtubePlayer.playVideo === 'function') youtubePlayer.playVideo(); } catch (e) { /* ignore */ }
+            return;
+        }
+
         setIsLoadingSong(true);
         setCurrentSong(song);
         setError(null);
@@ -686,7 +705,7 @@ export default function Page() {
                 }
 
                 // Safe to call player API
-                try {
+                    try {
                     youtubePlayer.loadVideoById(song.id);
                     if (typeof youtubePlayer.setVolume === 'function') {
                         try { youtubePlayer.setVolume(volume); } catch (err) { console.error('setVolume failed', err); }
@@ -694,6 +713,8 @@ export default function Page() {
                     if (typeof youtubePlayer.playVideo === 'function') {
                         youtubePlayer.playVideo();
                     }
+                    // mark as loaded
+                    prevSongIdRef.current = song.id;
                 } catch (innerErr) {
                     console.error('player API error:', innerErr);
                     if (attempt < 20) return setTimeout(() => tryPlay(attempt + 1), 150);
