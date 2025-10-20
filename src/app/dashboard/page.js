@@ -214,28 +214,51 @@ export default function Page() {
             await new Promise(resolve => setTimeout(resolve, 300));
             const response = await apiCallWithBackoff(() =>
                 axios.get(
-                    'https://api.spotify.com/v1/me/top/tracks?time_range=short_term&limit=10&fields=items(id,name,artists(name),album(name,images),duration_ms,preview_url,uri,popularity)',
+                    'https://api.spotify.com/v1/me/top/tracks?time_range=short_term&limit=10&fields=items(id,name,artists(id,name),album(name,images),duration_ms,preview_url,uri,popularity)',
                     {
                         headers: { Authorization: `Bearer ${token}` },
                     }
                 )
             );
 
-            const mappedSongs = response.data.items.map(track => ({
-                id: track.id,
-                title: track.name,
-                artist: track.artists.map(a => a.name).join(', '),
-                album: track.album.name,
-                duration: new Date(track.duration_ms).toISOString().substr(14, 5),
-                cover: track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
-                genre: 'Unknown',
-                plays: track.popularity * 10000,
-                popularity: track.popularity || 0,
-                preview_url: track.preview_url || null,
-                spotify_uri: track.uri,
-                explicit: !!track.explicit,
-                release_date: track.album?.release_date || null,
-            }));
+            // Fetch genres for the artists referenced by these tracks
+            const artistIds = Array.from(new Set(response.data.items.flatMap(t => (t.artists || []).map(a => a.id)).filter(Boolean)));
+            let artistMap = {};
+            if (artistIds.length > 0) {
+                try {
+                    const artistsResp = await apiCallWithBackoff(() =>
+                        axios.get(`https://api.spotify.com/v1/artists?ids=${artistIds.join(',')}`, {
+                            headers: { Authorization: `Bearer ${token}` }
+                        })
+                    );
+                    (artistsResp.data.artists || []).forEach(a => {
+                        artistMap[a.id] = (a.genres || []);
+                    });
+                } catch (err) {
+                    console.warn('Failed to fetch artist genres:', err);
+                }
+            }
+
+            const mappedSongs = response.data.items.map(track => {
+                const primaryArtistId = track.artists?.[0]?.id;
+                const artistGenres = primaryArtistId ? (artistMap[primaryArtistId] || []) : [];
+                const genre = artistGenres.length > 0 ? artistGenres[0] : 'Unknown';
+                return {
+                    id: track.id,
+                    title: track.name,
+                    artist: track.artists.map(a => a.name).join(', '),
+                    album: track.album.name,
+                    duration: new Date(track.duration_ms).toISOString().substr(14, 5),
+                    cover: track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
+                    genre,
+                    plays: track.popularity * 10000,
+                    popularity: track.popularity || 0,
+                    preview_url: track.preview_url || null,
+                    spotify_uri: track.uri,
+                    explicit: !!track.explicit,
+                    release_date: track.album?.release_date || null,
+                };
+            });
 
             setSongs(mappedSongs);
             setCachedData(CACHE_KEY_TOP_TRACKS, mappedSongs);
@@ -276,29 +299,54 @@ export default function Page() {
                 try {
                     const tracksResponse = await apiCallWithBackoff(() =>
                         axios.get(
-                            `${playlist.tracks.href}?fields=items(track(id,name,artists(name),album(name,images),duration_ms,preview_url,uri))`,
+                            `${playlist.tracks.href}?fields=items(track(id,name,artists(id,name),album(name,images),duration_ms,preview_url,uri,popularity,explicit))`,
                             {
                                 headers: { Authorization: `Bearer ${token}` },
                             }
                         )
                     );
+
+                    // gather artist ids for genre lookup
+                    const playlistArtistIds = Array.from(new Set(tracksResponse.data.items.flatMap(i => (i.track?.artists || []).map(a => a.id)).filter(Boolean)));
+                    let playlistArtistMap = {};
+                    if (playlistArtistIds.length > 0) {
+                        try {
+                            const artistsResp = await apiCallWithBackoff(() =>
+                                axios.get(`https://api.spotify.com/v1/artists?ids=${playlistArtistIds.join(',')}`, {
+                                    headers: { Authorization: `Bearer ${token}` }
+                                })
+                            );
+                            (artistsResp.data.artists || []).forEach(a => {
+                                playlistArtistMap[a.id] = (a.genres || []);
+                            });
+                        } catch (err) {
+                            console.warn('Failed to fetch playlist artist genres:', err);
+                        }
+                    }
+
                     const playlistSongs = tracksResponse.data.items
                         .filter(item => item.track && item.track.id)
-                        .map(item => ({
-                            id: item.track.id,
-                            title: item.track.name,
-                            artist: item.track.artists.map(a => a.name).join(', '),
-                            album: item.track.album.name,
-                            duration: new Date(item.track.duration_ms).toISOString().substr(14, 5),
-                            cover: item.track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
-                            genre: 'Unknown',
-                            plays: 0,
-                            popularity: item.track.popularity || 0,
-                            preview_url: item.track.preview_url || null,
-                            spotify_uri: item.track.uri,
-                            explicit: !!item.track.explicit,
-                            release_date: item.track.album?.release_date || null,
-                        }));
+                        .map(item => {
+                            const t = item.track;
+                            const primaryArtistId = t.artists?.[0]?.id;
+                            const artistGenres = primaryArtistId ? (playlistArtistMap[primaryArtistId] || []) : [];
+                            const genre = artistGenres.length > 0 ? artistGenres[0] : 'Unknown';
+                            return {
+                                id: t.id,
+                                title: t.name,
+                                artist: t.artists.map(a => a.name).join(', '),
+                                album: t.album.name,
+                                duration: new Date(t.duration_ms).toISOString().substr(14, 5),
+                                cover: t.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
+                                genre,
+                                plays: 0,
+                                popularity: t.popularity || 0,
+                                preview_url: t.preview_url || null,
+                                spotify_uri: t.uri,
+                                explicit: !!t.explicit,
+                                release_date: t.album?.release_date || null,
+                            };
+                        });
                     playlistsWithSongs.push({
                         id: playlist.id,
                         name: playlist.name,
@@ -357,21 +405,44 @@ export default function Page() {
                         }
                     )
                 );
-                const mappedSongs = response.data.tracks.items.map(track => ({
-                    id: track.id,
-                    title: track.name,
-                    artist: track.artists.map(a => a.name).join(', '),
-                    album: track.album.name,
-                    duration: new Date(track.duration_ms).toISOString().substr(14, 5),
-                    cover: track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
-                    genre: 'Unknown',
-                    plays: track.popularity * 10000,
-                    popularity: track.popularity || 0,
-                    preview_url: track.preview_url || null,
-                    spotify_uri: track.uri,
-                    explicit: !!track.explicit,
-                    release_date: track.album?.release_date || null,
-                }));
+                // Ensure we requested artist ids in the search fields
+                const trackArtistIds = Array.from(new Set(response.data.tracks.items.flatMap(t => (t.artists || []).map(a => a.id)).filter(Boolean)));
+                let searchArtistMap = {};
+                if (trackArtistIds.length > 0) {
+                    try {
+                        const artistsResp = await apiCallWithBackoff(() =>
+                            axios.get(`https://api.spotify.com/v1/artists?ids=${trackArtistIds.join(',')}`, {
+                                headers: { Authorization: `Bearer ${accessToken}` }
+                            })
+                        );
+                        (artistsResp.data.artists || []).forEach(a => {
+                            searchArtistMap[a.id] = (a.genres || []);
+                        });
+                    } catch (err) {
+                        console.warn('Failed to fetch artist genres for search results:', err);
+                    }
+                }
+
+                const mappedSongs = response.data.tracks.items.map(track => {
+                    const primaryArtistId = track.artists?.[0]?.id;
+                    const artistGenres = primaryArtistId ? (searchArtistMap[primaryArtistId] || []) : [];
+                    const genre = artistGenres.length > 0 ? artistGenres[0] : 'Unknown';
+                    return {
+                        id: track.id,
+                        title: track.name,
+                        artist: track.artists.map(a => a.name).join(', '),
+                        album: track.album.name,
+                        duration: new Date(track.duration_ms).toISOString().substr(14, 5),
+                        cover: track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
+                        genre,
+                        plays: track.popularity * 10000,
+                        popularity: track.popularity || 0,
+                        preview_url: track.preview_url || null,
+                        spotify_uri: track.uri,
+                        explicit: !!track.explicit,
+                        release_date: track.album?.release_date || null,
+                    };
+                });
                 // Set songs so derived lists (artists, albums, years) update, then apply filters
                 setSongs(mappedSongs);
                 setFilteredSongs(mappedSongs);
