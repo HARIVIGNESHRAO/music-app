@@ -55,6 +55,10 @@ export default function Page() {
     const youtubePlayerRef = useRef(null);
     const playNextRef = useRef(null);
     const handleStateChangeRef = useRef(null);
+    const failedIdsRef = useRef(new Set());
+    const currentSongRef = useRef(null);
+    const queueRef = useRef([]);
+    const currentIndexRef = useRef(0);
     const searchTimerRef = useRef(null);
     const recognitionRef = useRef(null);
     const [searchCache, setSearchCache] = useState({});
@@ -610,6 +614,12 @@ export default function Page() {
     // newest handler without depending on its identity in the create effect.
     useEffect(() => { handleStateChangeRef.current = handleStateChange; }, [handleStateChange]);
 
+    // Keep refs synced with state so callbacks in the YouTube player's scope
+    // can access the latest values without stale closures.
+    useEffect(() => { currentSongRef.current = currentSong; }, [currentSong]);
+    useEffect(() => { queueRef.current = queue; }, [queue]);
+    useEffect(() => { currentIndexRef.current = currentIndex; }, [currentIndex]);
+
     useEffect(() => {
         // Create the YouTube Player only after the playerRef node exists.
         // Some race conditions cause the YouTube widget to access an iframe
@@ -638,10 +648,39 @@ export default function Page() {
                         },
                         onError: (event) => {
                             console.error('YouTube Player error:', event.data);
-                            if ([2, 5, 100, 101, 150].includes(event.data)) {
-                                setError('This video cannot be played. Trying next...');
-                                setTimeout(() => { playNext(); }, 2000);
+                            try {
+                                const code = event.data;
+                                // These codes generally indicate the video can't be played
+                                if ([2, 5, 100, 101, 150].includes(code)) {
+                                    const failedId = currentSongRef.current?.id || (queueRef.current && queueRef.current[currentIndexRef.current]?.id);
+                                        if (failedId) {
+                                        failedIdsRef.current.add(failedId);
+
+                                        // Remove failed song from queue to avoid reattempts
+                                        setQueue(prev => {
+                                            const newQ = prev.filter(s => s.id !== failedId);
+                                            // Adjust currentIndex if needed
+                                            setCurrentIndex(ci => {
+                                                if (newQ.length === 0) return 0;
+                                                // If the failed song was before or at current index, clamp
+                                                return Math.min(ci, newQ.length - 1);
+                                            });
+                                            return newQ;
+                                        });
+
+                                        setError('This video cannot be played. Skipping to next...');
+                                        setIsLoadingSong(false);
+
+                                        // Try to play the next available song immediately
+                                        setTimeout(() => {
+                                            try { playNextRef.current?.(); } catch (err) { console.error('playNextRef error', err); }
+                                        }, 100);
+                                    }
+                                }
+                            } catch (err) {
+                                console.error('onError handler failed:', err);
                             }
+
                             setIsPlaying(false);
                         }
                     }
