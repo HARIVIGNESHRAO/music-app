@@ -188,7 +188,7 @@ export default function Page() {
     }, [recentlyPlayed, likedSongs, songs, filteredSongs]);
 
     const startVoiceSearch = async () => {
-        // Check browser support
+        // Check browser support for SpeechRecognition
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
         if (!SpeechRecognition) {
@@ -196,61 +196,68 @@ export default function Page() {
             return;
         }
 
-        // Check if already listening
-        if (isListening && recognitionRef.current) {
+        if (isListening && recognitionRef.current) return;
+
+        // Ensure we're in a secure context: getUserMedia requires HTTPS or localhost
+        const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        if (!window.isSecureContext && !isLocalhost) {
+            setError('Voice search requires a secure connection (HTTPS) or running on localhost. Please open the app over HTTPS or use localhost.');
             return;
         }
 
         try {
-            // Check microphone permission if permissions API is available
-            if (navigator.permissions && navigator.permissions.query) {
+            // Prefer to request microphone access directly. This reliably triggers the browser prompt.
+            if (navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function') {
                 try {
-                    const permissionResult = await navigator.permissions.query({ name: 'microphone' });
-                    
-                    if (permissionResult.state === 'denied') {
-                        setError('Microphone access is blocked. Please allow microphone access in your browser settings and refresh the page.');
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true
+                        }
+                    });
+
+                    // Immediately stop tracks; we only wanted permission prompt
+                    stream.getTracks().forEach(t => t.stop());
+                } catch (mediaError) {
+                    console.error('getUserMedia error:', mediaError);
+                    if (mediaError.name === 'NotAllowedError' || mediaError.name === 'PermissionDeniedError') {
+                        setError('Microphone access denied. When the browser asks, click "Allow". If you previously blocked, enable microphone for this site in browser settings and refresh.');
                         return;
                     }
-                } catch (permError) {
-                    // Permissions API failed, continue with direct request
-                    console.warn('Permissions API failed:', permError);
-                }
-            }
-
-            // Try to request microphone access directly
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: { 
-                        echoCancellation: true,
-                        noiseSuppression: true,
-                        autoGainControl: true
-                    } 
-                });
-                
-                // Stop the stream immediately after getting permission
-                stream.getTracks().forEach(track => track.stop());
-                
-            } catch (mediaError) {
-                if (mediaError.name === 'NotAllowedError' || mediaError.name === 'PermissionDeniedError') {
-                    setError('Microphone access denied. Please click "Allow" when your browser asks for microphone permission.');
-                    return;
-                } else if (mediaError.name === 'NotFoundError') {
-                    setError('No microphone found. Please connect a microphone and try again.');
-                    return;
-                } else if (mediaError.name === 'NotReadableError') {
-                    setError('Microphone is already in use by another application.');
-                    return;
-                } else {
+                    if (mediaError.name === 'NotFoundError') {
+                        setError('No microphone found. Please connect a microphone and try again.');
+                        return;
+                    }
+                    if (mediaError.name === 'NotReadableError') {
+                        setError('Microphone is already in use by another application.');
+                        return;
+                    }
                     setError('Unable to access microphone. Please check your browser settings.');
                     return;
                 }
+            } else {
+                // If getUserMedia isn't available, try Permissions API, otherwise show an informative message
+                if (navigator.permissions && navigator.permissions.query) {
+                    try {
+                        const permissionResult = await navigator.permissions.query({ name: 'microphone' });
+                        if (permissionResult.state === 'denied') {
+                            setError('Microphone access is blocked. Please allow microphone access in your browser settings and refresh the page.');
+                            return;
+                        }
+                    } catch (permErr) {
+                        console.warn('Permissions API failed:', permErr);
+                    }
+                } else {
+                    setError('Your browser does not support microphone access APIs. Please use a modern browser.');
+                    return;
+                }
             }
 
-            // Create new recognition instance
+            // At this point permission has either been granted or will be requested by the browser.
             const recognition = new SpeechRecognition();
             recognitionRef.current = recognition;
 
-            // Configure recognition
             recognition.continuous = false;
             recognition.interimResults = false;
             recognition.lang = 'en-US';
@@ -272,26 +279,15 @@ export default function Page() {
             recognition.onerror = (event) => {
                 console.error('Voice recognition error:', event.error);
                 setIsListening(false);
-
-                // Provide specific error messages
                 switch (event.error) {
                     case 'not-allowed':
-                        setError('Microphone access denied. Please enable microphone permissions.');
+                        setError('Microphone access denied. Please enable microphone permissions in your browser.');
                         break;
                     case 'no-speech':
                         setError('No speech detected. Please try again.');
                         break;
                     case 'network':
                         setError('Network error. Voice search requires internet connection.');
-                        break;
-                    case 'aborted':
-                        setError('Voice recognition was aborted.');
-                        break;
-                    case 'audio-capture':
-                        setError('No microphone found. Please connect a microphone.');
-                        break;
-                    case 'language-not-supported':
-                        setError('Language not supported by your browser.');
                         break;
                     default:
                         setError(`Voice recognition failed: ${event.error}`);
@@ -304,9 +300,7 @@ export default function Page() {
                 recognitionRef.current = null;
             };
 
-            // Start recognition
             recognition.start();
-
         } catch (err) {
             console.error('Failed to start voice recognition:', err);
             setError('Failed to start voice search. Please try again.');
