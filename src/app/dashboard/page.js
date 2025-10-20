@@ -44,6 +44,13 @@ export default function Page() {
     const [selectedPlaylist, setSelectedPlaylist] = useState(null);
     const [filterGenre, setFilterGenre] = useState('all');
     const [filterArtist, setFilterArtist] = useState('all');
+    const [filterAlbum, setFilterAlbum] = useState('all');
+    const [filterPopularityMin, setFilterPopularityMin] = useState(0);
+    const [filterDuration, setFilterDuration] = useState('any'); // options: any, short, medium, long
+    const [filterExplicit, setFilterExplicit] = useState('all'); // all, explicit, clean
+    const [filterYear, setFilterYear] = useState('all');
+    const [albums, setAlbums] = useState([]);
+    const [years, setYears] = useState([]);
     const [recommendations, setRecommendations] = useState([]);
     const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);
     const [selectedSongForPlaylist, setSelectedSongForPlaylist] = useState(null);
@@ -222,8 +229,11 @@ export default function Page() {
                 cover: track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
                 genre: 'Unknown',
                 plays: track.popularity * 10000,
+                popularity: track.popularity || 0,
                 preview_url: track.preview_url || null,
                 spotify_uri: track.uri,
+                explicit: !!track.explicit,
+                release_date: track.album?.release_date || null,
             }));
 
             setSongs(mappedSongs);
@@ -282,8 +292,11 @@ export default function Page() {
                             cover: item.track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
                             genre: 'Unknown',
                             plays: 0,
+                            popularity: item.track.popularity || 0,
                             preview_url: item.track.preview_url || null,
                             spotify_uri: item.track.uri,
+                            explicit: !!item.track.explicit,
+                            release_date: item.track.album?.release_date || null,
                         }));
                     playlistsWithSongs.push({
                         id: playlist.id,
@@ -352,8 +365,11 @@ export default function Page() {
                     cover: track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
                     genre: 'Unknown',
                     plays: track.popularity * 10000,
+                    popularity: track.popularity || 0,
                     preview_url: track.preview_url || null,
                     spotify_uri: track.uri,
+                    explicit: !!track.explicit,
+                    release_date: track.album?.release_date || null,
                 }));
                 setFilteredSongs(mappedSongs);
             } catch (err) {
@@ -1155,6 +1171,37 @@ export default function Page() {
         if (filterArtist !== 'all') {
             filtered = filtered.filter(song => song.artist === filterArtist);
         }
+        if (filterAlbum !== 'all') {
+            filtered = filtered.filter(song => song.album === filterAlbum);
+        }
+        if (filterPopularityMin && Number(filterPopularityMin) > 0) {
+            filtered = filtered.filter(song => (song.popularity || 0) >= Number(filterPopularityMin));
+        }
+        if (filterDuration && filterDuration !== 'any') {
+            // duration is stored as mm:ss — convert to seconds
+            const toSeconds = (d) => {
+                if (!d) return 0;
+                const parts = d.split(':').map(Number);
+                return parts[0] * 60 + (parts[1] || 0);
+            };
+            if (filterDuration === 'short') {
+                filtered = filtered.filter(song => toSeconds(song.duration) < 180);
+            } else if (filterDuration === 'medium') {
+                filtered = filtered.filter(song => toSeconds(song.duration) >= 180 && toSeconds(song.duration) <= 300);
+            } else if (filterDuration === 'long') {
+                filtered = filtered.filter(song => toSeconds(song.duration) > 300);
+            }
+        }
+        if (filterExplicit && filterExplicit !== 'all') {
+            if (filterExplicit === 'explicit') filtered = filtered.filter(song => !!song.explicit);
+            if (filterExplicit === 'clean') filtered = filtered.filter(song => !song.explicit);
+        }
+        if (filterYear && filterYear !== 'all') {
+            filtered = filtered.filter(song => {
+                const y = song.release_date ? (song.release_date.split('-')[0]) : null;
+                return y === String(filterYear);
+            });
+        }
         if (searchQuery) {
             filtered = filtered.filter(song =>
                 song.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -1169,6 +1216,21 @@ export default function Page() {
     useEffect(() => {
         applyFilters();
     }, [applyFilters]);
+
+    // Derive albums and years from the loaded songs for richer filters
+    useEffect(() => {
+        const albumSet = new Set();
+        const yearSet = new Set();
+        songs.forEach(s => {
+            if (s.album) albumSet.add(s.album);
+            if (s.release_date) {
+                const y = s.release_date.split('-')[0];
+                if (y) yearSet.add(y);
+            }
+        });
+        setAlbums(Array.from(albumSet).sort());
+        setYears(Array.from(yearSet).sort((a, b) => Number(b) - Number(a)));
+    }, [songs]);
 
     const addSongToPlaylist = (playlistId) => {
         if (!selectedSongForPlaylist) return;
@@ -1515,6 +1577,42 @@ export default function Page() {
                                     <select value={filterArtist} onChange={(e) => setFilterArtist(e.target.value)} className="filter-select">
                                         <option value="all">All Artists</option>
                                         {artists.map((artist) => <option key={artist.id} value={artist.name}>{artist.name}</option>)}
+                                    </select>
+                                </div>
+                                <div className="filter-group">
+                                    <label className="filter-label">Album:</label>
+                                    <select value={filterAlbum} onChange={(e) => setFilterAlbum(e.target.value)} className="filter-select">
+                                        <option value="all">All Albums</option>
+                                        {albums.map((a) => <option key={a} value={a}>{a}</option>)}
+                                    </select>
+                                </div>
+                                <div className="filter-group">
+                                    <label className="filter-label">Min Popularity:</label>
+                                    <input type="range" min="0" max="100" value={filterPopularityMin} onChange={(e) => setFilterPopularityMin(Number(e.target.value))} className="filter-range" />
+                                    <span className="filter-value">{filterPopularityMin}</span>
+                                </div>
+                                <div className="filter-group">
+                                    <label className="filter-label">Duration:</label>
+                                    <select value={filterDuration} onChange={(e) => setFilterDuration(e.target.value)} className="filter-select">
+                                        <option value="any">Any</option>
+                                        <option value="short">Short (&lt; 3:00)</option>
+                                        <option value="medium">Medium (3:00–5:00)</option>
+                                        <option value="long">Long (&gt; 5:00)</option>
+                                    </select>
+                                </div>
+                                <div className="filter-group">
+                                    <label className="filter-label">Explicit:</label>
+                                    <select value={filterExplicit} onChange={(e) => setFilterExplicit(e.target.value)} className="filter-select">
+                                        <option value="all">All</option>
+                                        <option value="explicit">Explicit</option>
+                                        <option value="clean">Clean</option>
+                                    </select>
+                                </div>
+                                <div className="filter-group">
+                                    <label className="filter-label">Year:</label>
+                                    <select value={filterYear} onChange={(e) => setFilterYear(e.target.value)} className="filter-select">
+                                        <option value="all">All Years</option>
+                                        {years.map(y => <option key={y} value={y}>{y}</option>)}
                                     </select>
                                 </div>
                             </div>
