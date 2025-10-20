@@ -665,7 +665,7 @@ export default function Page() {
                 try { youtubePlayer.destroy(); } catch (err) { console.error('Error destroying player:', err); }
             }
         };
-    }, [handleStateChange, volume, playNext, youtubePlayer]);
+    }, [handleStateChange, playNext]);
 
     useEffect(() => {
         let interval;
