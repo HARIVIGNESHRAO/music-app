@@ -1582,9 +1582,20 @@ export default function Page() {
                                     <label className="filter-label">Genre:</label>
                                     <select value={filterGenre} onChange={(e) => setFilterGenre(e.target.value)} className="filter-select">
                                         <option value="all">All Genres</option>
-                                        <option value="Pop">Pop</option><option value="Electronic">Electronic</option><option value="Acoustic">Acoustic</option>
-                                        <option value="Hip-Hop">Hip-Hop</option><option value="Rock">Rock</option><option value="Jazz">Jazz</option>
-                                        <option value="Classical">Classical</option><option value="Country">Country</option>
+                                        {genres && genres.length > 0 ? (
+                                            genres.map(g => <option key={g} value={g}>{g}</option>)
+                                        ) : (
+                                            <>
+                                                <option value="Pop">Pop</option>
+                                                <option value="Electronic">Electronic</option>
+                                                <option value="Acoustic">Acoustic</option>
+                                                <option value="Hip-Hop">Hip-Hop</option>
+                                                <option value="Rock">Rock</option>
+                                                <option value="Jazz">Jazz</option>
+                                                <option value="Classical">Classical</option>
+                                                <option value="Country">Country</option>
+                                            </>
+                                        )}
                                     </select>
                                 </div>
                                 <div className="filter-group">

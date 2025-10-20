@@ -1673,9 +1673,10 @@ body {
 /* Filter Section */
 .filter-section {
     display: flex;
-    gap: 20px;
+    flex-wrap: wrap;
+    gap: 12px;
     margin-bottom: 30px;
-    padding: 20px;
+    padding: 16px;
     background: rgba(255, 255, 255, 0.05);
     border-radius: 12px;
 }
@@ -1683,7 +1684,8 @@ body {
 .filter-group {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
+    flex: 0 1 220px; /* allow wrapping and set a reasonable min width */
 }
 
 .filter-label {
@@ -1702,6 +1704,26 @@ body {
     cursor: pointer;
     outline: none;
     transition: all 0.3s ease;
+}
+
+.filter-range {
+    width: 140px;
+}
+
+.filter-value {
+    color: #cbd5e1;
+    font-size: 13px;
+    margin-left: 8px;
+}
+
+/* Responsive tweaks */
+@media (max-width: 900px) {
+    .filter-group { flex: 0 1 48%; }
+    .filter-range { width: 120px; }
+}
+@media (max-width: 560px) {
+    .filter-group { flex: 0 1 100%; }
+    .filter-section { padding: 12px; gap: 10px; }
 }
 
 .filter-select:hover {
