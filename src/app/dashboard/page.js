@@ -559,23 +559,6 @@ export default function Page() {
         // Mark UI as loading immediately to prevent other effects from auto-playing
         setIsLoadingSong(true);
 
-        // Immediately stop and clear any existing HTML audio source to avoid the previous
-        // track resuming while we prepare the newly selected song.
-        try {
-            const audio = audioRef.current;
-            if (audio) {
-                try { audio.pause(); } catch {}
-                try { audio.src = ''; } catch {}
-                try { audio.currentTime = 0; } catch {}
-            }
-            // If Spotify SDK is connected, try pausing briefly to avoid race conditions
-            if (isPremium && spotifyPlayer && typeof spotifyPlayer.pause === 'function') {
-                spotifyPlayer.pause().catch(() => {});
-            }
-        } catch (err) {
-            console.warn('Error clearing previous audio:', err);
-        }
-
         console.log("Selecting song:", song.title, "hasPreview:", !!song.preview_url, "hasUri:", !!song.spotify_uri);
 
         if (!isSongPlayable(song)) {
