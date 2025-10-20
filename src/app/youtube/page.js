@@ -160,46 +160,30 @@ export default function Page() {
         const recommendedSongs = scores
             .sort((a, b) => b.score - a.score)
             .map(item => item.song)
-            .filter(song => !userPreferenceSongs.some(s => s.id === song.id))
-            .slice(0, 6);
+            .filter(song => !userPreferenceSongs.some(s => s.id === song.id));
 
-        setRecommendations(recommendedSongs);
+        // Pick top recommendations
+        setRecommendations(recommendedSongs.slice(0, 6));
+        return recommendedSongs.slice(0, 6);
     }, [recentlyPlayed, likedSongs, songs, filteredSongs]);
 
-    const startVoiceSearch = () => {
-        // Check browser support
+    // Minimal, safe voice search starter using Web Speech API
+    const startVoiceSearch = async () => {
+        if (isListening) return;
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
         if (!SpeechRecognition) {
-            setError('Voice search is not supported in this browser. Please use Chrome, Edge, or Safari.');
-            return;
-        }
-
-        // Check if already listening
-        if (isListening && recognitionRef.current) {
+            setError('Voice search is not supported in this browser.');
             return;
         }
 
         try {
-            // Create new recognition instance
             const recognition = new SpeechRecognition();
-            recognitionRef.current = recognition;
-
-            // Configure recognition
-            recognition.continuous = false;
-            recognition.interimResults = false;
             recognition.lang = 'en-US';
+            recognition.interimResults = false;
             recognition.maxAlternatives = 1;
-
-            recognition.onstart = () => {
-                console.log('Voice recognition started');
-                setIsListening(true);
-                setError(null);
-            };
 
             recognition.onresult = (event) => {
                 const transcript = event.results[0][0].transcript;
-                console.log('Voice recognition result:', transcript);
                 setSearchQuery(transcript);
                 searchSongs(transcript);
             };
@@ -207,8 +191,6 @@ export default function Page() {
             recognition.onerror = (event) => {
                 console.error('Voice recognition error:', event.error);
                 setIsListening(false);
-
-                // Provide specific error messages
                 switch (event.error) {
                     case 'not-allowed':
                         setError('Microphone access denied. Please enable microphone permissions.');
@@ -216,32 +198,20 @@ export default function Page() {
                     case 'no-speech':
                         setError('No speech detected. Please try again.');
                         break;
-                    case 'network':
-                        setError('Network error. Voice search requires internet connection.');
-                        break;
-                    case 'aborted':
-                        setError('Voice recognition was aborted.');
-                        break;
-                    case 'audio-capture':
-                        setError('No microphone found. Please connect a microphone.');
-                        break;
-                    case 'language-not-supported':
-                        setError('Language not supported by your browser.');
-                        break;
                     default:
                         setError(`Voice recognition failed: ${event.error}`);
                 }
             };
 
             recognition.onend = () => {
-                console.log('Voice recognition ended');
                 setIsListening(false);
                 recognitionRef.current = null;
             };
 
-            // Start recognition
+            recognitionRef.current = recognition;
             recognition.start();
-
+            setIsListening(true);
+            setError(null);
         } catch (err) {
             console.error('Failed to start voice recognition:', err);
             setError('Failed to start voice search. Please try again.');
