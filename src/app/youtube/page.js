@@ -871,9 +871,11 @@ export default function Page() {
 
             setSongs(mappedSongs);
             setFilteredSongs(mappedSongs);
+            // store popular songs in cache under a stable key
+            const cacheKeyPopular = '__popular__';
             setSearchCache(prev => ({
                 ...prev,
-                [cacheKey]: {
+                [cacheKeyPopular]: {
                     data: mappedSongs,
                     timestamp: Date.now()
                 }
@@ -1143,7 +1145,9 @@ export default function Page() {
     };
 
     const applyFilters = useCallback(() => {
-        let filtered = [...songs];
+        // Use the full songs list if available, otherwise filter the currently-displayed filteredSongs
+        const baseList = (songs && songs.length > 0) ? songs : (filteredSongsRef.current || []);
+        let filtered = [...baseList];
 
         if (filterGenres.length > 0) {
             filtered = filtered.filter(song => filterGenres.includes(song.genre));
@@ -1165,29 +1169,56 @@ export default function Page() {
         setFilteredSongs(filtered);
     }, [songs, filterGenres, filterArtists, searchQuery, filterPopularity]);
 
+    // Helper to apply filters immediately after a state update
+    const applyFiltersToList = useCallback((nextFilterGenres, nextFilterArtists, nextFilterPopularity, nextSearchQuery) => {
+        const genres = nextFilterGenres ?? filterGenres;
+        const artists = nextFilterArtists ?? filterArtists;
+        const popularity = nextFilterPopularity ?? filterPopularity;
+        const query = typeof nextSearchQuery === 'string' ? nextSearchQuery : searchQuery;
+
+        // Base list: prefer full songs list if present, otherwise use current filteredSongs
+        const baseList = (songs && songs.length > 0) ? songs : (filteredSongsRef.current || []);
+        let filtered = [...baseList];
+        if (genres.length > 0) filtered = filtered.filter(song => genres.includes(song.genre));
+        if (artists.length > 0) filtered = filtered.filter(song => artists.includes(song.artist));
+        if (query) {
+            filtered = filtered.filter(song =>
+                (song.title?.toLowerCase() || '').includes(query.toLowerCase()) ||
+                (song.artist?.toLowerCase() || '').includes(query.toLowerCase()) ||
+                (song.album?.toLowerCase() || '').includes(query.toLowerCase())
+            );
+        }
+        filtered = filtered.filter(song => (song.plays || 0) >= (popularity[0] || 0) && (song.plays || 0) <= (popularity[1] || 10000000));
+
+        setFilteredSongs(filtered);
+    }, [songs, filterGenres, filterArtists, filterPopularity, searchQuery]);
+
     useEffect(() => {
         applyFilters();
     }, [applyFilters]);
 
     const toggleGenreFilter = (genre) => {
-        setFilterGenres(prev =>
-            prev.includes(genre)
-                ? prev.filter(g => g !== genre)
-                : [...prev, genre]
-        );
+        setFilterGenres(prev => {
+            const next = prev.includes(genre) ? prev.filter(g => g !== genre) : [...prev, genre];
+            // apply immediately
+            applyFiltersToList(next, undefined, undefined, undefined);
+            return next;
+        });
     };
 
     const toggleArtistFilter = (artist) => {
-        setFilterArtists(prev =>
-            prev.includes(artist)
-                ? prev.filter(a => a !== artist)
-                : [...prev, artist]
-        );
+        setFilterArtists(prev => {
+            const next = prev.includes(artist) ? prev.filter(a => a !== artist) : [...prev, artist];
+            applyFiltersToList(undefined, next, undefined, undefined);
+            return next;
+        });
     };
 
     const handlePopularityChange = (e) => {
         const value = Number(e.target.value);
-        setFilterPopularity([0, value]);
+        const next = [0, value];
+        setFilterPopularity(next);
+        applyFiltersToList(undefined, undefined, next, undefined);
     };
 
     const addSongToPlaylist = async (playlistId) => {
@@ -1488,11 +1519,24 @@ export default function Page() {
                                     <label className="filter-label">Genres:</label>
                                     <div className="filter-checkboxes">
                                         {AVAILABLE_GENRES.map(genre => (
-                                            <label key={genre} className="checkbox-label">
+                                            <label
+                                                key={genre}
+                                                className="checkbox-label"
+                                                role="checkbox"
+                                                tabIndex={0}
+                                                aria-checked={filterGenres.includes(genre)}
+                                                onClick={() => toggleGenreFilter(genre)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter' || e.key === ' ') {
+                                                        e.preventDefault();
+                                                        toggleGenreFilter(genre);
+                                                    }
+                                                }}
+                                            >
                                                 <input
                                                     type="checkbox"
                                                     checked={filterGenres.includes(genre)}
-                                                    onChange={() => toggleGenreFilter(genre)}
+                                                    readOnly
                                                 />
                                                 {genre}
                                             </label>
@@ -1503,11 +1547,24 @@ export default function Page() {
                                     <label className="filter-label">Artists:</label>
                                     <div className="filter-checkboxes">
                                         {allArtists.map(artist => (
-                                            <label key={artist} className="checkbox-label">
+                                            <label
+                                                key={artist}
+                                                className="checkbox-label"
+                                                role="checkbox"
+                                                tabIndex={0}
+                                                aria-checked={filterArtists.includes(artist)}
+                                                onClick={() => toggleArtistFilter(artist)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter' || e.key === ' ') {
+                                                        e.preventDefault();
+                                                        toggleArtistFilter(artist);
+                                                    }
+                                                }}
+                                            >
                                                 <input
                                                     type="checkbox"
                                                     checked={filterArtists.includes(artist)}
-                                                    onChange={() => toggleArtistFilter(artist)}
+                                                    readOnly
                                                 />
                                                 {artist}
                                             </label>
