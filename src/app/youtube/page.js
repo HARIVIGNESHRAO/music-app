@@ -54,8 +54,6 @@ export default function Page() {
     const playerRef = useRef(null);
     const searchTimerRef = useRef(null);
     const recognitionRef = useRef(null);
-    const prevSongIdRef = useRef(null);
-    const [userSearchQuery, setUserSearchQuery] = useState('');
     const [searchCache, setSearchCache] = useState({});
     const CACHE_DURATION = 3600000; // 1 hour
     const API_KEY = 'AIzaSyB6C6QO9Yd4IpW3ecaSg7BBY7JalpjDQ6s';
@@ -103,37 +101,69 @@ export default function Page() {
     }, [filterGenres, filterArtists, filterPopularity]);
 
     const generateRecommendations = useCallback((allSongs) => {
-        // Simpler, faster recommendations based only on recentlyPlayed.
-        // If no recentlyPlayed songs, fall back to popular / random picks.
-        if (!songs || songs.length === 0) {
+        if (!allSongs || allSongs.length === 0) {
             setRecommendations([]);
             return;
         }
+        const combinedSongs = [...new Set([...allSongs, ...songs, ...filteredSongs].map(s => JSON.stringify(s)))].map(s => JSON.parse(s));
 
-        if (!recentlyPlayed || recentlyPlayed.length === 0) {
-            // pick top-played songs or random
-            const fallback = [...songs].sort((a, b) => (b.plays || 0) - (a.plays || 0)).slice(0, 6);
-            setRecommendations(fallback);
+        const allGenres = [...new Set(combinedSongs.map(song => song.genre || 'Music'))];
+        const allArtists = [...new Set(combinedSongs.map(song => song.artist))];
+
+        const createFeatureVector = (song) => {
+            const genreVector = allGenres.map(genre => song.genre === genre ? 1 : 0);
+            const artistVector = allArtists.map(artist => song.artist === artist ? 1 : 0);
+            const maxPlays = Math.max(...combinedSongs.map(s => s.plays || 0), 1);
+            const plays = (song.plays || 0) / maxPlays;
+            const playFrequency = recentlyPlayed.filter(s => s.id === song.id).length / (recentlyPlayed.length || 1);
+            const recency = recentlyPlayed.findIndex(s => s.id === song.id) >= 0
+                ? 1 - (recentlyPlayed.findIndex(s => s.id === song.id) / recentlyPlayed.length)
+                : 0;
+            const recencyWeight = recentlyPlayed.findIndex(s => s.id === song.id) >= 0 ? 1.5 : 1;
+            return [...genreVector, ...artistVector, plays, playFrequency, recency * recencyWeight];
+        };
+
+        const cosineSimilarity = (vecA, vecB) => {
+            const dotProduct = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
+            const magnitudeA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
+            const magnitudeB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
+            return magnitudeA && magnitudeB ? dotProduct / (magnitudeA * magnitudeB) : 0;
+        };
+
+        const songVectors = combinedSongs.map(song => ({
+            song,
+            vector: createFeatureVector(song)
+        }));
+
+        const userPreferenceSongs = [
+            ...recentlyPlayed,
+            ...Array.from(likedSongs).map(songId => combinedSongs.find(s => s.id === songId)).filter(s => s)
+        ].filter((song, index, self) => song && self.findIndex(s => s.id === song.id) === index);
+
+        if (userPreferenceSongs.length === 0) {
+            const shuffled = [...combinedSongs].sort(() => 0.5 - Math.random());
+            setRecommendations(shuffled.slice(0, 6));
             return;
         }
 
-        const recentArtists = new Set(recentlyPlayed.map(s => s.artist));
-        const recentGenres = new Set(recentlyPlayed.map(s => s.genre));
+        const userVectors = userPreferenceSongs.map(song => createFeatureVector(song));
+        const userVector = userVectors.reduce(
+            (avg, vec) => avg.map((val, i) => val + vec[i] / userVectors.length),
+            new Array(allGenres.length + allArtists.length + 3).fill(0)
+        );
 
-        const scored = songs
-            .filter(s => !recentlyPlayed.some(r => r.id === s.id))
-            .map(s => {
-                let score = 0;
-                if (recentArtists.has(s.artist)) score += 3;
-                if (recentGenres.has(s.genre)) score += 2;
-                score += Math.log10((s.plays || 1) + 1) * 0.5;
-                return { song: s, score };
-            })
+        const scores = songVectors.map(({ song, vector }) => ({
+            song,
+            score: cosineSimilarity(userVector, vector)
+        }));
+
+        const recommendedSongs = scores
             .sort((a, b) => b.score - a.score)
-            .slice(0, 6)
-            .map(x => x.song);
+            .map(item => item.song)
+            .filter(song => !userPreferenceSongs.some(s => s.id === song.id))
+            .slice(0, 6);
 
-        setRecommendations(scored);
+        setRecommendations(recommendedSongs);
     }, [recentlyPlayed, likedSongs, songs, filteredSongs]);
 
     const startVoiceSearch = () => {
@@ -150,108 +180,73 @@ export default function Page() {
             return;
         }
 
-        const requestMicrophone = async () => {
-            try {
-                // Prefer Permissions API to check status, fallback to getUserMedia prompt
-                if (navigator.permissions && navigator.permissions.query) {
-                    const perm = await navigator.permissions.query({ name: 'microphone' });
-                    if (perm.state === 'denied') {
-                        setError('Microphone access denied. Please enable microphone permissions in your browser settings.');
-                        return false;
-                    }
-                }
+        try {
+            // Create new recognition instance
+            const recognition = new SpeechRecognition();
+            recognitionRef.current = recognition;
 
-                // Try to get a short-lived media stream to trigger permissions prompt
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                // We don't need to keep the stream — stop tracks immediately
-                stream.getTracks().forEach(t => t.stop());
-                return true;
-            } catch (err) {
-                console.error('Microphone permission error:', err);
-                // Provide friendly messages for common cases
-                if (err.name === 'NotAllowedError' || err.name === 'SecurityError') {
-                    setError('Microphone access denied. Please enable microphone permissions.');
-                } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-                    setError('No microphone found. Please connect a microphone.');
-                } else {
-                    setError('Unable to access microphone. Please check your browser settings.');
-                }
-                return false;
-            }
-        };
+            // Configure recognition
+            recognition.continuous = false;
+            recognition.interimResults = false;
+            recognition.lang = 'en-US';
+            recognition.maxAlternatives = 1;
 
-        (async () => {
-            const ok = await requestMicrophone();
-            if (!ok) return;
+            recognition.onstart = () => {
+                console.log('Voice recognition started');
+                setIsListening(true);
+                setError(null);
+            };
 
-            try {
-                // Create new recognition instance
-                const recognition = new SpeechRecognition();
-                recognitionRef.current = recognition;
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript;
+                console.log('Voice recognition result:', transcript);
+                setSearchQuery(transcript);
+                searchSongs(transcript);
+            };
 
-                // Configure recognition
-                recognition.continuous = false;
-                recognition.interimResults = false;
-                recognition.lang = 'en-US';
-                recognition.maxAlternatives = 1;
-
-                recognition.onstart = () => {
-                    console.log('Voice recognition started');
-                    setIsListening(true);
-                    setError(null);
-                };
-
-                recognition.onresult = (event) => {
-                    const transcript = event.results[0][0].transcript;
-                    console.log('Voice recognition result:', transcript);
-                    setSearchQuery(transcript);
-                    searchSongs(transcript);
-                };
-
-                recognition.onerror = (event) => {
-                    console.error('Voice recognition error:', event.error);
-                    setIsListening(false);
-
-                    // Provide specific error messages
-                    switch (event.error) {
-                        case 'not-allowed':
-                            setError('Microphone access denied. Please enable microphone permissions.');
-                            break;
-                        case 'no-speech':
-                            setError('No speech detected. Please try again.');
-                            break;
-                        case 'network':
-                            setError('Network error. Voice search requires internet connection.');
-                            break;
-                        case 'aborted':
-                            setError('Voice recognition was aborted.');
-                            break;
-                        case 'audio-capture':
-                            setError('No microphone found. Please connect a microphone.');
-                            break;
-                        case 'language-not-supported':
-                            setError('Language not supported by your browser.');
-                            break;
-                        default:
-                            setError(`Voice recognition failed: ${event.error}`);
-                    }
-                };
-
-                recognition.onend = () => {
-                    console.log('Voice recognition ended');
-                    setIsListening(false);
-                    recognitionRef.current = null;
-                };
-
-                // Start recognition
-                recognition.start();
-
-            } catch (err) {
-                console.error('Failed to start voice recognition:', err);
-                setError('Failed to start voice search. Please try again.');
+            recognition.onerror = (event) => {
+                console.error('Voice recognition error:', event.error);
                 setIsListening(false);
-            }
-        })();
+
+                // Provide specific error messages
+                switch (event.error) {
+                    case 'not-allowed':
+                        setError('Microphone access denied. Please enable microphone permissions.');
+                        break;
+                    case 'no-speech':
+                        setError('No speech detected. Please try again.');
+                        break;
+                    case 'network':
+                        setError('Network error. Voice search requires internet connection.');
+                        break;
+                    case 'aborted':
+                        setError('Voice recognition was aborted.');
+                        break;
+                    case 'audio-capture':
+                        setError('No microphone found. Please connect a microphone.');
+                        break;
+                    case 'language-not-supported':
+                        setError('Language not supported by your browser.');
+                        break;
+                    default:
+                        setError(`Voice recognition failed: ${event.error}`);
+                }
+            };
+
+            recognition.onend = () => {
+                console.log('Voice recognition ended');
+                setIsListening(false);
+                recognitionRef.current = null;
+            };
+
+            // Start recognition
+            recognition.start();
+
+        } catch (err) {
+            console.error('Failed to start voice recognition:', err);
+            setError('Failed to start voice search. Please try again.');
+            setIsListening(false);
+        }
     };
 
 
@@ -580,41 +575,30 @@ export default function Page() {
     }, [repeat, playNext]);
 
     useEffect(() => {
+        // Create the YouTube Player only after the playerRef node exists.
+        // Some race conditions cause the YouTube widget to access an iframe
+        // that hasn't been attached yet which results in "reading 'src' of null".
         let retryTimer = null;
         let scriptTag = null;
 
-        const createPlayer = () => {
-            // ensure the ref exists
-            if (!playerRef.current) {
-                return false;
-            }
-
+        const createPlayerIfReady = () => {
+            if (!playerRef.current || !window.YT || !window.YT.Player) return false;
             try {
-                /*
-                 Create the YouTube player only when the DOM node exists.
-                 Using a small height/width of 0 keeps the iframe hidden while still
-                 allowing the API to control playback.
-                */
-                const player = new window.YT.Player(playerRef.current, {
+                /* eslint-disable no-new */
+                new window.YT.Player(playerRef.current, {
                     height: '0',
                     width: '0',
                     events: {
                         onReady: (event) => {
                             setYoutubePlayer(event.target);
-                            try {
-                                event.target.setVolume(volume);
-                            } catch (err) {
-                                console.error('Failed to set initial volume:', err);
-                            }
+                            try { event.target.setVolume(volume); } catch (err) { console.error('Failed to set initial volume:', err); }
                         },
                         onStateChange: handleStateChange,
                         onError: (event) => {
                             console.error('YouTube Player error:', event.data);
                             if ([2, 5, 100, 101, 150].includes(event.data)) {
                                 setError('This video cannot be played. Trying next...');
-                                setTimeout(() => {
-                                    playNext();
-                                }, 2000);
+                                setTimeout(() => { playNext(); }, 2000);
                             }
                             setIsPlaying(false);
                         }
@@ -622,18 +606,18 @@ export default function Page() {
                 });
                 return true;
             } catch (err) {
-                console.error('Failed to create YT.Player:', err);
+                console.error('createPlayerIfReady error:', err);
                 return false;
             }
         };
 
-        const waitAndCreate = (attempt = 0) => {
-            if (createPlayer()) return;
+        const waitForReady = (attempt = 0) => {
+            if (createPlayerIfReady()) return;
             if (attempt >= 50) {
-                console.error('YT.Player not created: playerRef not found after retries');
+                console.error('YT.Player creation timed out after retries');
                 return;
             }
-            retryTimer = setTimeout(() => waitAndCreate(attempt + 1), 100);
+            retryTimer = setTimeout(() => waitForReady(attempt + 1), 100);
         };
 
         if (!window.YT) {
@@ -641,28 +625,21 @@ export default function Page() {
             scriptTag.src = 'https://www.youtube.com/iframe_api';
             const firstScript = document.getElementsByTagName('script')[0];
             firstScript?.parentNode?.insertBefore(scriptTag, firstScript);
-
-            // When API ready, ensure DOM ref exists before creating player
             window.onYouTubeIframeAPIReady = () => {
-                waitAndCreate(0);
+                waitForReady(0);
             };
-        } else if (window.YT && window.YT.Player) {
-            // API already loaded, try to create immediately (or wait briefly)
-            waitAndCreate(0);
+        } else {
+            waitForReady(0);
         }
 
         return () => {
             if (retryTimer) clearTimeout(retryTimer);
             if (scriptTag && scriptTag.parentNode) scriptTag.parentNode.removeChild(scriptTag);
             if (youtubePlayer && typeof youtubePlayer.destroy === 'function') {
-                try {
-                    youtubePlayer.destroy();
-                } catch (err) {
-                    console.error('Error destroying player:', err);
-                }
+                try { youtubePlayer.destroy(); } catch (err) { console.error('Error destroying player:', err); }
             }
         };
-    }, [handleStateChange]);
+    }, [handleStateChange, volume, playNext, youtubePlayer]);
 
     useEffect(() => {
         let interval;
@@ -680,53 +657,40 @@ export default function Page() {
         }
     }, [volume, youtubePlayer]);
 
-    // Safe loader: some browsers / race conditions can leave the internal iframe
-    // temporarily unavailable which makes the iframe API throw "reading 'src' of null".
-    // This helper retries a few times before giving up and optionally recreates the player.
-    const safeLoadVideoById = useCallback((videoId, maxAttempts = 20, attempt = 0) => {
-        if (!youtubePlayer || typeof youtubePlayer.loadVideoById !== 'function') return;
-
-        try {
-            const iframe = typeof youtubePlayer.getIframe === 'function' ? youtubePlayer.getIframe() : null;
-            if (!iframe) {
-                if (attempt < maxAttempts) {
-                    // wait briefly for the iframe to be available
-                    setTimeout(() => safeLoadVideoById(videoId, maxAttempts, attempt + 1), 100);
-                } else {
-                    console.error('safeLoadVideoById: iframe not available after retries');
-                    // Optionally try to destroy and recreate the player on failure
-                }
-                return;
-            }
-
-            // iframe exists, ensure src is defined before calling the API
-            if (iframe.src === null || iframe.src === undefined) {
-                if (attempt < maxAttempts) {
-                    setTimeout(() => safeLoadVideoById(videoId, maxAttempts, attempt + 1), 100);
-                } else {
-                    console.error('safeLoadVideoById: iframe.src is null/undefined after retries');
-                }
-                return;
-            }
-
-            youtubePlayer.loadVideoById(videoId);
-        } catch (err) {
-            console.error('safeLoadVideoById error:', err);
-            if (attempt < maxAttempts) {
-                setTimeout(() => safeLoadVideoById(videoId, maxAttempts, attempt + 1), 150);
-            }
-        }
-    }, [youtubePlayer]);
-
     useEffect(() => {
         if (youtubePlayer && currentSong?.id) {
-            // Avoid reloading the same video if it's already playing
-            if (prevSongIdRef.current === currentSong.id) return;
-            prevSongIdRef.current = currentSong.id;
-            setIsLoadingSong(true);
-            safeLoadVideoById(currentSong.id);
+            setIsLoadingSong(true);        
+            const tryLoad = (attempt = 0) => {
+                try {
+                    const iframe = youtubePlayer && typeof youtubePlayer.getIframe === 'function'
+                        ? youtubePlayer.getIframe()
+                        : playerRef.current && playerRef.current.querySelector('iframe');
+
+                    if (!iframe) {
+                        if (attempt < 20) return setTimeout(() => tryLoad(attempt + 1), 100);
+                        console.error('safeLoadVideoById: iframe not ready');
+                        setIsLoadingSong(false);
+                        return;
+                    }
+
+                    if (iframe.src == null) {
+                        if (attempt < 20) return setTimeout(() => tryLoad(attempt + 1), 100);
+                        console.error('safeLoadVideoById: iframe.src is null/undefined');
+                        setIsLoadingSong(false);
+                        return;
+                    }
+
+                    youtubePlayer.loadVideoById(currentSong.id);
+                } catch (err) {
+                    console.error('tryLoad error:', err);
+                    if (attempt < 20) return setTimeout(() => tryLoad(attempt + 1), 150);
+                    setIsLoadingSong(false);
+                }
+            };
+
+            tryLoad(0);
         }
-    }, [currentSong, youtubePlayer, safeLoadVideoById]);
+    }, [currentSong, youtubePlayer]);
 
     const playSong = useCallback(async (song) => {
         if (!youtubePlayer || !song) return;
@@ -734,25 +698,46 @@ export default function Page() {
         setIsLoadingSong(true);
         setCurrentSong(song);
         setError(null);
+        // Retry a few times to ensure the internal iframe is attached
+        const tryPlay = (attempt = 0) => {
+            try {
+                const iframe = youtubePlayer && typeof youtubePlayer.getIframe === 'function'
+                    ? youtubePlayer.getIframe()
+                    : playerRef.current && playerRef.current.querySelector('iframe');
 
-        try {
-            // Use safe loader to avoid iframe null src errors
-            safeLoadVideoById(song.id);
-            if (typeof youtubePlayer.setVolume === 'function') {
-                try { youtubePlayer.setVolume(volume); } catch (err) { console.error('setVolume failed', err); }
+                if (!iframe) {
+                    if (attempt < 20) return setTimeout(() => tryPlay(attempt + 1), 100);
+                    throw new Error('iframe not available');
+                }
+
+                if (iframe.src == null) {
+                    if (attempt < 20) return setTimeout(() => tryPlay(attempt + 1), 100);
+                    throw new Error('iframe.src is null');
+                }
+
+                // Safe to call player API
+                try {
+                    youtubePlayer.loadVideoById(song.id);
+                    if (typeof youtubePlayer.setVolume === 'function') {
+                        try { youtubePlayer.setVolume(volume); } catch (err) { console.error('setVolume failed', err); }
+                    }
+                    if (typeof youtubePlayer.playVideo === 'function') {
+                        youtubePlayer.playVideo();
+                    }
+                } catch (innerErr) {
+                    console.error('player API error:', innerErr);
+                    if (attempt < 20) return setTimeout(() => tryPlay(attempt + 1), 150);
+                    throw innerErr;
+                }
+            } catch (err) {
+                console.error('Failed to play song:', err);
+                setError('Failed to play song');
+                setIsLoadingSong(false);
             }
-            if (typeof youtubePlayer.playVideo === 'function') {
-                // playVideo may not work until the video is loaded; give it a short delay
-                setTimeout(() => {
-                    try { youtubePlayer.playVideo(); } catch (err) { console.error('playVideo failed', err); }
-                }, 300);
-            }
-        } catch (err) {
-            console.error('Failed to play song:', err);
-            setError('Failed to play song');
-            setIsLoadingSong(false);
-        }
-    }, [youtubePlayer, volume, safeLoadVideoById]);
+        };
+
+        tryPlay(0);
+    }, [youtubePlayer, volume]);
 
     const fetchPopularSongs = useCallback(async () => {
         try {
@@ -838,26 +823,6 @@ export default function Page() {
         }
     }, [BACKEND_URL]);
 
-    const promoteUser = async (userId) => {
-        try {
-            const { data } = await axios.post(`${BACKEND_URL}/api/users/${userId}/promote`);
-            setUsers(prev => prev.map(u => u._id === userId ? data.user : u));
-        } catch (err) {
-            console.error('Failed to promote user:', err);
-            setUsersError('Failed to change user role');
-        }
-    };
-
-    const demoteUser = async (userId) => {
-        try {
-            const { data } = await axios.post(`${BACKEND_URL}/api/users/${userId}/demote`);
-            setUsers(prev => prev.map(u => u._id === userId ? data.user : u));
-        } catch (err) {
-            console.error('Failed to demote user:', err);
-            setUsersError('Failed to change user role');
-        }
-    };
-
     useEffect(() => {
         const storedUser = window.localStorage.getItem('user');
         if (storedUser) {
@@ -901,7 +866,7 @@ export default function Page() {
             return;
         }
 
-    searchTimerRef.current = setTimeout(async () => {
+        searchTimerRef.current = setTimeout(async () => {
             try {
                 setLoading(true);
                 setError(null); // Clear previous errors
@@ -979,7 +944,7 @@ export default function Page() {
             } finally {
                 setLoading(false);
             }
-        }, 300);
+        }, 500);
     };
 
 
@@ -1749,17 +1714,6 @@ export default function Page() {
                             </div>
                             <div className="admin-panel">
                                 <h3 className="panel-title">User Management</h3>
-                                <div className="admin-search">
-                                    <input
-                                        type="text"
-                                        placeholder="Search users by name or email"
-                                        value={userSearchQuery}
-                                        onChange={(e) => setUserSearchQuery(e.target.value)}
-                                        className="admin-search-input"
-                                    />
-                                    <button className="admin-search-btn" onClick={() => setUsers(prev => prev.filter(u => (u.username + u.email).toLowerCase().includes(userSearchQuery.toLowerCase())))}>Search</button>
-                                    <button className="admin-clear-btn" onClick={() => { setUserSearchQuery(''); fetchUsers(); }}>Clear</button>
-                                </div>
                                 {usersLoading ? (
                                     <p>Loading users from server...</p>
                                 ) : usersError ? (
@@ -1789,11 +1743,7 @@ export default function Page() {
                                                     >
                                                         Delete
                                                     </button>
-                                                    {user.role !== 'admin' ? (
-                                                        <button className="promote-btn" onClick={() => promoteUser(user._id)}>Promote</button>
-                                                    ) : (
-                                                        <button className="demote-btn" onClick={() => demoteUser(user._id)}>Demote</button>
-                                                    )}
+                                                    <button className="user-menu"><MoreVertical className="menu-icon" /></button>
                                                 </div>
                                             </div>
                                         ))}
