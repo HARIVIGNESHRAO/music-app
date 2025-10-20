@@ -575,13 +575,21 @@ export default function Page() {
     }, [repeat, playNext]);
 
     useEffect(() => {
-        if (!window.YT) {
-            const tag = document.createElement('script');
-            tag.src = 'https://www.youtube.com/iframe_api';
-            const firstScript = document.getElementsByTagName('script')[0];
-            firstScript.parentNode.insertBefore(tag, firstScript);
+        let retryTimer = null;
+        let scriptTag = null;
 
-            window.onYouTubeIframeAPIReady = () => {
+        const createPlayer = () => {
+            // ensure the ref exists
+            if (!playerRef.current) {
+                return false;
+            }
+
+            try {
+                /*
+                 Create the YouTube player only when the DOM node exists.
+                 Using a small height/width of 0 keeps the iframe hidden while still
+                 allowing the API to control playback.
+                */
                 const player = new window.YT.Player(playerRef.current, {
                     height: '0',
                     width: '0',
@@ -607,36 +615,40 @@ export default function Page() {
                         }
                     }
                 });
+                return true;
+            } catch (err) {
+                console.error('Failed to create YT.Player:', err);
+                return false;
+            }
+        };
+
+        const waitAndCreate = (attempt = 0) => {
+            if (createPlayer()) return;
+            if (attempt >= 50) {
+                console.error('YT.Player not created: playerRef not found after retries');
+                return;
+            }
+            retryTimer = setTimeout(() => waitAndCreate(attempt + 1), 100);
+        };
+
+        if (!window.YT) {
+            scriptTag = document.createElement('script');
+            scriptTag.src = 'https://www.youtube.com/iframe_api';
+            const firstScript = document.getElementsByTagName('script')[0];
+            firstScript?.parentNode?.insertBefore(scriptTag, firstScript);
+
+            // When API ready, ensure DOM ref exists before creating player
+            window.onYouTubeIframeAPIReady = () => {
+                waitAndCreate(0);
             };
         } else if (window.YT && window.YT.Player) {
-            const player = new window.YT.Player(playerRef.current, {
-                height: '0',
-                width: '0',
-                events: {
-                    onReady: (event) => {
-                        setYoutubePlayer(event.target);
-                        try {
-                            event.target.setVolume(volume);
-                        } catch (err) {
-                            console.error('Failed to set initial volume:', err);
-                        }
-                    },
-                    onStateChange: handleStateChange,
-                    onError: (event) => {
-                        console.error('YouTube Player error:', event.data);
-                        if ([2, 5, 100, 101, 150].includes(event.data)) {
-                            setError('This video cannot be played. Trying next...');
-                            setTimeout(() => {
-                                playNext();
-                            }, 2000);
-                        }
-                        setIsPlaying(false);
-                    }
-                }
-            });
+            // API already loaded, try to create immediately (or wait briefly)
+            waitAndCreate(0);
         }
 
         return () => {
+            if (retryTimer) clearTimeout(retryTimer);
+            if (scriptTag && scriptTag.parentNode) scriptTag.parentNode.removeChild(scriptTag);
             if (youtubePlayer && typeof youtubePlayer.destroy === 'function') {
                 try {
                     youtubePlayer.destroy();
