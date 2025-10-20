@@ -556,9 +556,6 @@ export default function Page() {
             console.log("Already loading a song, ignoring duplicate call");
             return;
         }
-                 if (audioRef.current) {
-        audioRef.current.pause();
-    }
         // Mark UI as loading immediately to prevent other effects from auto-playing
         setIsLoadingSong(true);
 
@@ -666,13 +663,6 @@ export default function Page() {
             console.log('Profile already loaded, skipping...');
             return;
         }
-    if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.src = '';
-        audioRef.current.load();
-    }
-    setCurrentSong(null);
-    setIsPlaying(false);
 
         try {
             setLoading(true);
@@ -990,10 +980,6 @@ export default function Page() {
         let retryTimeout = null;
 
         const playSong = async () => {
-             if (audioRef.current) {
-            audioRef.current.pause();
-            audioRef.current.currentTime = 0;
-        }
             if (isLoadingRef.current) {
                 console.log("Already loading song, skipping duplicate playback attempt");
                 return;
@@ -1115,7 +1101,6 @@ export default function Page() {
             isLoadingRef.current = false;
             if (audioRef.current) {
                 audioRef.current.pause();
-                audioRef.current.src = '';
             }
             if (retryTimeout) {
                 clearTimeout(retryTimeout);
@@ -1198,18 +1183,7 @@ export default function Page() {
         const authUrl = `${AUTH_ENDPOINT}?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}&response_type=${RESPONSE_TYPE}&code_challenge=${codeChallenge}&code_challenge_method=${CODE_CHALLENGE_METHOD}`;
         window.location.href = authUrl;
     };
- const resetAudioPlayer = () => {
-            if (audioRef.current) {
-                audioRef.current.pause();
-                audioRef.current.currentTime = 0;
-                audioRef.current.src = '';
-            }
-            setCurrentSong(null);
-            setIsPlaying(false);
-            setCurrentTime(0);
-            setDuration(0);
-            isLoadingRef.current = false;
-        };
+
     const handleLogout = () => {
         setAccessToken(null);
         setCurrentUser(null);
@@ -1225,8 +1199,8 @@ export default function Page() {
         setSpotifyPlayer(null);
         setDeviceId(null);
         setPlayerReady(false);
-        resetAudioPlayer();
         profileLoadedRef.current = false;
+
         window.localStorage.removeItem('spotify_token');
         window.localStorage.removeItem('spotify_code_verifier');
         window.localStorage.removeItem('user');
