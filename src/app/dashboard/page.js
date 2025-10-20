@@ -596,8 +596,7 @@ export default function Page() {
             return prevQueue;
         });
 
-        setCurrentSong(song);
-        setIsPlaying(true);
+    setCurrentSong(song);
         setError(null);
 
         setTimeout(() => {
@@ -1006,7 +1005,7 @@ export default function Page() {
                 setError(null);
 
                 if (isPremium && playerReady && deviceId && currentSong.spotify_uri) {
-                    try {
+                        try {
                         await apiCallWithBackoff(() =>
                             axios.put(
                                 `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
@@ -1021,6 +1020,7 @@ export default function Page() {
                                 const newPlayed = [currentSong, ...prev.filter((s) => s.id !== currentSong.id)];
                                 return newPlayed; // keep full session history for recommendations
                             });
+                            setIsPlaying(true);
                         }
                         return;
                     } catch (sdkError) {
@@ -1036,7 +1036,7 @@ export default function Page() {
                     }
                 }
 
-                if (audioRef.current && currentSong.preview_url) {
+                        if (audioRef.current && currentSong.preview_url) {
                     console.log("Attempting preview playback...");
                     const audio = audioRef.current;
 
@@ -1060,15 +1060,21 @@ export default function Page() {
                         audio.load();
                     });
 
-                    if (!isCancelled && isPlaying) {
-                        await audio.play();
-                        console.log("Preview playing");
-                        setError(null);
-                        setRecentlyPlayed((prev) => {
-                            const newPlayed = [currentSong, ...prev.filter((s) => s.id !== currentSong.id)];
-                            return newPlayed; // keep full session history for recommendations
-                        });
-                    }
+                        if (!isCancelled) {
+                            try {
+                                await audio.play();
+                                console.log("Preview playing");
+                                setError(null);
+                                setRecentlyPlayed((prev) => {
+                                    const newPlayed = [currentSong, ...prev.filter((s) => s.id !== currentSong.id)];
+                                    return newPlayed; // keep full session history for recommendations
+                                });
+                                setIsPlaying(true);
+                            } catch (playErr) {
+                                console.error('Preview play failed:', playErr);
+                                setIsPlaying(false);
+                            }
+                        }
                     return;
                 }
 
