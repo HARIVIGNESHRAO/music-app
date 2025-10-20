@@ -23,14 +23,6 @@ const debounce = (func, wait) => {
     };
 };
 
-    const msToTime = (ms) => {
-        if (ms === null || ms === undefined || isNaN(Number(ms))) return '0:00';
-        const totalSeconds = Math.floor(Number(ms) / 1000);
-        const mins = Math.floor(totalSeconds / 60);
-        const secs = totalSeconds % 60;
-        return `${mins}:${secs.toString().padStart(2, '0')}`;
-    };
-
 export default function Page() {
     const router = useRouter();
     const [currentUser, setCurrentUser] = useState(null);
@@ -65,7 +57,6 @@ export default function Page() {
     const [selectedSongForPlaylist, setSelectedSongForPlaylist] = useState(null);
     const [artists, setArtists] = useState([]);
     const audioRef = useRef(null);
-    const suppressPlayerStateRef = useRef(true);
     const [queue, setQueue] = useState([]);
     const [currentIndex, setCurrentIndex] = useState(0);
     const [shuffle, setShuffle] = useState(false);
@@ -315,7 +306,7 @@ export default function Page() {
                     title: track.name,
                     artist: track.artists.map(a => a.name).join(', '),
                     album: track.album.name,
-                    duration: msToTime(track.duration_ms),
+                    duration: new Date(track.duration_ms).toISOString().substr(14, 5),
                     cover: track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
                     genre,
                     plays: track.popularity * 10000,
@@ -403,7 +394,7 @@ export default function Page() {
                                 title: t.name,
                                 artist: t.artists.map(a => a.name).join(', '),
                                 album: t.album.name,
-                                duration: msToTime(t.duration_ms),
+                                duration: new Date(t.duration_ms).toISOString().substr(14, 5),
                                 cover: t.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
                                 genre,
                                 plays: 0,
@@ -466,7 +457,7 @@ export default function Page() {
                 setError(null);
                 const response = await apiCallWithBackoff(() =>
                     axios.get(
-                        `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10&fields=tracks(items(id,name,artists(id,name,uri),album(name,images),duration_ms,preview_url,uri,popularity))`,
+                        `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10&fields=tracks(items(id,name,artists(name),album(name,images),duration_ms,preview_url,uri,popularity))`,
                         {
                             headers: { Authorization: `Bearer ${accessToken}` },
                         }
@@ -499,7 +490,7 @@ export default function Page() {
                         title: track.name,
                         artist: track.artists.map(a => a.name).join(', '),
                         album: track.album.name,
-                        duration: msToTime(track.duration_ms),
+                        duration: new Date(track.duration_ms).toISOString().substr(14, 5),
                         cover: track.album.images[0]?.url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center',
                         genre,
                         plays: track.popularity * 10000,
@@ -605,9 +596,8 @@ export default function Page() {
             return prevQueue;
         });
 
-    // User explicitly selected a song — ensure we handle player state locally
-    suppressPlayerStateRef.current = false;
-    setCurrentSong(song);
+        setCurrentSong(song);
+        setIsPlaying(true);
         setError(null);
 
         setTimeout(() => {
@@ -877,8 +867,6 @@ export default function Page() {
                             { headers: { Authorization: `Bearer ${accessToken}` } }
                         )
                     ).catch(err => console.error('Failed to transfer playback:', err));
-                    // After transfer, allow SDK player state to be processed locally
-                    setTimeout(() => { suppressPlayerStateRef.current = false; }, 1200);
                 });
                 playerInstance.addListener('not_ready', ({ device_id }) => {
                     console.log('Device ID has gone offline', device_id);
@@ -891,63 +879,28 @@ export default function Page() {
                 });
                 playerInstance.addListener('player_state_changed', (state) => {
                     if (!state) return;
-
-                    // If we're suppressing external SDK states (e.g., initial state from another
-                    // browser/device), ignore it unless the track matches a song we know
-                    // or the user has already interacted on this client.
-                    const currentTrack = state.track_window?.current_track;
-                    const incomingTrackId = currentTrack?.id;
-
-                    const knownIds = new Set([...(queue || []).map(s => s.id), ...(recentlyPlayed || []).map(s => s.id)]);
-                    const isKnown = incomingTrackId && knownIds.has(incomingTrackId);
-
-                    if (suppressPlayerStateRef.current && !isKnown) {
-                        // Ignore this external state; do not flip playing state locally.
-                        console.log('Ignoring external SDK player state (suppressed) for track', incomingTrackId);
-                        return;
-                    }
-
-                    // Accept SDK state updates now
                     setIsPlaying(!state.paused);
                     setCurrentTime(state.position / 1000);
                     setDuration(state.duration / 1000);
 
-                    if (currentTrack) {
-                        const track = currentTrack;
-                        // Attempt to fetch artist genres for the current track's primary artist
-                        (async () => {
-                            let genre = 'Unknown';
-                            try {
-                                const artistId = track.artists?.[0]?.id;
-                                if (artistId && accessToken) {
-                                    const resp = await axios.get(`https://api.spotify.com/v1/artists/${artistId}`, { headers: { Authorization: `Bearer ${accessToken}` } });
-                                    const g = resp.data.genres || [];
-                                    if (g.length > 0) genre = g[0];
-                                }
-                            } catch (err) {
-                                console.warn('Failed to fetch artist genre for SDK track:', err);
-                            }
-
-                            const newSong = {
-                                id: track.id,
-                                title: track.name,
-                                artist: track.artists.map(a => a.name).join(', '),
-                                album: track.album.name,
-                                duration: msToTime(track.duration),
-                                cover: track.album.images[0]?.url || 'default-cover',
-                                genre,
-                                plays: 0,
-                                spotify_uri: track.uri
-                            };
-
-                            // If user just interacted (selectSong) we may have already set currentSong;
-                            // prefer local currentSong when ids match to avoid overwriting user intent.
-                            setCurrentSong(prev => (prev && prev.id === newSong.id) ? prev : newSong);
-                            setRecentlyPlayed(prev => {
-                                const newPlayed = [newSong, ...prev.filter(s => s.id !== track.id)];
-                                return newPlayed; // keep full session history for recommendations
-                            });
-                        })();
+                    if (state.track_window.current_track) {
+                        const track = state.track_window.current_track;
+                        const newSong = {
+                            id: track.id,
+                            title: track.name,
+                            artist: track.artists.map(a => a.name).join(', '),
+                            album: track.album.name,
+                            duration: new Date(track.duration).toISOString().substr(14, 5),
+                            cover: track.album.images[0]?.url || 'default-cover',
+                            genre: 'Unknown',
+                            plays: 0,
+                            spotify_uri: track.uri
+                        };
+                        setCurrentSong(newSong);
+                        setRecentlyPlayed(prev => {
+                            const newPlayed = [newSong, ...prev.filter(s => s.id !== track.id)];
+                            return newPlayed; // keep full session history for recommendations
+                        });
                     }
                 });
 
@@ -1038,7 +991,7 @@ export default function Page() {
                 setError(null);
 
                 if (isPremium && playerReady && deviceId && currentSong.spotify_uri) {
-                        try {
+                    try {
                         await apiCallWithBackoff(() =>
                             axios.put(
                                 `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
@@ -1053,7 +1006,6 @@ export default function Page() {
                                 const newPlayed = [currentSong, ...prev.filter((s) => s.id !== currentSong.id)];
                                 return newPlayed; // keep full session history for recommendations
                             });
-                            setIsPlaying(true);
                         }
                         return;
                     } catch (sdkError) {
@@ -1069,7 +1021,7 @@ export default function Page() {
                     }
                 }
 
-                        if (audioRef.current && currentSong.preview_url) {
+                if (audioRef.current && currentSong.preview_url) {
                     console.log("Attempting preview playback...");
                     const audio = audioRef.current;
 
@@ -1093,21 +1045,15 @@ export default function Page() {
                         audio.load();
                     });
 
-                        if (!isCancelled) {
-                            try {
-                                await audio.play();
-                                console.log("Preview playing");
-                                setError(null);
-                                setRecentlyPlayed((prev) => {
-                                    const newPlayed = [currentSong, ...prev.filter((s) => s.id !== currentSong.id)];
-                                    return newPlayed; // keep full session history for recommendations
-                                });
-                                setIsPlaying(true);
-                            } catch (playErr) {
-                                console.error('Preview play failed:', playErr);
-                                setIsPlaying(false);
-                            }
-                        }
+                    if (!isCancelled && isPlaying) {
+                        await audio.play();
+                        console.log("Preview playing");
+                        setError(null);
+                        setRecentlyPlayed((prev) => {
+                            const newPlayed = [currentSong, ...prev.filter((s) => s.id !== currentSong.id)];
+                            return newPlayed; // keep full session history for recommendations
+                        });
+                    }
                     return;
                 }
 
