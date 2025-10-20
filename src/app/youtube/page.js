@@ -54,6 +54,8 @@ export default function Page() {
     const playerRef = useRef(null);
     const searchTimerRef = useRef(null);
     const recognitionRef = useRef(null);
+    const prevSongIdRef = useRef(null);
+    const [userSearchQuery, setUserSearchQuery] = useState('');
     const [searchCache, setSearchCache] = useState({});
     const CACHE_DURATION = 3600000; // 1 hour
     const API_KEY = 'AIzaSyB6C6QO9Yd4IpW3ecaSg7BBY7JalpjDQ6s';
@@ -101,69 +103,37 @@ export default function Page() {
     }, [filterGenres, filterArtists, filterPopularity]);
 
     const generateRecommendations = useCallback((allSongs) => {
-        if (!allSongs || allSongs.length === 0) {
+        // Simpler, faster recommendations based only on recentlyPlayed.
+        // If no recentlyPlayed songs, fall back to popular / random picks.
+        if (!songs || songs.length === 0) {
             setRecommendations([]);
             return;
         }
-        const combinedSongs = [...new Set([...allSongs, ...songs, ...filteredSongs].map(s => JSON.stringify(s)))].map(s => JSON.parse(s));
 
-        const allGenres = [...new Set(combinedSongs.map(song => song.genre || 'Music'))];
-        const allArtists = [...new Set(combinedSongs.map(song => song.artist))];
-
-        const createFeatureVector = (song) => {
-            const genreVector = allGenres.map(genre => song.genre === genre ? 1 : 0);
-            const artistVector = allArtists.map(artist => song.artist === artist ? 1 : 0);
-            const maxPlays = Math.max(...combinedSongs.map(s => s.plays || 0), 1);
-            const plays = (song.plays || 0) / maxPlays;
-            const playFrequency = recentlyPlayed.filter(s => s.id === song.id).length / (recentlyPlayed.length || 1);
-            const recency = recentlyPlayed.findIndex(s => s.id === song.id) >= 0
-                ? 1 - (recentlyPlayed.findIndex(s => s.id === song.id) / recentlyPlayed.length)
-                : 0;
-            const recencyWeight = recentlyPlayed.findIndex(s => s.id === song.id) >= 0 ? 1.5 : 1;
-            return [...genreVector, ...artistVector, plays, playFrequency, recency * recencyWeight];
-        };
-
-        const cosineSimilarity = (vecA, vecB) => {
-            const dotProduct = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
-            const magnitudeA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
-            const magnitudeB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
-            return magnitudeA && magnitudeB ? dotProduct / (magnitudeA * magnitudeB) : 0;
-        };
-
-        const songVectors = combinedSongs.map(song => ({
-            song,
-            vector: createFeatureVector(song)
-        }));
-
-        const userPreferenceSongs = [
-            ...recentlyPlayed,
-            ...Array.from(likedSongs).map(songId => combinedSongs.find(s => s.id === songId)).filter(s => s)
-        ].filter((song, index, self) => song && self.findIndex(s => s.id === song.id) === index);
-
-        if (userPreferenceSongs.length === 0) {
-            const shuffled = [...combinedSongs].sort(() => 0.5 - Math.random());
-            setRecommendations(shuffled.slice(0, 6));
+        if (!recentlyPlayed || recentlyPlayed.length === 0) {
+            // pick top-played songs or random
+            const fallback = [...songs].sort((a, b) => (b.plays || 0) - (a.plays || 0)).slice(0, 6);
+            setRecommendations(fallback);
             return;
         }
 
-        const userVectors = userPreferenceSongs.map(song => createFeatureVector(song));
-        const userVector = userVectors.reduce(
-            (avg, vec) => avg.map((val, i) => val + vec[i] / userVectors.length),
-            new Array(allGenres.length + allArtists.length + 3).fill(0)
-        );
+        const recentArtists = new Set(recentlyPlayed.map(s => s.artist));
+        const recentGenres = new Set(recentlyPlayed.map(s => s.genre));
 
-        const scores = songVectors.map(({ song, vector }) => ({
-            song,
-            score: cosineSimilarity(userVector, vector)
-        }));
-
-        const recommendedSongs = scores
+        const scored = songs
+            .filter(s => !recentlyPlayed.some(r => r.id === s.id))
+            .map(s => {
+                let score = 0;
+                if (recentArtists.has(s.artist)) score += 3;
+                if (recentGenres.has(s.genre)) score += 2;
+                score += Math.log10((s.plays || 1) + 1) * 0.5;
+                return { song: s, score };
+            })
             .sort((a, b) => b.score - a.score)
-            .map(item => item.song)
-            .filter(song => !userPreferenceSongs.some(s => s.id === song.id))
-            .slice(0, 6);
+            .slice(0, 6)
+            .map(x => x.song);
 
-        setRecommendations(recommendedSongs);
+        setRecommendations(scored);
     }, [recentlyPlayed, likedSongs, songs, filteredSongs]);
 
     const startVoiceSearch = () => {
@@ -180,73 +150,108 @@ export default function Page() {
             return;
         }
 
-        try {
-            // Create new recognition instance
-            const recognition = new SpeechRecognition();
-            recognitionRef.current = recognition;
-
-            // Configure recognition
-            recognition.continuous = false;
-            recognition.interimResults = false;
-            recognition.lang = 'en-US';
-            recognition.maxAlternatives = 1;
-
-            recognition.onstart = () => {
-                console.log('Voice recognition started');
-                setIsListening(true);
-                setError(null);
-            };
-
-            recognition.onresult = (event) => {
-                const transcript = event.results[0][0].transcript;
-                console.log('Voice recognition result:', transcript);
-                setSearchQuery(transcript);
-                searchSongs(transcript);
-            };
-
-            recognition.onerror = (event) => {
-                console.error('Voice recognition error:', event.error);
-                setIsListening(false);
-
-                // Provide specific error messages
-                switch (event.error) {
-                    case 'not-allowed':
-                        setError('Microphone access denied. Please enable microphone permissions.');
-                        break;
-                    case 'no-speech':
-                        setError('No speech detected. Please try again.');
-                        break;
-                    case 'network':
-                        setError('Network error. Voice search requires internet connection.');
-                        break;
-                    case 'aborted':
-                        setError('Voice recognition was aborted.');
-                        break;
-                    case 'audio-capture':
-                        setError('No microphone found. Please connect a microphone.');
-                        break;
-                    case 'language-not-supported':
-                        setError('Language not supported by your browser.');
-                        break;
-                    default:
-                        setError(`Voice recognition failed: ${event.error}`);
+        const requestMicrophone = async () => {
+            try {
+                // Prefer Permissions API to check status, fallback to getUserMedia prompt
+                if (navigator.permissions && navigator.permissions.query) {
+                    const perm = await navigator.permissions.query({ name: 'microphone' });
+                    if (perm.state === 'denied') {
+                        setError('Microphone access denied. Please enable microphone permissions in your browser settings.');
+                        return false;
+                    }
                 }
-            };
 
-            recognition.onend = () => {
-                console.log('Voice recognition ended');
+                // Try to get a short-lived media stream to trigger permissions prompt
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                // We don't need to keep the stream — stop tracks immediately
+                stream.getTracks().forEach(t => t.stop());
+                return true;
+            } catch (err) {
+                console.error('Microphone permission error:', err);
+                // Provide friendly messages for common cases
+                if (err.name === 'NotAllowedError' || err.name === 'SecurityError') {
+                    setError('Microphone access denied. Please enable microphone permissions.');
+                } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+                    setError('No microphone found. Please connect a microphone.');
+                } else {
+                    setError('Unable to access microphone. Please check your browser settings.');
+                }
+                return false;
+            }
+        };
+
+        (async () => {
+            const ok = await requestMicrophone();
+            if (!ok) return;
+
+            try {
+                // Create new recognition instance
+                const recognition = new SpeechRecognition();
+                recognitionRef.current = recognition;
+
+                // Configure recognition
+                recognition.continuous = false;
+                recognition.interimResults = false;
+                recognition.lang = 'en-US';
+                recognition.maxAlternatives = 1;
+
+                recognition.onstart = () => {
+                    console.log('Voice recognition started');
+                    setIsListening(true);
+                    setError(null);
+                };
+
+                recognition.onresult = (event) => {
+                    const transcript = event.results[0][0].transcript;
+                    console.log('Voice recognition result:', transcript);
+                    setSearchQuery(transcript);
+                    searchSongs(transcript);
+                };
+
+                recognition.onerror = (event) => {
+                    console.error('Voice recognition error:', event.error);
+                    setIsListening(false);
+
+                    // Provide specific error messages
+                    switch (event.error) {
+                        case 'not-allowed':
+                            setError('Microphone access denied. Please enable microphone permissions.');
+                            break;
+                        case 'no-speech':
+                            setError('No speech detected. Please try again.');
+                            break;
+                        case 'network':
+                            setError('Network error. Voice search requires internet connection.');
+                            break;
+                        case 'aborted':
+                            setError('Voice recognition was aborted.');
+                            break;
+                        case 'audio-capture':
+                            setError('No microphone found. Please connect a microphone.');
+                            break;
+                        case 'language-not-supported':
+                            setError('Language not supported by your browser.');
+                            break;
+                        default:
+                            setError(`Voice recognition failed: ${event.error}`);
+                    }
+                };
+
+                recognition.onend = () => {
+                    console.log('Voice recognition ended');
+                    setIsListening(false);
+                    recognitionRef.current = null;
+                };
+
+                // Start recognition
+                recognition.start();
+
+            } catch (err) {
+                console.error('Failed to start voice recognition:', err);
+                setError('Failed to start voice search. Please try again.');
                 setIsListening(false);
-                recognitionRef.current = null;
-            };
-
-            // Start recognition
-            recognition.start();
-
-        } catch (err) {
-            console.error('Failed to start voice recognition:', err);
-            setError('Failed to start voice search. Please try again.');
-            setIsListening(false);
-        }
+            }
+        })();
     };
 
 
@@ -715,6 +720,9 @@ export default function Page() {
 
     useEffect(() => {
         if (youtubePlayer && currentSong?.id) {
+            // Avoid reloading the same video if it's already playing
+            if (prevSongIdRef.current === currentSong.id) return;
+            prevSongIdRef.current = currentSong.id;
             setIsLoadingSong(true);
             safeLoadVideoById(currentSong.id);
         }
@@ -830,6 +838,26 @@ export default function Page() {
         }
     }, [BACKEND_URL]);
 
+    const promoteUser = async (userId) => {
+        try {
+            const { data } = await axios.post(`${BACKEND_URL}/api/users/${userId}/promote`);
+            setUsers(prev => prev.map(u => u._id === userId ? data.user : u));
+        } catch (err) {
+            console.error('Failed to promote user:', err);
+            setUsersError('Failed to change user role');
+        }
+    };
+
+    const demoteUser = async (userId) => {
+        try {
+            const { data } = await axios.post(`${BACKEND_URL}/api/users/${userId}/demote`);
+            setUsers(prev => prev.map(u => u._id === userId ? data.user : u));
+        } catch (err) {
+            console.error('Failed to demote user:', err);
+            setUsersError('Failed to change user role');
+        }
+    };
+
     useEffect(() => {
         const storedUser = window.localStorage.getItem('user');
         if (storedUser) {
@@ -873,7 +901,7 @@ export default function Page() {
             return;
         }
 
-        searchTimerRef.current = setTimeout(async () => {
+    searchTimerRef.current = setTimeout(async () => {
             try {
                 setLoading(true);
                 setError(null); // Clear previous errors
@@ -951,7 +979,7 @@ export default function Page() {
             } finally {
                 setLoading(false);
             }
-        }, 500);
+        }, 300);
     };
 
 
@@ -1721,6 +1749,17 @@ export default function Page() {
                             </div>
                             <div className="admin-panel">
                                 <h3 className="panel-title">User Management</h3>
+                                <div className="admin-search">
+                                    <input
+                                        type="text"
+                                        placeholder="Search users by name or email"
+                                        value={userSearchQuery}
+                                        onChange={(e) => setUserSearchQuery(e.target.value)}
+                                        className="admin-search-input"
+                                    />
+                                    <button className="admin-search-btn" onClick={() => setUsers(prev => prev.filter(u => (u.username + u.email).toLowerCase().includes(userSearchQuery.toLowerCase())))}>Search</button>
+                                    <button className="admin-clear-btn" onClick={() => { setUserSearchQuery(''); fetchUsers(); }}>Clear</button>
+                                </div>
                                 {usersLoading ? (
                                     <p>Loading users from server...</p>
                                 ) : usersError ? (
@@ -1750,7 +1789,11 @@ export default function Page() {
                                                     >
                                                         Delete
                                                     </button>
-                                                    <button className="user-menu"><MoreVertical className="menu-icon" /></button>
+                                                    {user.role !== 'admin' ? (
+                                                        <button className="promote-btn" onClick={() => promoteUser(user._id)}>Promote</button>
+                                                    ) : (
+                                                        <button className="demote-btn" onClick={() => demoteUser(user._id)}>Demote</button>
+                                                    )}
                                                 </div>
                                             </div>
                                         ))}
