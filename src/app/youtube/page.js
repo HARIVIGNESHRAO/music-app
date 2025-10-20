@@ -675,12 +675,50 @@ export default function Page() {
         }
     }, [volume, youtubePlayer]);
 
+    // Safe loader: some browsers / race conditions can leave the internal iframe
+    // temporarily unavailable which makes the iframe API throw "reading 'src' of null".
+    // This helper retries a few times before giving up and optionally recreates the player.
+    const safeLoadVideoById = useCallback((videoId, maxAttempts = 20, attempt = 0) => {
+        if (!youtubePlayer || typeof youtubePlayer.loadVideoById !== 'function') return;
+
+        try {
+            const iframe = typeof youtubePlayer.getIframe === 'function' ? youtubePlayer.getIframe() : null;
+            if (!iframe) {
+                if (attempt < maxAttempts) {
+                    // wait briefly for the iframe to be available
+                    setTimeout(() => safeLoadVideoById(videoId, maxAttempts, attempt + 1), 100);
+                } else {
+                    console.error('safeLoadVideoById: iframe not available after retries');
+                    // Optionally try to destroy and recreate the player on failure
+                }
+                return;
+            }
+
+            // iframe exists, ensure src is defined before calling the API
+            if (iframe.src === null || iframe.src === undefined) {
+                if (attempt < maxAttempts) {
+                    setTimeout(() => safeLoadVideoById(videoId, maxAttempts, attempt + 1), 100);
+                } else {
+                    console.error('safeLoadVideoById: iframe.src is null/undefined after retries');
+                }
+                return;
+            }
+
+            youtubePlayer.loadVideoById(videoId);
+        } catch (err) {
+            console.error('safeLoadVideoById error:', err);
+            if (attempt < maxAttempts) {
+                setTimeout(() => safeLoadVideoById(videoId, maxAttempts, attempt + 1), 150);
+            }
+        }
+    }, [youtubePlayer]);
+
     useEffect(() => {
         if (youtubePlayer && currentSong?.id) {
             setIsLoadingSong(true);
-            youtubePlayer.loadVideoById(currentSong.id);
+            safeLoadVideoById(currentSong.id);
         }
-    }, [currentSong, youtubePlayer]);
+    }, [currentSong, youtubePlayer, safeLoadVideoById]);
 
     const playSong = useCallback(async (song) => {
         if (!youtubePlayer || !song) return;
@@ -690,17 +728,23 @@ export default function Page() {
         setError(null);
 
         try {
-            await youtubePlayer.loadVideoById(song.id);
+            // Use safe loader to avoid iframe null src errors
+            safeLoadVideoById(song.id);
             if (typeof youtubePlayer.setVolume === 'function') {
-                youtubePlayer.setVolume(volume);
+                try { youtubePlayer.setVolume(volume); } catch (err) { console.error('setVolume failed', err); }
             }
-            youtubePlayer.playVideo();
+            if (typeof youtubePlayer.playVideo === 'function') {
+                // playVideo may not work until the video is loaded; give it a short delay
+                setTimeout(() => {
+                    try { youtubePlayer.playVideo(); } catch (err) { console.error('playVideo failed', err); }
+                }, 300);
+            }
         } catch (err) {
             console.error('Failed to play song:', err);
             setError('Failed to play song');
             setIsLoadingSong(false);
         }
-    }, [youtubePlayer, volume]);
+    }, [youtubePlayer, volume, safeLoadVideoById]);
 
     const fetchPopularSongs = useCallback(async () => {
         try {
