@@ -202,24 +202,47 @@ export default function Page() {
         }
 
         try {
-            // First, check if we have microphone permission
-            const permissionResult = await navigator.permissions.query({ name: 'microphone' });
-            
-            if (permissionResult.state === 'denied') {
-                setError('Microphone access is blocked. Please allow microphone access in your browser settings.');
-                return;
-            }
-
-            // If permission is not granted yet, request it
-            if (permissionResult.state === 'prompt') {
+            // Check microphone permission if permissions API is available
+            if (navigator.permissions && navigator.permissions.query) {
                 try {
-                    await navigator.mediaDevices.getUserMedia({ audio: true });
-                } catch (err) {
-                    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-                        setError('Please allow microphone access when prompted to use voice search.');
+                    const permissionResult = await navigator.permissions.query({ name: 'microphone' });
+                    
+                    if (permissionResult.state === 'denied') {
+                        setError('Microphone access is blocked. Please allow microphone access in your browser settings and refresh the page.');
                         return;
                     }
-                    throw err;
+                } catch (permError) {
+                    // Permissions API failed, continue with direct request
+                    console.warn('Permissions API failed:', permError);
+                }
+            }
+
+            // Try to request microphone access directly
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: { 
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    } 
+                });
+                
+                // Stop the stream immediately after getting permission
+                stream.getTracks().forEach(track => track.stop());
+                
+            } catch (mediaError) {
+                if (mediaError.name === 'NotAllowedError' || mediaError.name === 'PermissionDeniedError') {
+                    setError('Microphone access denied. Please click "Allow" when your browser asks for microphone permission.');
+                    return;
+                } else if (mediaError.name === 'NotFoundError') {
+                    setError('No microphone found. Please connect a microphone and try again.');
+                    return;
+                } else if (mediaError.name === 'NotReadableError') {
+                    setError('Microphone is already in use by another application.');
+                    return;
+                } else {
+                    setError('Unable to access microphone. Please check your browser settings.');
+                    return;
                 }
             }
 
