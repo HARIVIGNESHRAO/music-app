@@ -567,6 +567,17 @@ export default function Page() {
         window.open(shareLink, '_blank', 'width=600,height=400');
     };
 
+    const playNextRef = useRef();
+    const repeatRef = useRef();
+
+    useEffect(() => {
+        playNextRef.current = playNext;
+    }, [playNext]);
+
+    useEffect(() => {
+        repeatRef.current = repeat;
+    }, [repeat]);
+
     const handleStateChange = useCallback((event) => {
         if (event.data === window.YT.PlayerState.PLAYING) {
             setIsPlaying(true);
@@ -576,11 +587,11 @@ export default function Page() {
         } else if (event.data === window.YT.PlayerState.PAUSED) {
             setIsPlaying(false);
         } else if (event.data === window.YT.PlayerState.ENDED) {
-            if (repeat === 'one') {
+            if (repeatRef.current === 'one') {
                 event.target.seekTo(0);
                 event.target.playVideo();
             } else {
-                playNext();
+                playNextRef.current();
             }
         } else if (event.data === window.YT.PlayerState.BUFFERING) {
             setIsLoadingSong(true);
@@ -588,7 +599,7 @@ export default function Page() {
         } else if (event.data === window.YT.PlayerState.UNSTARTED) {
             setIsLoadingSong(true);
         }
-    }, [repeat, playNext]);
+    }, []);
 
     useEffect(() => {
         // Create the YouTube Player only after the playerRef node exists.
