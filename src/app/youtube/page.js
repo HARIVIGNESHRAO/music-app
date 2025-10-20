@@ -649,16 +649,14 @@ export default function Page() {
             waitForReady(0);
         }
 
-        return () => {
-            if (retryTimer) clearTimeout(retryTimer);
-            if (scriptTag && scriptTag.parentNode) scriptTag.parentNode.removeChild(scriptTag);
-            if (youtubePlayer && typeof youtubePlayer.destroy === 'function') {
-                try { youtubePlayer.destroy(); } catch (err) { console.error('Error destroying player:', err); }
-            }
-        };
-    }, [handleStateChange, volume, playNext, youtubePlayer]);
-
-    useEffect(() => {
+    return () => {
+        if (retryTimer) clearTimeout(retryTimer);
+        if (scriptTag && scriptTag.parentNode) scriptTag.parentNode.removeChild(scriptTag);
+        if (youtubePlayer && typeof youtubePlayer.destroy === 'function') {
+            try { youtubePlayer.destroy(); } catch (err) { console.error('Error destroying player:', err); }
+        }
+    };
+}, [handleStateChange, playNext, youtubePlayer]);    useEffect(() => {
         let interval;
         if (isPlaying && youtubePlayer) {
             interval = setInterval(() => {
