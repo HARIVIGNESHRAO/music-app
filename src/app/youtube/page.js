@@ -49,6 +49,7 @@ export default function Page() {
     const [isLoadingSong, setIsLoadingSong] = useState(false);
     const [likedSongs, setLikedSongs] = useState(new Set());
     const [recentlyPlayed, setRecentlyPlayed] = useState([]);
+    const recentlyPlayedRef = useRef(recentlyPlayed);
     const [youtubePlayer, setYoutubePlayer] = useState(null);
     const [isListening, setIsListening] = useState(false);
     const playerRef = useRef(null);
@@ -56,7 +57,7 @@ export default function Page() {
     const recognitionRef = useRef(null);
     const [searchCache, setSearchCache] = useState({});
     const CACHE_DURATION = 3600000; // 1 hour
-    const API_KEY = 'AIzaSyB6C6QO9Yd4IpW3ecaSg7BBY7JalpjDQ6s';
+    const API_KEY = 'AIzaSyA5HF8T6xTqgh4lIB93ZQicNcenQ9fQLBk';
     const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://backendserver-edb4bafdgxcwg7d5.centralindia-01.azurewebsites.net';
     const DEFAULT_COVER = 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center';
     const DEFAULT_AVATAR = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center';
@@ -121,70 +122,235 @@ export default function Page() {
         localStorage.setItem('filterPopularity', JSON.stringify(filterPopularity));
     }, [filterGenres, filterArtists, filterPopularity]);
 
-    const generateRecommendations = useCallback((allSongs) => {
+    const generateRecommendations = useCallback((allSongs, recentlyOverride = null) => {
+        console.log('[recGen] called with', Array.isArray(allSongs) ? allSongs.length : 0, 'allSongs, recentlyOverride?', Array.isArray(recentlyOverride));
         if (!allSongs || allSongs.length === 0) {
-            setRecommendations([]);
+            // Avoid clearing existing recommendations when transient calls pass an empty list
+            console.log('[recGen] no allSongs candidates -> skipping update (preserve current recommendations)');
             return;
         }
+        // Build a unique combined catalog to compute features against
         const combinedSongs = [...new Set([...allSongs, ...songs, ...filteredSongs].map(s => JSON.stringify(s)))].map(s => JSON.parse(s));
 
-        const allGenres = [...new Set(combinedSongs.map(song => song.genre || 'Music'))];
-        const allArtists = [...new Set(combinedSongs.map(song => song.artist))];
+        // Helper to parse duration strings like "3:45" into seconds.
+        const parseFormattedDuration = (dur) => {
+            if (!dur && dur !== 0) return 0;
+            if (typeof dur === 'number') return dur;
+            const parts = String(dur).split(':').map(p => Number(p));
+            if (parts.length === 1) return parts[0] || 0;
+            if (parts.length === 2) return (parts[0] * 60) + (parts[1] || 0);
+            if (parts.length === 3) return (parts[0] * 3600) + (parts[1] * 60) + (parts[2] || 0);
+            return 0;
+        };
+
+        const allGenres = [...new Set(combinedSongs.map(song => (song.genre || 'Music')))].filter(Boolean);
+        const allArtists = [...new Set(combinedSongs.map(song => song.artist || 'Unknown'))].filter(Boolean);
+
+        // Build feature vector with: one-hot genres, one-hot artists, normalized plays, normalized duration, recency score
+        const maxPlays = Math.max(...combinedSongs.map(s => s.plays || 0), 1);
+        const maxDuration = Math.max(...combinedSongs.map(s => parseFormattedDuration(s.duration) || 0), 1);
+
+        // use override when provided so callers can compute recommendations immediately
+        const activeRecently = Array.isArray(recentlyOverride) ? recentlyOverride : recentlyPlayed;
 
         const createFeatureVector = (song) => {
-            const genreVector = allGenres.map(genre => song.genre === genre ? 1 : 0);
-            const artistVector = allArtists.map(artist => song.artist === artist ? 1 : 0);
-            const maxPlays = Math.max(...combinedSongs.map(s => s.plays || 0), 1);
+            const genreVector = allGenres.map(genre => (song.genre || 'Music') === genre ? 1 : 0);
+            const artistVector = allArtists.map(artist => (song.artist || 'Unknown') === artist ? 1 : 0);
             const plays = (song.plays || 0) / maxPlays;
-            const playFrequency = recentlyPlayed.filter(s => s.id === song.id).length / (recentlyPlayed.length || 1);
-            const recency = recentlyPlayed.findIndex(s => s.id === song.id) >= 0
-                ? 1 - (recentlyPlayed.findIndex(s => s.id === song.id) / recentlyPlayed.length)
-                : 0;
-            const recencyWeight = recentlyPlayed.findIndex(s => s.id === song.id) >= 0 ? 1.5 : 1;
-            return [...genreVector, ...artistVector, plays, playFrequency, recency * recencyWeight];
+            const durationNorm = parseFormattedDuration(song.duration) / maxDuration;
+            // recency: more weight for recentlyPlayed earlier in the array
+            const idx = activeRecently.findIndex(s => s.id === song.id);
+            const recency = idx >= 0 ? Math.exp(-idx / Math.max(1, activeRecently.length)) : 0;
+            return [...genreVector, ...artistVector, plays, durationNorm, recency];
         };
 
         const cosineSimilarity = (vecA, vecB) => {
-            const dotProduct = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
-            const magnitudeA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
-            const magnitudeB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
-            return magnitudeA && magnitudeB ? dotProduct / (magnitudeA * magnitudeB) : 0;
+            const dot = vecA.reduce((sum, a, i) => sum + a * (vecB[i] || 0), 0);
+            const magA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
+            const magB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
+            return (magA && magB) ? dot / (magA * magB) : 0;
         };
 
-        const songVectors = combinedSongs.map(song => ({
-            song,
-            vector: createFeatureVector(song)
-        }));
+        // token overlap based title similarity (simple and fast)
+        const titleSimilarity = (a = '', b = '') => {
+            try {
+                const ta = (a || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean);
+                const tb = (b || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean);
+                if (ta.length === 0 || tb.length === 0) return 0;
+                const setB = new Set(tb);
+                const common = ta.filter(t => setB.has(t)).length;
+                return common / Math.max(ta.length, tb.length);
+            } catch (err) {
+                return 0;
+            }
+        };
 
-        const userPreferenceSongs = [
-            ...recentlyPlayed,
-            ...Array.from(likedSongs).map(songId => combinedSongs.find(s => s.id === songId)).filter(s => s)
-        ].filter((song, index, self) => song && self.findIndex(s => s.id === song.id) === index);
+        // If our combined catalog is tiny (e.g., only the recently played seed), try to expand
+        if (combinedSongs.length <= 1) {
+            const cachedPopular = (searchCache && searchCache['__popular__'] && Array.isArray(searchCache['__popular__'].data)) ? searchCache['__popular__'].data : null;
+            if (cachedPopular && cachedPopular.length > 0) {
+                console.log('[recGen] expanding combinedSongs with cached popular (', cachedPopular.length, ')');
+                const union = [...new Map([...combinedSongs, ...cachedPopular].map(s => [s.id, s])).values()];
+                // override combinedSongs for scoring
+                combinedSongs.splice(0, combinedSongs.length, ...union);
+            } else if (typeof fetchPopularSongs === 'function') {
+                console.log('[recGen] no cached popular data, triggering fetchPopularSongs() to populate candidates');
+                try { fetchPopularSongs(); } catch (err) { console.warn('fetchPopularSongs call failed:', err); }
+            } else {
+                console.log('[recGen] no fetchPopularSongs available and no cached popular results');
+            }
+        }
 
-        if (userPreferenceSongs.length === 0) {
-            const shuffled = [...combinedSongs].sort(() => 0.5 - Math.random());
-            setRecommendations(shuffled.slice(0, 6));
+        const songVectors = combinedSongs.map(song => ({ song, vector: createFeatureVector(song) }));
+        console.log('[recGen] combinedSongs:', combinedSongs.length, 'maxPlays:', maxPlays, 'maxDuration:', maxDuration);
+
+        // Build user profile from recentlyPlayed (weighted by recency)
+        const userPreferenceSongs = (Array.isArray(recentlyOverride) ? recentlyOverride : recentlyPlayed) && (Array.isArray(recentlyOverride) ? recentlyOverride.length > 0 : recentlyPlayed.length > 0)
+            ? (Array.isArray(recentlyOverride) ? recentlyOverride.filter(s => s && s.id) : recentlyPlayed.filter(s => s && s.id))
+            : Array.from(likedSongs).map(id => combinedSongs.find(s => s.id === id)).filter(Boolean);
+
+        // If there is exactly one recently played song, use straightforward heuristics first
+        if (userPreferenceSongs.length === 1) {
+            console.log('[recGen] single seed detected:', userPreferenceSongs[0]?.title || userPreferenceSongs[0]?.id);
+            const seed = userPreferenceSongs[0];
+            // Prefer same artist, then same genre, ordered by a combined score that includes title overlap and popularity
+            const scored = combinedSongs
+                .filter(s => s.id !== seed.id)
+                .map(s => {
+                    const artistBoost = (s.artist || '') === (seed.artist || '') ? 1.2 : 0;
+                    const genreBoost = (s.genre || '') === (seed.genre || '') ? 0.6 : 0;
+                    const albumBoost = (s.album || '') === (seed.album || '') ? 0.4 : 0;
+                    const titleSim = titleSimilarity(s.title, seed.title) * 0.8; // scale down
+                    const popularity = Math.log10((s.plays || 1) + 1) / Math.log10(maxPlays + 1);
+                    const baseVec = createFeatureVector(s);
+                    const seedVec = createFeatureVector(seed);
+                    const sim = cosineSimilarity(seedVec, baseVec);
+                    // Combined score: similarity + explicit boosts + popularity
+                    const score = (sim * 0.6) + artistBoost + genreBoost + albumBoost + titleSim + (popularity * 0.2);
+                    return { song: s, score };
+                })
+                .sort((a, b) => b.score - a.score);
+
+            const merged = [];
+            for (const item of scored) {
+                if (merged.length >= 12) break; // gather a larger pool then apply diversity
+                if (!merged.find(m => m.id === item.song.id)) merged.push(item.song);
+            }
+
+            // If merged is empty (catalog too small), try to populate candidates via cached popular
+            if (merged.length === 0) {
+                const cachedPopular = (searchCache && searchCache['__popular__'] && Array.isArray(searchCache['__popular__'].data)) ? searchCache['__popular__'].data : null;
+                if (cachedPopular && cachedPopular.length > 0) {
+                    console.log('[recGen] using cached popular to populate single-seed merged list');
+                    merged.push(...cachedPopular.slice(0, 12));
+                } else {
+                    // Trigger a targeted search for the seed's artist or title to get candidates
+                    const q = (seed.artist || seed.title || '').toString();
+                    const qKey = q.toLowerCase().trim();
+                    if (qKey && !searchCache[qKey]) {
+                        console.log('[recGen] single-seed: triggering searchSongs(', q, ') to populate recommendations');
+                        try { searchSongs(q); } catch (err) { console.warn('searchSongs call failed:', err); }
+                    } else {
+                        console.log('[recGen] single-seed: no query or already cached');
+                    }
+                }
+            }
+
+            // Enforce some diversity: max 2 songs per artist
+            const final = [];
+            const perArtist = {};
+            for (const s of merged) {
+                const art = s.artist || 'Unknown';
+                perArtist[art] = (perArtist[art] || 0) + 1;
+                if (perArtist[art] <= 2) final.push(s);
+                if (final.length >= 6) break;
+            }
+
+            console.log('[recGen] final single-seed recommendations:', final.slice(0, 6).map(s=>s.id));
+            setRecommendations(final.slice(0, 6));
             return;
         }
 
-        const userVectors = userPreferenceSongs.map(song => createFeatureVector(song));
-        const userVector = userVectors.reduce(
-            (avg, vec) => avg.map((val, i) => val + vec[i] / userVectors.length),
-            new Array(allGenres.length + allArtists.length + 3).fill(0)
-        );
+        // For multiple recently played songs, form a user vector by weighted average
+        if (userPreferenceSongs.length === 0) {
+            // no history -> random/poplular fallback
+            const shuffled = [...combinedSongs].sort(() => 0.5 - Math.random()).slice(0, 6);
+            console.log('[recGen] no seeds, fallback shuffled:', shuffled.map(s=>s.id));
+            setRecommendations(shuffled);
+            return;
+        }
 
-        const scores = songVectors.map(({ song, vector }) => ({
-            song,
-            score: cosineSimilarity(userVector, vector)
-        }));
+    // weight recentlyPlayed songs by exponential recency (earlier = more recent)
+    const weights = userPreferenceSongs.map((s, i) => Math.exp(-i / Math.max(1, userPreferenceSongs.length)));
+        const userVectors = userPreferenceSongs.map(s => createFeatureVector(s));
+        const vectorLength = userVectors[0]?.length || (allGenres.length + allArtists.length + 3);
+        const userVector = new Array(vectorLength).fill(0);
+        let totalWeight = 0;
+        userVectors.forEach((vec, idx) => {
+            const w = weights[idx] || 1;
+            totalWeight += w;
+            vec.forEach((val, i) => { userVector[i] += (val || 0) * w; });
+        });
+        if (totalWeight > 0) for (let i = 0; i < userVector.length; i++) userVector[i] /= totalWeight;
 
-        const recommendedSongs = scores
-            .sort((a, b) => b.score - a.score)
-            .map(item => item.song)
-            .filter(song => !userPreferenceSongs.some(s => s.id === song.id))
-            .slice(0, 6);
+        // Compute enhanced scores: combine cosine similarity with explicit matches to recently played seeds
+    const recentlyIds = new Set(userPreferenceSongs.map(s => s.id));
 
-        setRecommendations(recommendedSongs);
+        const scores = songVectors.map(({ song, vector }) => {
+            // base similarity to user vector
+            const baseSim = cosineSimilarity(userVector, vector);
+
+            // explicit boosts if this song matches any recently played seed
+            const matches = userPreferenceSongs.map(seed => {
+                const artistMatch = (seed.artist || '') === (song.artist || '') ? 1 : 0;
+                const genreMatch = (seed.genre || '') === (song.genre || '') ? 1 : 0;
+                const albumMatch = (seed.album || '') === (song.album || '') ? 1 : 0;
+                const titleSim = titleSimilarity(seed.title, song.title);
+                // recency: if seed is recent, boost proportionally
+                const seedIdx = activeRecently.findIndex(s => s.id === seed.id);
+                const seedRecency = seedIdx >= 0 ? Math.exp(-seedIdx / Math.max(1, activeRecently.length)) : 0;
+                return { artistMatch, genreMatch, albumMatch, titleSim, seedRecency };
+            });
+            // aggregate boosts across seeds using recency-weighted averages so multiple seeds contribute
+            const totalRecency = matches.reduce((sum, m) => sum + (m.seedRecency || 0), 0) || 1;
+            const artistBoost = (matches.reduce((sum, m) => sum + (m.artistMatch || 0) * (m.seedRecency || 0), 0) / totalRecency) * 0.8;
+            const genreBoost = (matches.reduce((sum, m) => sum + (m.genreMatch || 0) * (m.seedRecency || 0), 0) / totalRecency) * 0.4;
+            const albumBoost = (matches.reduce((sum, m) => sum + (m.albumMatch || 0) * (m.seedRecency || 0), 0) / totalRecency) * 0.3;
+            const titleBoost = (matches.reduce((sum, m) => sum + (m.titleSim || 0) * (m.seedRecency || 0), 0) / totalRecency) * 0.5;
+            const recencyBoost = (matches.reduce((sum, m) => Math.max(sum, m.seedRecency || 0), 0)) * 0.35;
+
+            // popularity factor (log-scaled) helps prefer known songs when relevant
+            const popularity = Math.log10((song.plays || 1) + 1) / Math.log10(maxPlays + 1);
+
+            const finalScore = (baseSim * 0.5) + artistBoost + genreBoost + albumBoost + (titleBoost * 0.6) + (recencyBoost * 0.8) + (popularity * 0.15);
+            return { song, score: finalScore };
+        });
+
+    // Sort by score, filter recently played, and apply per-artist diversity cap
+    const sorted = scores.sort((a, b) => b.score - a.score).map(s => s.song).filter(s => !recentlyIds.has(s.id));
+    console.log('[recGen] scored candidates:', scores.length, 'sorted:', sorted.length, 'recentlyIds:', recentlyIds.size);
+
+        const result = [];
+        const artistCount = {};
+        for (const s of sorted) {
+            const art = s.artist || 'Unknown';
+            artistCount[art] = (artistCount[art] || 0) + 1;
+            if (artistCount[art] > 2) continue; // cap songs per artist to improve diversity
+            result.push(s);
+            if (result.length >= 6) break;
+        }
+
+        // If still not enough recommendations, fill with popular songs not in recent list
+        if (result.length < 6) {
+            const popular = [...combinedSongs].filter(s => !recentlyIds.has(s.id) && !result.find(r => r.id === s.id)).sort((a, b) => (b.plays || 0) - (a.plays || 0));
+            for (const p of popular) {
+                result.push(p);
+                if (result.length >= 6) break;
+            }
+        }
+
+        console.log('[recGen] final recommendations:', result.slice(0, 6).map(r => ({ id: r.id, title: r.title })), 'resultLen:', result.length);
+        setRecommendations(result.slice(0, 6));
     }, [recentlyPlayed, likedSongs, songs, filteredSongs]);
 
     const startVoiceSearch = async () => {
@@ -362,12 +528,21 @@ export default function Page() {
 
         setCurrentSong(song);
         setIsPlaying(true);
+        // update recently played and its ref so recommendation can use latest data immediately
         setRecentlyPlayed(prev => {
             const newPlayed = [song, ...prev.filter(s => s.id !== song.id)];
-            return newPlayed.slice(0, 5);
+            const sliced = newPlayed.slice(0, 5);
+            try { recentlyPlayedRef.current = sliced; } catch (e) { /* ignore */ }
+            // immediately generate recommendations using the updated recently played list
+            try {
+                // include recently played as candidates too to avoid empty pools
+                generateRecommendationsRef.current([...(sliced || []), ...songsRef.current, ...filteredSongsRef.current], sliced);
+            } catch (err) {
+                // fallback to calling without override
+                try { generateRecommendationsRef.current([...(sliced || []), ...songsRef.current, ...filteredSongsRef.current], sliced); } catch (e) { /* ignore */ }
+            }
+            return sliced;
         });
-
-        generateRecommendationsRef.current([...songsRef.current, ...filteredSongsRef.current]);
     }, []);
 
     const selectSongRef = useRef();
@@ -382,12 +557,15 @@ export default function Page() {
 
             setCurrentIndex(prevIndex => {
                 let nextIndex;
-                if (shuffle) {
+                // use refs so playNext stays stable and doesn't recreate effects when shuffle/repeat toggles
+                const useShuffle = shuffleRef.current;
+                const useRepeat = repeatRef.current;
+                if (useShuffle) {
                     nextIndex = Math.floor(Math.random() * currentQueue.length);
                 } else {
                     nextIndex = prevIndex + 1;
                     if (nextIndex >= currentQueue.length) {
-                        if (repeat === 'all') {
+                        if (useRepeat === 'all') {
                             nextIndex = 0;
                         } else {
                             setIsPlaying(false);
@@ -402,7 +580,7 @@ export default function Page() {
 
             return currentQueue;
         });
-    }, [shuffle, repeat]);
+    }, []);
 
     const playPrevious = useCallback(() => {
         if (queue.length === 0) return;
@@ -619,6 +797,7 @@ export default function Page() {
 
     const playNextRef = useRef();
     const repeatRef = useRef();
+    const shuffleRef = useRef(shuffle);
     const filteredSongsRef = useRef(filteredSongs);
     const songsRef = useRef(songs);
     const generateRecommendationsRef = useRef();
@@ -626,6 +805,22 @@ export default function Page() {
     useEffect(() => {
         filteredSongsRef.current = filteredSongs;
     }, [filteredSongs]);
+
+    useEffect(() => {
+        recentlyPlayedRef.current = recentlyPlayed;
+    }, [recentlyPlayed]);
+
+    // Ensure recommendations update when recentlyPlayed changes (covers play actions)
+    useEffect(() => {
+        try {
+            const all = [...recentlyPlayedRef.current, ...songsRef.current, ...filteredSongsRef.current];
+            if (generateRecommendationsRef.current) {
+                generateRecommendationsRef.current(all, recentlyPlayedRef.current);
+            }
+        } catch (err) {
+            console.warn('Failed to regenerate recommendations on recentlyPlayed change:', err);
+        }
+    }, [recentlyPlayed]);
 
     useEffect(() => {
         songsRef.current = songs;
@@ -638,6 +833,10 @@ export default function Page() {
     useEffect(() => {
         playNextRef.current = playNext;
     }, [playNext]);
+
+    useEffect(() => {
+        shuffleRef.current = shuffle;
+    }, [shuffle]);
 
     useEffect(() => {
         repeatRef.current = repeat;
@@ -1054,7 +1253,7 @@ export default function Page() {
         setRecentlyPlayed([]);
         setYoutubePlayer(null);
         window.localStorage.removeItem('user');
-        router.push('/login');
+        router.push('/dashboard');
     };
 
     const togglePlay = () => {
@@ -1145,8 +1344,12 @@ export default function Page() {
     };
 
     const applyFilters = useCallback(() => {
-        // Use the full songs list if available, otherwise filter the currently-displayed filteredSongs
-        const baseList = (songs && songs.length > 0) ? songs : (filteredSongsRef.current || []);
+        // Prefer the current search results (filteredSongsRef) when there is an active search query.
+        // Otherwise fall back to the full songs list. This ensures filters apply to search results
+        // instead of overwriting them by always starting from `songs`.
+        const baseList = searchQuery
+            ? (filteredSongsRef.current && filteredSongsRef.current.length > 0 ? filteredSongsRef.current : (songs || []))
+            : (songs && songs.length > 0 ? songs : (filteredSongsRef.current || []));
         let filtered = [...baseList];
 
         if (filterGenres.length > 0) {
@@ -1176,8 +1379,11 @@ export default function Page() {
         const popularity = nextFilterPopularity ?? filterPopularity;
         const query = typeof nextSearchQuery === 'string' ? nextSearchQuery : searchQuery;
 
-        // Base list: prefer full songs list if present, otherwise use current filteredSongs
-        const baseList = (songs && songs.length > 0) ? songs : (filteredSongsRef.current || []);
+        // When a query is present (either passed in or the current searchQuery), prefer the
+        // search results (filteredSongsRef.current) so filters refine the results of the search.
+        const baseList = query
+            ? (filteredSongsRef.current && filteredSongsRef.current.length > 0 ? filteredSongsRef.current : (songs || []))
+            : ((songs && songs.length > 0) ? songs : (filteredSongsRef.current || []));
         let filtered = [...baseList];
         if (genres.length > 0) filtered = filtered.filter(song => genres.includes(song.genre));
         if (artists.length > 0) filtered = filtered.filter(song => artists.includes(song.artist));
