@@ -42,6 +42,7 @@ export default function Page() {
     const [users, setUsers] = useState([]);
     const [usersLoading, setUsersLoading] = useState(false);
     const [usersError, setUsersError] = useState(null);
+    const [youtubeQuotaExceeded, setYoutubeQuotaExceeded] = useState(false);
     const [queue, setQueue] = useState([]);
     const [currentIndex, setCurrentIndex] = useState(0);
     const [shuffle, setShuffle] = useState(false);
@@ -57,7 +58,7 @@ export default function Page() {
     const recognitionRef = useRef(null);
     const [searchCache, setSearchCache] = useState({});
     const CACHE_DURATION = 3600000; // 1 hour
-    const API_KEY = 'AIzaSyBz-n6LL9oVD5NqdPacZ0GFPJxpGx6llvQ';
+    const API_KEY = 'AIzaSyA5HF8T6xTqgh4lIB93ZQicNcenQ9fQLBk';
     const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://backendserver-edb4bafdgxcwg7d5.centralindia-01.azurewebsites.net';
     const DEFAULT_COVER = 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center';
     const DEFAULT_AVATAR = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center';
@@ -1070,6 +1071,8 @@ export default function Page() {
 
             setSongs(mappedSongs);
             setFilteredSongs(mappedSongs);
+            // clear quota flag on success
+            setYoutubeQuotaExceeded(false);
             // store popular songs in cache under a stable key
             const cacheKeyPopular = '__popular__';
             setSearchCache(prev => ({
@@ -1093,17 +1096,10 @@ export default function Page() {
 
         } catch (err) {
             console.error('Failed to fetch popular songs:', err);
-            // If quota exceeded (403) or other YouTube refusal, fallback to cache or sample data
             if (err?.response?.status === 403) {
-                setError('YouTube quota exceeded. Showing fallback catalog.');
-                const cachedPopular = (searchCache && searchCache['__popular__'] && Array.isArray(searchCache['__popular__'].data)) ? searchCache['__popular__'].data : null;
-                if (cachedPopular && cachedPopular.length > 0) {
-                    setSongs(cachedPopular);
-                    setFilteredSongs(cachedPopular);
-                } else {
-                    setSongs(SAMPLE_SONGS);
-                    setFilteredSongs(SAMPLE_SONGS);
-                }
+                // mark quota exceeded so admin sees a banner
+                setYoutubeQuotaExceeded(true);
+                setError('YouTube quota exceeded. Some catalog features may be unavailable.');
             } else {
                 setError('Failed to fetch popular music from YouTube');
             }
@@ -1111,16 +1107,6 @@ export default function Page() {
             setLoading(false);
         }
     }, [generateRecommendations, filteredSongs]);
-
-    // Small sample fallback catalog used when YouTube API quota is exceeded
-    const SAMPLE_SONGS = [
-        { id: 'sample1', title: 'Sunrise Melody', artist: 'Aria Beats', album: 'Dawn', duration: '3:12', cover: DEFAULT_COVER, genre: 'Pop', plays: 12000 },
-        { id: 'sample2', title: 'Monsoon Raga', artist: 'Sangeet Ensemble', album: 'Rain Songs', duration: '4:05', cover: DEFAULT_COVER, genre: 'Classical', plays: 8000 },
-        { id: 'sample3', title: 'City Lights', artist: 'Midnight Drive', album: 'Nocturne', duration: '3:45', cover: DEFAULT_COVER, genre: 'Electronic', plays: 9500 },
-        { id: 'sample4', title: 'Heartbeat', artist: 'Raga Soul', album: 'Pulse', duration: '2:58', cover: DEFAULT_COVER, genre: 'Indie', plays: 6700 },
-        { id: 'sample5', title: 'Desert Winds', artist: 'Nomad Orchestra', album: 'Trails', duration: '4:22', cover: DEFAULT_COVER, genre: 'World', plays: 5400 },
-        { id: 'sample6', title: 'Evening Chai', artist: 'Local Folk', album: 'Corner Cafe', duration: '3:30', cover: DEFAULT_COVER, genre: 'Folk', plays: 4300 }
-    ];
 
     // Track which user deletions are in-flight to avoid double-clicks and show UI feedback
     const [usersDeleting, setUsersDeleting] = useState(new Set());
@@ -1545,12 +1531,7 @@ export default function Page() {
 
         try {
             setUsersDeleting(prev => new Set(prev).add(userId));
-            // include current user's id in header so server can verify admin via isAdmin middleware
-            await axios.delete(`${BACKEND_URL}/api/users/${userId}`, {
-                headers: {
-                    'user-id': (currentUser && (currentUser.id || currentUser._id)) || ''
-                }
-            });
+            await axios.delete(`${BACKEND_URL}/api/users/${userId}`);
             setUsers(prev => prev.filter(user => (user._id || user.id) !== userId));
         } catch (err) {
             console.error('Failed to delete user:', err);
@@ -2093,6 +2074,17 @@ export default function Page() {
                     {activeTab === 'admin' && isAdmin && (
                         <div className="admin-content">
                             <h2 className="page-title">Admin Dashboard</h2>
+                            {youtubeQuotaExceeded && (
+                                <div className="admin-banner quota-exceeded">
+                                    <p>
+                                        YouTube API quota appears to be exceeded. Some catalog data (popular songs, search) may be unavailable.
+                                    </p>
+                                    <div className="banner-actions">
+                                        <button className="retry-btn" onClick={() => { setError(null); fetchPopularSongs(); }}>Retry</button>
+                                        <button className="dismiss-btn" onClick={() => setYoutubeQuotaExceeded(false)}>Dismiss</button>
+                                    </div>
+                                </div>
+                            )}
                             <div className="stats-grid">
                                 <div className="stat-card blue-gradient">
                                     <div className="stat-content">
