@@ -1099,6 +1099,9 @@ export default function Page() {
         }
     }, [generateRecommendations, filteredSongs]);
 
+    // Track which user deletions are in-flight to avoid double-clicks and show UI feedback
+    const [usersDeleting, setUsersDeleting] = useState(new Set());
+
     const fetchUsers = useCallback(async () => {
         try {
             setUsersLoading(true);
@@ -1119,9 +1122,36 @@ export default function Page() {
             const user = JSON.parse(storedUser);
             setCurrentUser(user);
             setIsAdmin(user.role === 'admin');
-            //fetchPopularSongs();
+            // populate initial songs catalog so admin panels show data
+            try { fetchPopularSongs(); } catch (err) { console.warn('fetchPopularSongs failed at init:', err); }
         }
     }, []);
+
+    // When admin opens the Admin panel, fetch global playlists and ensure songs are populated
+    useEffect(() => {
+        if (activeTab === 'admin' && isAdmin) {
+            (async () => {
+                try {
+                    setLoading(true);
+                    // fetch global playlists for admin overview
+                    const all = await fetchAllPlaylists();
+                    if (Array.isArray(all) && all.length > 0) {
+                        const playlistsData = all.map(p => ({ ...p, id: p._id || p.id }));
+                        setPlaylists(playlistsData);
+                    }
+
+                    // ensure songs are available for Songs/Artists management
+                    if ((songs || []).length === 0) {
+                        try { await fetchPopularSongs(); } catch (err) { console.warn('fetchPopularSongs failed in admin effect:', err); }
+                    }
+                } catch (err) {
+                    console.error('Failed to load admin overview data:', err);
+                } finally {
+                    setLoading(false);
+                }
+            })();
+        }
+    }, [activeTab, isAdmin, fetchAllPlaylists, fetchPopularSongs, songs]);
 
     useEffect(() => {
         if (songs.length > 0 || filteredSongs.length > 0) {
@@ -1487,13 +1517,22 @@ export default function Page() {
 
     const deleteUser = async (userId) => {
         if (!window.confirm('Are you sure you want to delete this user?')) return;
+        // prevent double deletion
+        if (usersDeleting.has(userId)) return;
 
         try {
+            setUsersDeleting(prev => new Set(prev).add(userId));
             await axios.delete(`${BACKEND_URL}/api/users/${userId}`);
-            setUsers(prev => prev.filter(user => user._id !== userId));
+            setUsers(prev => prev.filter(user => (user._id || user.id) !== userId));
         } catch (err) {
             console.error('Failed to delete user:', err);
             setUsersError('Failed to delete user');
+        } finally {
+            setUsersDeleting(prev => {
+                const next = new Set(prev);
+                next.delete(userId);
+                return next;
+            });
         }
     };
 
@@ -2091,9 +2130,10 @@ export default function Page() {
                                                     <span className="join-date">{formatDate(user.joinDate)}</span>
                                                     <button
                                                         className="delete-btn"
-                                                        onClick={() => deleteUser(user._id)}
+                                                        onClick={() => deleteUser(user._id || user.id)}
+                                                        disabled={usersDeleting.has(user._id || user.id)}
                                                     >
-                                                        Delete
+                                                        {usersDeleting.has(user._id || user.id) ? 'Deleting...' : 'Delete'}
                                                     </button>
                                                     <button className="user-menu"><MoreVertical className="menu-icon" /></button>
                                                 </div>
