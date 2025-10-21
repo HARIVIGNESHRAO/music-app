@@ -1093,11 +1093,34 @@ export default function Page() {
 
         } catch (err) {
             console.error('Failed to fetch popular songs:', err);
-            setError('Failed to fetch popular music from YouTube');
+            // If quota exceeded (403) or other YouTube refusal, fallback to cache or sample data
+            if (err?.response?.status === 403) {
+                setError('YouTube quota exceeded. Showing fallback catalog.');
+                const cachedPopular = (searchCache && searchCache['__popular__'] && Array.isArray(searchCache['__popular__'].data)) ? searchCache['__popular__'].data : null;
+                if (cachedPopular && cachedPopular.length > 0) {
+                    setSongs(cachedPopular);
+                    setFilteredSongs(cachedPopular);
+                } else {
+                    setSongs(SAMPLE_SONGS);
+                    setFilteredSongs(SAMPLE_SONGS);
+                }
+            } else {
+                setError('Failed to fetch popular music from YouTube');
+            }
         } finally {
             setLoading(false);
         }
     }, [generateRecommendations, filteredSongs]);
+
+    // Small sample fallback catalog used when YouTube API quota is exceeded
+    const SAMPLE_SONGS = [
+        { id: 'sample1', title: 'Sunrise Melody', artist: 'Aria Beats', album: 'Dawn', duration: '3:12', cover: DEFAULT_COVER, genre: 'Pop', plays: 12000 },
+        { id: 'sample2', title: 'Monsoon Raga', artist: 'Sangeet Ensemble', album: 'Rain Songs', duration: '4:05', cover: DEFAULT_COVER, genre: 'Classical', plays: 8000 },
+        { id: 'sample3', title: 'City Lights', artist: 'Midnight Drive', album: 'Nocturne', duration: '3:45', cover: DEFAULT_COVER, genre: 'Electronic', plays: 9500 },
+        { id: 'sample4', title: 'Heartbeat', artist: 'Raga Soul', album: 'Pulse', duration: '2:58', cover: DEFAULT_COVER, genre: 'Indie', plays: 6700 },
+        { id: 'sample5', title: 'Desert Winds', artist: 'Nomad Orchestra', album: 'Trails', duration: '4:22', cover: DEFAULT_COVER, genre: 'World', plays: 5400 },
+        { id: 'sample6', title: 'Evening Chai', artist: 'Local Folk', album: 'Corner Cafe', duration: '3:30', cover: DEFAULT_COVER, genre: 'Folk', plays: 4300 }
+    ];
 
     // Track which user deletions are in-flight to avoid double-clicks and show UI feedback
     const [usersDeleting, setUsersDeleting] = useState(new Set());
@@ -1522,7 +1545,12 @@ export default function Page() {
 
         try {
             setUsersDeleting(prev => new Set(prev).add(userId));
-            await axios.delete(`${BACKEND_URL}/api/users/${userId}`);
+            // include current user's id in header so server can verify admin via isAdmin middleware
+            await axios.delete(`${BACKEND_URL}/api/users/${userId}`, {
+                headers: {
+                    'user-id': (currentUser && (currentUser.id || currentUser._id)) || ''
+                }
+            });
             setUsers(prev => prev.filter(user => (user._id || user.id) !== userId));
         } catch (err) {
             console.error('Failed to delete user:', err);

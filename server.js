@@ -267,6 +267,17 @@ app.get('/api/playlists/:userId', async (req, res) => {
     }
 });
 
+// Get all playlists (admin overview / public listing)
+app.get('/api/playlists', async (req, res) => {
+    try {
+        const playlists = await Playlist.find({}).sort({ createdAt: -1 });
+        res.status(200).json(playlists || []);
+    } catch (err) {
+        console.error('Fetch all playlists error:', err);
+        res.status(500).json({ message: 'Server error', error: err.message });
+    }
+});
+
 // Create new playlist
 app.post('/api/playlists', async (req, res) => {
     try {
