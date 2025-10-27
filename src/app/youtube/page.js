@@ -1109,6 +1109,30 @@ export default function Page() {
         }
     }, [BACKEND_URL]);
 
+    // Helper for admin: refresh all admin-related data (playlists, popular songs, users)
+    const refreshAdminData = async () => {
+        setLoading(true);
+        setError(null);
+        try {
+            const all = await fetchAllPlaylists();
+            if (Array.isArray(all) && all.length > 0) {
+                const playlistsData = all.map(p => ({ ...p, id: p._id || p.id }));
+                setPlaylists(playlistsData);
+            }
+
+            // refresh songs
+            try { await fetchPopularSongs(); } catch (err) { console.warn('fetchPopularSongs failed in refresh:', err); }
+
+            // refresh users
+            try { await fetchUsers(); } catch (err) { console.warn('fetchUsers failed in refresh:', err); }
+        } catch (err) {
+            console.error('Failed to refresh admin data:', err);
+            setError('Failed to refresh admin data');
+        } finally {
+            setLoading(false);
+        }
+    };
+
     useEffect(() => {
         const storedUser = window.localStorage.getItem('user');
         if (storedUser) {
@@ -2041,7 +2065,12 @@ export default function Page() {
                     )}
                     {activeTab === 'admin' && isAdmin && (
                         <div className="admin-content">
-                            <h2 className="page-title">Admin Dashboard</h2>
+                            <div className="admin-header-row">
+                                <h2 className="page-title">Admin Dashboard</h2>
+                                <div className="admin-actions">
+                                    <button onClick={refreshAdminData} className="refresh-btn">Refresh Data</button>
+                                </div>
+                            </div>
                             {youtubeQuotaExceeded && (
                                 <div className="admin-banner quota-exceeded">
                                     <p>
@@ -2072,6 +2101,18 @@ export default function Page() {
                                         <Users className="stat-icon" />
                                     </div>
                                 </div>
+
+                                {/* Added Artists stat card */}
+                                <div className="stat-card orange-gradient">
+                                    <div className="stat-content">
+                                        <div className="stat-info">
+                                            <p className="stat-label">Artists</p>
+                                            <p className="stat-value">{artists.length}</p>
+                                        </div>
+                                        <User className="stat-icon" />
+                                    </div>
+                                </div>
+
                                 <div className="stat-card orange-gradient">
                                     <div className="stat-content">
                                         <div className="stat-info">
