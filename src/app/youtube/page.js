@@ -58,7 +58,7 @@ export default function Page() {
     const recognitionRef = useRef(null);
     const [searchCache, setSearchCache] = useState({});
     const CACHE_DURATION = 3600000; // 1 hour
-    const API_KEY = 'AIzaSyBuTEON0syr7iFbVznN_6H-qOcNXlMO6oo';
+    // YouTube API key moved to server-side proxy to avoid exposing quota-limited keys in client
     const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://backendserver-edb4bafdgxcwg7d5.centralindia-01.azurewebsites.net';
     const DEFAULT_COVER = 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center';
     const DEFAULT_AVATAR = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center';
@@ -1033,39 +1033,23 @@ export default function Page() {
             setLoading(true);
             setError(null);
 
-            const response = await axios.get('https://www.googleapis.com/youtube/v3/search', {
-                params: {
-                    part: 'snippet',
-                    maxResults: 5,
-                    order: 'viewCount',
-                    type: 'video',
-                    videoCategoryId: '10',
-                    key: API_KEY
-                }
+            // Use server-side proxy to avoid exposing API key and to allow caching
+            const proxyResp = await axios.get('/api/youtube/popular', {
+                params: { maxResults: 5 }
             });
 
-            const videoIds = response.data.items.map(item => item.id.videoId).join(',');
-
-            const detailsResponse = await axios.get('https://www.googleapis.com/youtube/v3/videos', {
-                params: {
-                    part: 'contentDetails,snippet,statistics',
-                    id: videoIds,
-                    key: API_KEY
-                }
-            });
-
-            const mappedSongs = detailsResponse.data.items.map(video => {
+            const mappedSongs = (proxyResp.data || []).map(video => {
                 const durationSeconds = parseDuration(video.contentDetails.duration);
                 const randomGenre = AVAILABLE_GENRES[Math.floor(Math.random() * AVAILABLE_GENRES.length)];
                 return {
-                    id: video.id,
-                    title: video.snippet.title || 'Unknown Title',
-                    artist: video.snippet.channelTitle || 'Unknown Artist',
+                    id: video.id || video.videoId,
+                    title: video.snippet?.title || video.title || 'Unknown Title',
+                    artist: video.snippet?.channelTitle || video.channelTitle || 'Unknown Artist',
                     album: 'YouTube',
                     duration: formatDuration(durationSeconds),
-                    cover: video.snippet.thumbnails?.medium?.url || DEFAULT_COVER,
+                    cover: video.snippet?.thumbnails?.medium?.url || video.thumbnail || DEFAULT_COVER,
                     genre: randomGenre,
-                    plays: parseInt(video.statistics?.viewCount || 0)
+                    plays: parseInt((video.statistics && video.statistics.viewCount) || video.viewCount || 0)
                 };
             });
 
@@ -1200,48 +1184,32 @@ export default function Page() {
                 setLoading(true);
                 setError(null); // Clear previous errors
 
-                const response = await axios.get('https://www.googleapis.com/youtube/v3/search', {
-                    params: {
-                        part: 'snippet',
-                        q: query,
-                        maxResults: 10,
-                        type: 'video',
-                        videoCategoryId: '10',
-                        key: API_KEY
-                    }
+                // Delegate search to server-side proxy which handles details lookup + caching
+                const proxyResp = await axios.get('/api/youtube/search', {
+                    params: { q: query, maxResults: 10 }
                 });
 
-                if (!response.data.items || response.data.items.length === 0) {
+                const mappedSongs = (proxyResp.data || []).map(video => {
+                    const durationSeconds = parseDuration(video.contentDetails?.duration || video.duration || 'PT0S');
+                    const randomGenre = AVAILABLE_GENRES[Math.floor(Math.random() * AVAILABLE_GENRES.length)];
+                    return {
+                        id: video.id || video.videoId,
+                        title: video.snippet?.title || video.title || 'Unknown Title',
+                        artist: video.snippet?.channelTitle || video.channelTitle || 'Unknown Artist',
+                        album: 'YouTube',
+                        duration: formatDuration(durationSeconds),
+                        cover: video.snippet?.thumbnails?.medium?.url || video.thumbnail || DEFAULT_COVER,
+                        genre: randomGenre,
+                        plays: parseInt((video.statistics && video.statistics.viewCount) || video.viewCount || 0)
+                    };
+                });
+
+                if (!mappedSongs || mappedSongs.length === 0) {
                     setFilteredSongs([]);
                     setError('No results found');
                     setLoading(false);
                     return;
                 }
-
-                const videoIds = response.data.items.map(item => item.id.videoId).join(',');
-
-                const detailsResponse = await axios.get('https://www.googleapis.com/youtube/v3/videos', {
-                    params: {
-                        part: 'contentDetails,snippet,statistics',
-                        id: videoIds,
-                        key: API_KEY
-                    }
-                });
-
-                const mappedSongs = detailsResponse.data.items.map(video => {
-                    const durationSeconds = parseDuration(video.contentDetails.duration);
-                    const randomGenre = AVAILABLE_GENRES[Math.floor(Math.random() * AVAILABLE_GENRES.length)];
-                    return {
-                        id: video.id,
-                        title: video.snippet.title || 'Unknown Title',
-                        artist: video.snippet.channelTitle || 'Unknown Artist',
-                        album: 'YouTube',
-                        duration: formatDuration(durationSeconds),
-                        cover: video.snippet.thumbnails?.medium?.url || DEFAULT_COVER,
-                        genre: randomGenre,
-                        plays: parseInt(video.statistics?.viewCount || 0)
-                    };
-                });
 
                 setFilteredSongs(mappedSongs);
 
