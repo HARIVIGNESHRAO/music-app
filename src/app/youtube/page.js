@@ -58,7 +58,7 @@ export default function Page() {
     const recognitionRef = useRef(null);
     const [searchCache, setSearchCache] = useState({});
     const CACHE_DURATION = 3600000; // 1 hour
-    const API_KEY = 'AIzaSyAG5gmG1f3KJQ0ummDtLA4aAQ-s4wA9znw';
+    const API_KEY = 'AIzaSyBuTEON0syr7iFbVznN_6H-qOcNXlMO6oo';
     const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://backendserver-edb4bafdgxcwg7d5.centralindia-01.azurewebsites.net';
     const DEFAULT_COVER = 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center';
     const DEFAULT_AVATAR = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center';
