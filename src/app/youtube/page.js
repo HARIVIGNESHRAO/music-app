@@ -43,6 +43,9 @@ export default function Page() {
     const [usersLoading, setUsersLoading] = useState(false);
     const [usersError, setUsersError] = useState(null);
     const [youtubeQuotaExceeded, setYoutubeQuotaExceeded] = useState(false);
+    const fetchingPopularRef = useRef(false);
+    const fetchingUsersRef = useRef(false);
+    const fetchingPlaylistsRef = useRef(false);
     const [queue, setQueue] = useState([]);
     const [currentIndex, setCurrentIndex] = useState(0);
     const [shuffle, setShuffle] = useState(false);
@@ -630,7 +633,7 @@ export default function Page() {
         } catch (err) {
             console.error('Failed to fetch all playlists:', err);
             setError('Failed to load all playlists');
-            return [];
+            return null;
         }
     }, [BACKEND_URL]);
 
@@ -1029,17 +1032,33 @@ export default function Page() {
     }, [youtubePlayer, volume]);
 
     const fetchPopularSongs = useCallback(async () => {
+        // Prevent duplicate concurrent popular fetches
+        if (fetchingPopularRef.current) {
+            console.log('fetchPopularSongs: already in-flight, skipping duplicate call');
+            return false;
+        }
+        fetchingPopularRef.current = true;
         try {
-            setLoading(true);
             setError(null);
-
             // Use server-side proxy to avoid exposing API key and to allow caching
             const proxyResp = await axios.get('/api/youtube/popular', {
                 params: { maxResults: 5 }
             });
 
+            if (!proxyResp || !proxyResp.data || !Array.isArray(proxyResp.data) || proxyResp.data.length === 0) {
+                // If api returned an error object, surface it
+                const msg = proxyResp?.data?.error || 'No popular songs returned';
+                console.warn('fetchPopularSongs: empty response or error', msg);
+                // if response indicates missing API key or quota, set flag
+                if (proxyResp?.data?.error && /YOUTUBE_API_KEY|quota/i.test(String(proxyResp.data.error))) {
+                    setYoutubeQuotaExceeded(true);
+                }
+                return false;
+            }
+
             const mappedSongs = (proxyResp.data || []).map(video => {
-                const durationSeconds = parseDuration(video.contentDetails.duration);
+                const dur = video.contentDetails?.duration || 'PT0S';
+                const durationSeconds = parseDuration(dur);
                 const randomGenre = AVAILABLE_GENRES[Math.floor(Math.random() * AVAILABLE_GENRES.length)];
                 return {
                     id: video.id || video.videoId,
@@ -1078,17 +1097,21 @@ export default function Page() {
                 albums: new Set(mappedSongs.filter(s => s.artist === name).map(s => s.album)).size
             })));
 
+            return true;
         } catch (err) {
             console.error('Failed to fetch popular songs:', err);
             if (err?.response?.status === 403) {
                 // mark quota exceeded so admin sees a banner
                 setYoutubeQuotaExceeded(true);
                 setError('YouTube quota exceeded. Some catalog features may be unavailable.');
+            } else if (err?.response) {
+                setError(`Failed to fetch popular music: ${err.response.statusText || err.response.status}`);
             } else {
                 setError('Failed to fetch popular music from YouTube');
             }
+            return false;
         } finally {
-            setLoading(false);
+            fetchingPopularRef.current = false;
         }
     }, [generateRecommendations, filteredSongs]);
 
@@ -1096,39 +1119,68 @@ export default function Page() {
     const [usersDeleting, setUsersDeleting] = useState(new Set());
 
     const fetchUsers = useCallback(async () => {
+        if (fetchingUsersRef.current) {
+            console.log('fetchUsers: already in-flight');
+            return false;
+        }
+        fetchingUsersRef.current = true;
         try {
             setUsersLoading(true);
             setUsersError(null);
             const { data } = await axios.get(`${BACKEND_URL}/api/users`);
-            setUsers(data);
+            setUsers(data || []);
+            return true;
         } catch (err) {
             console.error('Failed to fetch users:', err);
             setUsersError('Failed to load users from server');
+            return false;
         } finally {
             setUsersLoading(false);
+            fetchingUsersRef.current = false;
         }
     }, [BACKEND_URL]);
 
     // Helper for admin: refresh all admin-related data (playlists, popular songs, users)
     const refreshAdminData = async () => {
+        if (fetchingPlaylistsRef.current || fetchingPopularRef.current || fetchingUsersRef.current) {
+            console.log('refreshAdminData: refresh already in progress');
+            return;
+        }
         setLoading(true);
         setError(null);
         try {
+            fetchingPlaylistsRef.current = true;
             const all = await fetchAllPlaylists();
             if (Array.isArray(all) && all.length > 0) {
                 const playlistsData = all.map(p => ({ ...p, id: p._id || p.id }));
                 setPlaylists(playlistsData);
+            } else if (all === null) {
+                // fetchAllPlaylists returned null -> error already set by the helper
+                console.warn('refreshAdminData: fetchAllPlaylists failed');
+            }
+            fetchingPlaylistsRef.current = false;
+
+            // refresh songs (returns boolean)
+            const songsOk = await fetchPopularSongs();
+            if (!songsOk) {
+                console.warn('refreshAdminData: fetchPopularSongs failed or returned no data');
             }
 
-            // refresh songs
-            try { await fetchPopularSongs(); } catch (err) { console.warn('fetchPopularSongs failed in refresh:', err); }
-
             // refresh users
-            try { await fetchUsers(); } catch (err) { console.warn('fetchUsers failed in refresh:', err); }
+            const usersOk = await fetchUsers();
+            if (!usersOk) {
+                console.warn('refreshAdminData: fetchUsers failed');
+            }
+
+            // If everything returned but arrays are still empty, surface a helpful message
+            if ((songs.length === 0 || artists.length === 0) && !youtubeQuotaExceeded) {
+                setError(prev => prev || 'No songs/artists were loaded. Click Refresh again or check server logs.');
+            }
         } catch (err) {
             console.error('Failed to refresh admin data:', err);
             setError('Failed to refresh admin data');
         } finally {
+            fetchingPlaylistsRef.current = false;
             setLoading(false);
         }
     };
@@ -2068,7 +2120,9 @@ export default function Page() {
                             <div className="admin-header-row">
                                 <h2 className="page-title">Admin Dashboard</h2>
                                 <div className="admin-actions">
-                                    <button onClick={refreshAdminData} className="refresh-btn">Refresh Data</button>
+                                    <button onClick={refreshAdminData} className="refresh-btn" disabled={loading}> 
+                                        {loading ? 'Refreshing...' : 'Refresh Data'}
+                                    </button>
                                 </div>
                             </div>
                             {youtubeQuotaExceeded && (
