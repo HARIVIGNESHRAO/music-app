@@ -5,7 +5,7 @@
       "headers": [
         {
           "key": "Permissions-Policy",
-          "value": "geolocation=(), camera=(), microphone=()"
+          "value": "geolocation=(), camera=(), microphone=(self)"
         }
       ]
     }
