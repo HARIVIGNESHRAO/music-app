@@ -1667,14 +1667,23 @@ export default function Page() {
                         </div>
                     </div>
                     <div className="header-right">
-                        <Image
-                            src={currentUser.avatar || DEFAULT_AVATAR(currentUser.name || currentUser.username || 'User')}
-                            alt={currentUser.username || currentUser.name || 'User'}
-                            className="user-avatar"
-                            width={100}
-                            height={100}
-                            priority
-                        />
+                        {currentUser.avatar ? (
+                            <Image
+                                src={currentUser.avatar}
+                                alt={currentUser.username || currentUser.name || 'User'}
+                                className="user-avatar"
+                                width={100}
+                                height={100}
+                                priority
+                            />
+                        ) : (
+                            <div
+                                className="user-avatar-initial"
+                                title={currentUser.username || currentUser.name || 'User'}
+                            >
+                                {(currentUser.name || currentUser.username || 'User').toString().trim().charAt(0).toUpperCase()}
+                            </div>
+                        )}
                         <span className="user-name">{currentUser.username || currentUser.name}</span>
                         <button onClick={handleLogout} className="logout-btn">Logout</button>
                     </div>

@@ -350,6 +350,29 @@ body {
     box-shadow: 0 0 30px rgba(168, 85, 247, 0.6);
 }
 
+/* Fallback avatar that shows the user's initial when no avatar image is present */
+.user-avatar-initial {
+    width: 2.75rem;
+    height: 2.75rem;
+    border-radius: 50%;
+    border: 2px solid #a855f7;
+    box-shadow: 0 0 20px rgba(168, 85, 247, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 1rem;
+    color: #fff;
+    background: linear-gradient(135deg, #7c3aed, #ec4899);
+    text-transform: uppercase;
+    transition: all 0.3s ease;
+}
+
+.user-avatar-initial:hover {
+    transform: scale(1.1);
+    box-shadow: 0 0 30px rgba(168, 85, 247, 0.6);
+}
+
 .user-name {
     font-weight: 600;
     font-size: 1rem;

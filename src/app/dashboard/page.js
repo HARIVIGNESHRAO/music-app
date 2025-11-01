@@ -1486,14 +1486,23 @@ export default function Page() {
                         </div>
                     </div>
                     <div className="header-right">
-                        <Image
-                            src={currentUser.avatar || DEFAULT_AVATAR(currentUser.name || currentUser.id || 'User')}
-                            alt={currentUser.name}
-                            className="user-avatar"
-                            width={100}
-                            height={100}
-                            priority
-                        />
+                        {currentUser.avatar ? (
+                            <Image
+                                src={currentUser.avatar}
+                                alt={currentUser.name || currentUser.id || 'User'}
+                                className="user-avatar"
+                                width={100}
+                                height={100}
+                                priority
+                            />
+                        ) : (
+                            <div
+                                className="user-avatar-initial"
+                                title={currentUser.name || currentUser.id || 'User'}
+                            >
+                                {(currentUser.name || currentUser.id || 'User').toString().trim().charAt(0).toUpperCase()}
+                            </div>
+                        )}
                         <span className="user-name">{currentUser.name} {isPremium ? '(Premium)' : '(Free)'}</span>
                         <button onClick={handleLogout} className="logout-btn">Logout</button>
                     </div>
