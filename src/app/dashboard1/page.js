@@ -84,6 +84,12 @@ export default function Page() {
     const CODE_CHALLENGE_METHOD = 'S256';
     const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://backendserver-edb4bafdgxcwg7d5.centralindia-01.azurewebsites.net';
 
+    // UI-Avatars helper for default avatar (uses first name)
+    const DEFAULT_AVATAR = (name = 'User') => {
+        const first = String(name || 'User').split(' ')[0] || 'User';
+        return `https://ui-avatars.com/api/?name=${encodeURIComponent(first)}&background=6366f1&color=fff&size=400`;
+    };
+
     const CACHE_KEY_TOP_TRACKS = 'spotify_top_tracks';
     const CACHE_KEY_PLAYLISTS = 'spotify_playlists';
     const CACHE_EXPIRY_MS = 60 * 60 * 1000; // 1 hour
@@ -565,7 +571,7 @@ export default function Page() {
                 id: data.id,
                 name: data.display_name,
                 email: data.email,
-                avatar: data.images?.[0]?.url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center',
+                avatar: data.images?.[0]?.url || DEFAULT_AVATAR(data.display_name || data.id || 'User'),
                 role: data.email === 'admin@music.com' ? 'admin' : 'user',
                 product: data.product || 'free'
             };
@@ -1251,7 +1257,7 @@ export default function Page() {
                     </div>
                     <div className="header-right">
                         <Image
-                            src={currentUser.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center'}
+                            src={currentUser.avatar || DEFAULT_AVATAR(currentUser.username || currentUser.name || 'User')}
                             alt={currentUser.username || currentUser.name}
                             className="user-avatar"
                             width={100}

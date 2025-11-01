@@ -64,7 +64,11 @@ export default function Page() {
     // YouTube API key moved to server-side proxy to avoid exposing quota-limited keys in client
     const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://backendserver-edb4bafdgxcwg7d5.centralindia-01.azurewebsites.net';
     const DEFAULT_COVER = 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=center';
-    const DEFAULT_AVATAR = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=center';
+    // Return a UI-Avatars URL using the user's first name (falls back to 'User')
+    const DEFAULT_AVATAR = (name = 'User') => {
+        const first = String(name || 'User').split(' ')[0] || 'User';
+        return `https://ui-avatars.com/api/?name=${encodeURIComponent(first)}&background=6366f1&color=fff&size=400`;
+    };
     const [sharePlaylist, setSharePlaylist] = useState(null);
     const [shareUrl, setShareUrl] = useState('');
     const [showShareModal, setShowShareModal] = useState(false);
@@ -1664,7 +1668,7 @@ export default function Page() {
                     </div>
                     <div className="header-right">
                         <Image
-                            src={currentUser.avatar || DEFAULT_AVATAR}
+                            src={currentUser.avatar || DEFAULT_AVATAR(currentUser.name || currentUser.username || 'User')}
                             alt={currentUser.username || currentUser.name || 'User'}
                             className="user-avatar"
                             width={100}
